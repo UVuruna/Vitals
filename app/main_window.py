@@ -2,9 +2,11 @@
 Main Window - Process Monitor Display
 """
 
+import json
+from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QFont, QPalette, QColor
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -12,13 +14,14 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from .monitor import MonitorMode, ProcessMonitor
+from .monitor import MonitorMode, MonitorWorker, MonitorData
 from .settings_dialog import MonitorSettings, SettingsDialog
 
 
@@ -33,17 +36,56 @@ class MainWindow(QMainWindow):
     TEXT = "#ffffff"
     TEXT_MUTED = "#aaaaaa"
 
+    # Different colors for current vs history
+    CURRENT_BG = "#2d2d42"  # Slightly purple tint
+    HISTORY_BG = "#2a3a3e"  # Slightly teal tint
+
+    # Default temperature thresholds
+    DEFAULT_TEMP_CONFIG = {
+        "normal": "#ffffff",
+        "warning": "#ffa500",
+        "critical": "#ff4444",
+        "warning_threshold": 60,
+        "critical_threshold": 75,
+    }
+
     def __init__(self):
         super().__init__()
         self.settings: Optional[MonitorSettings] = None
-        self.monitor: Optional[ProcessMonitor] = None
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self._update)
+        self.worker = MonitorWorker(self)
+        self.worker.data_ready.connect(self._on_data_ready)
         self.is_paused = False
 
+        self._load_config()
         self._apply_dark_theme()
         self._setup_ui()
         self._show_settings()
+
+    def _load_config(self):
+        """Load temperature color config from JSON."""
+        config_path = Path(__file__).parent.parent / "config.json"
+        self.temp_config = self.DEFAULT_TEMP_CONFIG.copy()
+
+        if config_path.exists():
+            try:
+                with open(config_path, encoding="utf-8") as f:
+                    data = json.load(f)
+                    if "temp_colors" in data:
+                        self.temp_config.update(data["temp_colors"])
+            except Exception:
+                pass
+
+    def _get_temp_color(self, temp: Optional[float]) -> str:
+        """Get color for temperature value based on config thresholds."""
+        if temp is None:
+            return self.TEXT
+
+        if temp >= self.temp_config["critical_threshold"]:
+            return self.temp_config["critical"]
+        elif temp >= self.temp_config["warning_threshold"]:
+            return self.temp_config["warning"]
+        else:
+            return self.temp_config["normal"]
 
     def _apply_dark_theme(self):
         """Apply dark theme to window."""
@@ -93,25 +135,74 @@ class MainWindow(QMainWindow):
         self.peak_label.setStyleSheet(f"color: {self.TEXT_MUTED}; background: transparent;")
         header_layout.addWidget(self.peak_label)
 
+        # HWiNFO sensors row (spread across width)
+        self.sensor_widget = QWidget()
+        self.sensor_widget.setStyleSheet("background: transparent;")
+        sensor_layout = QHBoxLayout(self.sensor_widget)
+        sensor_layout.setContentsMargins(0, 4, 0, 0)
+        sensor_layout.setSpacing(0)
+
+        self.sensor_labels: list[QLabel] = []
+        for _ in range(3):
+            lbl = QLabel("")
+            lbl.setFont(QFont("Segoe UI", 11))
+            lbl.setStyleSheet(f"color: {self.TEXT}; background: transparent;")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            sensor_layout.addWidget(lbl)
+            self.sensor_labels.append(lbl)
+
+        header_layout.addWidget(self.sensor_widget)
+
         layout.addWidget(self.header_widget)
 
-        # Current Processes
-        current_title = QLabel("Current Processes")
-        current_title.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
-        current_title.setStyleSheet(f"color: {self.TEXT};")
-        layout.addWidget(current_title)
+        # Splitter for resizable sections
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.setStyleSheet(f"""
+            QSplitter::handle {{
+                background-color: {self.HEADER_COLOR};
+                height: 4px;
+            }}
+            QSplitter::handle:hover {{
+                background-color: {self.ACCENT};
+            }}
+        """)
 
-        self.current_table = self._create_table(7, has_cores=True)
-        layout.addWidget(self.current_table)
+        # Current Processes section
+        self.current_section = QWidget()
+        current_layout = QVBoxLayout(self.current_section)
+        current_layout.setContentsMargins(0, 0, 0, 4)
+        current_layout.setSpacing(4)
 
-        # History
-        history_title = QLabel("Historical Peak Usage")
-        history_title.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
-        history_title.setStyleSheet(f"color: {self.TEXT};")
-        layout.addWidget(history_title)
+        self.current_title = QLabel("Current Processes")
+        self.current_title.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        self.current_title.setStyleSheet(f"color: {self.TEXT};")
+        current_layout.addWidget(self.current_title)
 
-        self.history_table = self._create_table(4, has_cores=True, has_time=True)
-        layout.addWidget(self.history_table)
+        self.current_table = self._create_table(7, has_cores=True, bg_color=self.CURRENT_BG)
+        current_layout.addWidget(self.current_table)
+
+        self.splitter.addWidget(self.current_section)
+
+        # History section
+        self.history_section = QWidget()
+        history_layout = QVBoxLayout(self.history_section)
+        history_layout.setContentsMargins(0, 4, 0, 0)
+        history_layout.setSpacing(4)
+
+        self.history_title = QLabel("Historical Peak Usage")
+        self.history_title.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        self.history_title.setStyleSheet(f"color: {self.TEXT};")
+        history_layout.addWidget(self.history_title)
+
+        self.history_table = self._create_table(4, has_cores=True, has_time=True, bg_color=self.HISTORY_BG)
+        history_layout.addWidget(self.history_table)
+
+        self.splitter.addWidget(self.history_section)
+
+        # Set initial sizes (current gets more space)
+        self.splitter.setSizes([300, 150])
+
+        layout.addWidget(self.splitter)
 
         # Buttons
         btn_layout = QHBoxLayout()
@@ -178,14 +269,17 @@ class MainWindow(QMainWindow):
         pause_action.triggered.connect(self._toggle_pause)
         view_menu.addAction(pause_action)
 
-    def _create_table(self, rows: int, has_cores: bool = False, has_time: bool = False) -> QTableWidget:
+    def _create_table(self, rows: int, has_cores: bool = False, has_time: bool = False, bg_color: str = None) -> QTableWidget:
         """Create a styled table."""
+        if bg_color is None:
+            bg_color = self.CARD_COLOR
+
         cols = 2  # Process, Usage
         headers = ["Process", "Usage"]
 
         if has_cores:
             cols += 1
-            headers.append("Cores")
+            headers.append("Threads")
         if has_time:
             cols += 1
             headers.append("Time")
@@ -215,7 +309,7 @@ class MainWindow(QMainWindow):
         # Styling
         table.setStyleSheet(f"""
             QTableWidget {{
-                background-color: {self.CARD_COLOR};
+                background-color: {bg_color};
                 color: {self.TEXT};
                 border: none;
                 border-radius: 6px;
@@ -239,31 +333,37 @@ class MainWindow(QMainWindow):
 
     def _show_settings(self):
         """Show settings dialog."""
-        self.timer.stop()
+        self.worker.stop()
+        is_first_run = self.settings is None
+
         dialog = SettingsDialog(self, self.settings)
         if dialog.exec():
-            self.settings = dialog.get_settings()
-            self._apply_settings()
+            new_settings = dialog.get_settings()
+            self._apply_settings(new_settings)
             self._start_monitoring()
+        elif is_first_run:
+            # Exit app if settings rejected on first run
+            import os
+            os._exit(0)
 
-    def _apply_settings(self):
-        """Apply settings."""
-        if not self.settings:
-            return
+    def _apply_settings(self, new_settings: MonitorSettings):
+        """Apply settings, preserving history if mode unchanged."""
+        self.settings = new_settings
 
-        # Create monitor
-        self.monitor = ProcessMonitor(
-            mode=self.settings.mode,
-            cpu_threads=self.settings.cpu_threads,
-            ram_gb=self.settings.ram_gb,
-        )
-        self.monitor.set_history_settings(
-            self.settings.history_rows,
-            self.settings.retention_minutes,
+        # Configure the worker (handles mode change internally)
+        self.worker.configure(
+            mode=new_settings.mode,
+            cpu_threads=new_settings.cpu_threads,
+            ram_gb=new_settings.ram_gb,
+            current_rows=new_settings.current_rows,
+            history_rows=new_settings.history_rows,
+            retention_minutes=new_settings.retention_minutes,
+            refresh_rate_ms=new_settings.refresh_rate_ms,
+            memory_unit=new_settings.memory_unit,
         )
 
         # Update title
-        is_cpu = self.settings.mode == MonitorMode.CPU
+        is_cpu = new_settings.mode == MonitorMode.CPU
         self.title_label.setText("CPU Monitor" if is_cpu else "Memory Monitor")
 
         # Rebuild tables with correct columns
@@ -271,7 +371,7 @@ class MainWindow(QMainWindow):
 
         # Resize window
         row_height = 32
-        total_rows = self.settings.current_rows + self.settings.history_rows
+        total_rows = new_settings.current_rows + new_settings.history_rows
         new_height = 200 + (total_rows + 2) * row_height + 100
         self.resize(520, new_height)
 
@@ -282,101 +382,130 @@ class MainWindow(QMainWindow):
 
         is_cpu = self.settings.mode == MonitorMode.CPU
 
-        # Get parent layout
-        layout = self.centralWidget().layout()
+        # Get section layouts
+        current_layout = self.current_section.layout()
+        history_layout = self.history_section.layout()
 
         # Remove old tables
-        layout.removeWidget(self.current_table)
-        layout.removeWidget(self.history_table)
+        current_layout.removeWidget(self.current_table)
+        history_layout.removeWidget(self.history_table)
         self.current_table.deleteLater()
         self.history_table.deleteLater()
 
-        # Create new tables - Cores only for CPU mode
+        # Create new tables - Threads only for CPU mode
         self.current_table = self._create_table(
             self.settings.current_rows,
             has_cores=is_cpu,
-            has_time=False
+            has_time=False,
+            bg_color=self.CURRENT_BG
         )
         self.history_table = self._create_table(
             self.settings.history_rows,
             has_cores=is_cpu,
-            has_time=True
+            has_time=True,
+            bg_color=self.HISTORY_BG
         )
 
-        # Insert at correct positions (after labels)
-        layout.insertWidget(2, self.current_table)
-        layout.insertWidget(4, self.history_table)
+        # Add to section layouts (after title labels)
+        current_layout.addWidget(self.current_table)
+        history_layout.addWidget(self.history_table)
 
     def _start_monitoring(self):
         """Start monitoring."""
         if self.settings:
-            self.timer.start(self.settings.refresh_rate_ms)
+            self.worker.start()
             self.is_paused = False
             self.pause_btn.setText("Pause")
 
     def _toggle_pause(self):
         """Toggle pause."""
         if self.is_paused:
-            self.timer.start(self.settings.refresh_rate_ms if self.settings else 2000)
+            self.worker.start()
             self.is_paused = False
             self.pause_btn.setText("Pause")
         else:
-            self.timer.stop()
+            self.worker.stop()
             self.is_paused = True
             self.pause_btn.setText("Resume")
 
-    def _update(self):
-        """Update display."""
-        if not self.monitor or not self.settings:
+    def _on_data_ready(self, data: MonitorData):
+        """Handle data from worker thread (runs on main thread via signal)."""
+        if not self.settings:
             return
 
         unit = self.settings.memory_unit
         is_cpu = self.settings.mode == MonitorMode.CPU
-
-        # Get processes
-        processes = self.monitor.get_processes(self.settings.current_rows)
-        self.monitor.update_history(processes)
+        monitor = self.worker.monitor
 
         # Update header
-        self.current_label.setText(f"Current: {self.monitor.get_total_display(unit)}")
-        self.peak_label.setText(self.monitor.get_max_display(unit))
+        self.current_label.setText(f"Current: {data.total_display}")
+        self.peak_label.setText(data.max_display)
+
+        # Get HWiNFO sensor data
+        hwinfo = data.hwinfo
+
+        if is_cpu:
+            # CPU mode: show CPU temps + power in 3 columns
+            sensors = [
+                (f"Tctl: {hwinfo.cpu_tctl:.0f}°C", hwinfo.cpu_tctl) if hwinfo.cpu_tctl else ("", None),
+                (f"{hwinfo.cpu_power:.1f} W", None) if hwinfo.cpu_power else ("", None),
+                (f"CCD1: {hwinfo.cpu_ccd1:.0f}°C", hwinfo.cpu_ccd1) if hwinfo.cpu_ccd1 else ("", None),
+            ]
+            for i, (text, value) in enumerate(sensors):
+                self.sensor_labels[i].setText(text)
+                self.sensor_labels[i].setStyleSheet(
+                    f"color: {self._get_temp_color(value)}; background: transparent;"
+                )
+        else:
+            # Memory mode: show ambient temp and DRAM bandwidth
+            extras = [
+                (f"Amb: {hwinfo.ambient_temp:.0f}°C", hwinfo.ambient_temp) if hwinfo.ambient_temp else ("", None),
+                (f"R: {hwinfo.dram_read:,.0f} MB/s", None) if hwinfo.dram_read else ("", None),
+                (f"W: {hwinfo.dram_write:,.0f} MB/s", None) if hwinfo.dram_write else ("", None),
+            ]
+            for i, (text, value) in enumerate(extras):
+                self.sensor_labels[i].setText(text)
+                self.sensor_labels[i].setStyleSheet(
+                    f"color: {self._get_temp_color(value) if value else self.TEXT}; background: transparent;"
+                )
 
         # Update current table
-        for row, proc in enumerate(processes):
+        for row, proc in enumerate(data.processes):
             if row >= self.current_table.rowCount():
                 break
 
             self.current_table.setItem(row, 0, QTableWidgetItem(proc.name))
-            self.current_table.setItem(row, 1, QTableWidgetItem(self.monitor.format_value(proc.value, unit)))
+            value_str = monitor.format_value(proc.value, unit) if monitor else f"{proc.value:.0f}"
+            self.current_table.setItem(row, 1, QTableWidgetItem(value_str))
 
             if is_cpu:
-                cores_text = f"{proc.cores_used:.1f}" if proc.cores_used >= 0.1 else ""
-                self.current_table.setItem(row, 2, QTableWidgetItem(cores_text))
+                threads_text = str(proc.threads) if proc.threads > 0 else ""
+                self.current_table.setItem(row, 2, QTableWidgetItem(threads_text))
 
         # Clear empty rows
-        for row in range(len(processes), self.current_table.rowCount()):
+        for row in range(len(data.processes), self.current_table.rowCount()):
             for col in range(self.current_table.columnCount()):
                 self.current_table.setItem(row, col, QTableWidgetItem(""))
 
         # Update history table
-        history = self.monitor.get_history()
-        for row, record in enumerate(history):
+        for row, record in enumerate(data.history):
             if row >= self.history_table.rowCount():
                 break
 
             self.history_table.setItem(row, 0, QTableWidgetItem(record.name))
-            self.history_table.setItem(row, 1, QTableWidgetItem(self.monitor.format_value(record.value, unit)))
+            value_str = monitor.format_value(record.value, unit) if monitor else f"{record.value:.0f}"
+            self.history_table.setItem(row, 1, QTableWidgetItem(value_str))
 
             col = 2
             if is_cpu:
-                cores_text = f"{record.cores_used:.1f}" if record.cores_used >= 0.1 else ""
-                self.history_table.setItem(row, col, QTableWidgetItem(cores_text))
+                threads_text = str(record.threads) if record.threads > 0 else ""
+                self.history_table.setItem(row, col, QTableWidgetItem(threads_text))
                 col += 1
 
             self.history_table.setItem(row, col, QTableWidgetItem(record.time_str))
 
         # Clear empty rows
-        for row in range(len(history), self.history_table.rowCount()):
+        for row in range(len(data.history), self.history_table.rowCount()):
             for col in range(self.history_table.columnCount()):
                 self.history_table.setItem(row, col, QTableWidgetItem(""))
 
@@ -391,5 +520,5 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle close."""
-        self.timer.stop()
+        self.worker.stop()
         super().closeEvent(event)

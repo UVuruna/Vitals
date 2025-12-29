@@ -32,14 +32,14 @@ class MonitorSettings:
     refresh_rate_ms: int = Defaults.REFRESH_RATE_MS
     retention_minutes: int = Defaults.RETENTION_MINUTES
     memory_unit: str = Defaults.MEMORY_UNIT
-    cpu_threads: int = 0
-    ram_gb: int = 0
 
-    def __post_init__(self):
-        if self.cpu_threads == 0:
-            self.cpu_threads = psutil.cpu_count() or 8
-        if self.ram_gb == 0:
-            self.ram_gb = round(psutil.virtual_memory().total / (1024 ** 3))
+    @property
+    def cpu_threads(self) -> int:
+        return psutil.cpu_count() or 8
+
+    @property
+    def ram_gb(self) -> int:
+        return round(psutil.virtual_memory().total / (1024 ** 3))
 
 
 class SettingsDialog(QDialog):
@@ -50,8 +50,8 @@ class SettingsDialog(QDialog):
         self.settings = settings or MonitorSettings()
 
         # Set dark palette for entire dialog
-        self.setWindowTitle("Process Monitor")
-        self.setFixedSize(480, 600)
+        self.setWindowTitle("Process Monitor - Settings")
+        self.setFixedSize(480, 580)
 
         palette = QPalette()
         palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e2e"))
@@ -111,11 +111,11 @@ class SettingsDialog(QDialog):
     def _setup_ui(self):
         """Initialize the UI components."""
         layout = QVBoxLayout(self)
-        layout.setSpacing(20)
-        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(16)
+        layout.setContentsMargins(32, 24, 32, 24)
 
         # Title
-        title = self._make_label("Process Monitor", 22, bold=True)
+        title = self._make_label("Process Monitor", 20, bold=True)
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
@@ -123,17 +123,17 @@ class SettingsDialog(QDialog):
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
 
-        layout.addSpacing(15)
+        layout.addSpacing(12)
 
         # === Monitor Mode ===
-        layout.addWidget(self._make_label("Monitor Mode", 13, bold=True))
+        layout.addWidget(self._make_label("Monitor Mode", 12, bold=True))
 
         mode_row = QHBoxLayout()
         mode_row.setSpacing(10)
 
         self.cpu_btn = QPushButton("CPU Usage")
         self.cpu_btn.setFont(QFont("Segoe UI", 11))
-        self.cpu_btn.setFixedHeight(38)
+        self.cpu_btn.setFixedHeight(36)
         self.cpu_btn.setCheckable(True)
         self.cpu_btn.setChecked(True)
         self.cpu_btn.clicked.connect(lambda: self._set_mode(MonitorMode.CPU))
@@ -141,7 +141,7 @@ class SettingsDialog(QDialog):
 
         self.mem_btn = QPushButton("Memory Usage")
         self.mem_btn.setFont(QFont("Segoe UI", 11))
-        self.mem_btn.setFixedHeight(38)
+        self.mem_btn.setFixedHeight(36)
         self.mem_btn.setCheckable(True)
         self.mem_btn.clicked.connect(lambda: self._set_mode(MonitorMode.MEMORY))
         mode_row.addWidget(self.mem_btn)
@@ -149,10 +149,10 @@ class SettingsDialog(QDialog):
         self._update_mode_buttons()
         layout.addLayout(mode_row)
 
-        layout.addSpacing(10)
+        layout.addSpacing(8)
 
         # === Display Settings ===
-        layout.addWidget(self._make_label("Display Settings", 13, bold=True))
+        layout.addWidget(self._make_label("Display Settings", 12, bold=True))
 
         # Current processes
         row1 = QHBoxLayout()
@@ -212,43 +212,33 @@ class SettingsDialog(QDialog):
         row4.addWidget(self.retention_label)
         layout.addLayout(row4)
 
-        layout.addSpacing(10)
+        layout.addSpacing(8)
 
-        # === System Settings ===
-        layout.addWidget(self._make_label("System Settings", 13, bold=True))
+        # === Memory Settings ===
+        layout.addWidget(self._make_label("Memory Settings", 12, bold=True))
 
         # Memory unit
         row5 = QHBoxLayout()
-        row5.addWidget(self._make_label("Memory unit:", 11, color="#aaaaaa"))
+        row5.addWidget(self._make_label("Display unit:", 11, color="#aaaaaa"))
         row5.addStretch()
         self.unit_combo = self._make_combo(["KB", "MB", "GB"], "MB")
         row5.addWidget(self.unit_combo)
         layout.addLayout(row5)
 
-        # CPU threads
-        row6 = QHBoxLayout()
-        row6.addWidget(self._make_label("CPU threads:", 11, color="#aaaaaa"))
-        row6.addStretch()
-        detected_threads = psutil.cpu_count() or 8
-        self.threads_combo = self._make_combo([str(2**i) for i in range(1, 8)], str(detected_threads))
-        row6.addWidget(self.threads_combo)
-        layout.addLayout(row6)
+        # System info (read-only)
+        cpu_threads = psutil.cpu_count() or 8
+        ram_gb = round(psutil.virtual_memory().total / (1024 ** 3))
 
-        # RAM
-        row7 = QHBoxLayout()
-        row7.addWidget(self._make_label("RAM (GB):", 11, color="#aaaaaa"))
-        row7.addStretch()
-        detected_ram = round(psutil.virtual_memory().total / (1024**3))
-        self.ram_combo = self._make_combo([str(2**i) for i in range(2, 8)], str(detected_ram))
-        row7.addWidget(self.ram_combo)
-        layout.addLayout(row7)
+        info_label = self._make_label(f"Detected: {cpu_threads} CPU threads, {ram_gb} GB RAM", 10, color="#666666")
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(info_label)
 
         layout.addStretch()
 
         # Start Button
         self.start_btn = QPushButton("Start Monitoring")
-        self.start_btn.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
-        self.start_btn.setFixedHeight(50)
+        self.start_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        self.start_btn.setFixedHeight(44)
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.start_btn.setStyleSheet("""
             QPushButton {
@@ -303,8 +293,6 @@ class SettingsDialog(QDialog):
         self.refresh_slider.setValue(self.settings.refresh_rate_ms // 100)
         self.retention_slider.setValue(self.settings.retention_minutes)
         self.unit_combo.setCurrentText(self.settings.memory_unit)
-        self.threads_combo.setCurrentText(str(self.settings.cpu_threads))
-        self.ram_combo.setCurrentText(str(self.settings.ram_gb))
 
     def get_settings(self) -> MonitorSettings:
         """Get settings from UI values."""
@@ -315,6 +303,4 @@ class SettingsDialog(QDialog):
             refresh_rate_ms=self.refresh_slider.value() * 100,
             retention_minutes=self.retention_slider.value(),
             memory_unit=self.unit_combo.currentText(),
-            cpu_threads=int(self.threads_combo.currentText()),
-            ram_gb=int(self.ram_combo.currentText()),
         )

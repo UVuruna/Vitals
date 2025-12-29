@@ -30,7 +30,9 @@ Real-time CPU and Memory usage monitoring for Windows processes.
 | **Dual Mode** | Switch between CPU and Memory monitoring |
 | **Process Aggregation** | Groups sub-processes (e.g., all Chrome tabs as "Chrome") |
 | **Historical Tracking** | Records highest usage with timestamps |
-| **CPU Cores Display** | Shows how many cores each process uses |
+| **Thread Count** | Shows parallel threads per process (CPU mode) |
+| **CPU Temperature** | Optional temp display via WMI (Windows) |
+| **Resizable Panels** | Drag splitter to resize current/history sections |
 
 ---
 
@@ -43,7 +45,7 @@ Real-time CPU and Memory usage monitoring for Windows processes.
 Displays top N processes sorted by resource usage:
 - Process name
 - Resource usage (CPU % or Memory in KB/MB/GB)
-- CPU cores used (for CPU mode)
+- Thread count (for CPU mode)
 
 ### Historical High Usage
 
@@ -68,7 +70,8 @@ Tracks processes that reached peak usage:
 
 ```bash
 # 1. Install dependencies
-pip install PySide6 psutil
+pip install -r requirements.txt
+# Or manually: pip install PySide6 psutil WMI
 
 # 2. Run the application
 python main.py
@@ -187,8 +190,9 @@ Similar processes are grouped together:
 
 - Python 3.11+
 - Windows 10/11
-- PySide6
-- psutil
+- PySide6 >= 6.5.0
+- psutil >= 5.9.0
+- WMI >= 1.5.1 (optional, for CPU temperature)
 
 ---
 

@@ -45,7 +45,7 @@ Information about a process or process group.
 |-----------|------|-------------|
 | `name` | str | Process display name |
 | `value` | float | CPU % or Memory bytes |
-| `cores_used` | float | Estimated CPU cores |
+| `threads` | int | Number of parallel threads |
 | `timestamp` | float | Time of measurement |
 
 ---
@@ -61,7 +61,7 @@ Historical peak usage record.
 | `name` | str | Process name |
 | `value` | float | Peak value |
 | `timestamp` | float | When peak occurred |
-| `cores_used` | float | Cores at peak |
+| `threads` | int | Threads at peak |
 
 #### Properties
 
@@ -106,9 +106,9 @@ ProcessMonitor(
 | `update_history(processes)` | Update peak records |
 | `get_history()` | Get history records |
 | `format_value(value, unit)` | Format for display |
-| `format_cores(cores)` | Format cores for display |
 | `get_total_display(unit)` | Get total usage string |
 | `get_max_display(unit)` | Get peak usage string |
+| `get_cpu_temperature()` | Get CPU temp in Celsius |
 
 ---
 
@@ -125,17 +125,18 @@ Similar processes are grouped under common names:
 
 ---
 
-## CPU Cores Calculation
+## Thread Count
 
-CPU cores used is estimated as:
+The `threads` field shows the actual number of parallel threads used by each process group, obtained via `psutil.Process.num_threads()`.
 
-```python
-cores_used = cpu_percent / 100.0
-```
+---
 
-For example:
-- 150% CPU = 1.5 cores
-- 50% CPU = 0.5 cores
+## CPU Temperature
+
+Optional CPU temperature monitoring via:
+1. `psutil.sensors_temperatures()` (Linux)
+2. WMI `MSAcpi_ThermalZoneTemperature` (Windows)
+3. OpenHardwareMonitor WMI interface (if running)
 
 ---
 

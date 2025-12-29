@@ -14,7 +14,9 @@ Requirements:
 """
 
 import sys
+from pathlib import Path
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from app import MainWindow
@@ -28,6 +30,11 @@ def main():
     app.setApplicationName("Process Monitor")
     app.setApplicationVersion("2.0.0")
     app.setOrganizationName("PC Gadgets")
+
+    # Set app icon
+    icon_path = Path(__file__).parent / "assets" / "icon.svg"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
 
     # Create and show main window
     window = MainWindow()
