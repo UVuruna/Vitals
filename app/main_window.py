@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QSplitter,
+    QSplitterHandle,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -23,6 +24,27 @@ from PySide6.QtWidgets import (
 
 from .monitor import MonitorMode, MonitorWorker, MonitorData
 from .settings_dialog import MonitorSettings, SettingsDialog
+
+
+class DoubleClickSplitterHandle(QSplitterHandle):
+    """Splitter handle that resets to 50-50 on double-click."""
+
+    def mouseDoubleClickEvent(self, event):
+        """Reset splitter to equal sizes on double-click."""
+        splitter = self.splitter()
+        if splitter:
+            total = sum(splitter.sizes())
+            equal_size = total // 2
+            splitter.setSizes([equal_size, total - equal_size])
+        super().mouseDoubleClickEvent(event)
+
+
+class DoubleClickSplitter(QSplitter):
+    """Splitter with double-click to reset to 50-50 split."""
+
+    def createHandle(self):
+        """Create custom handle."""
+        return DoubleClickSplitterHandle(self.orientation(), self)
 
 
 class MainWindow(QMainWindow):
@@ -155,8 +177,8 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self.header_widget)
 
-        # Splitter for resizable sections
-        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        # Splitter for resizable sections (double-click resets to 50-50)
+        self.splitter = DoubleClickSplitter(Qt.Orientation.Vertical)
         self.splitter.setStyleSheet(f"""
             QSplitter::handle {{
                 background-color: {self.HEADER_COLOR};
@@ -178,7 +200,7 @@ class MainWindow(QMainWindow):
         self.current_title.setStyleSheet(f"color: {self.TEXT};")
         current_layout.addWidget(self.current_title)
 
-        self.current_table = self._create_table(7, has_cores=True, bg_color=self.CURRENT_BG)
+        self.current_table = self._create_table(7, mode_cols="cpu", bg_color=self.CURRENT_BG)
         current_layout.addWidget(self.current_table)
 
         self.splitter.addWidget(self.current_section)
@@ -194,7 +216,7 @@ class MainWindow(QMainWindow):
         self.history_title.setStyleSheet(f"color: {self.TEXT};")
         history_layout.addWidget(self.history_title)
 
-        self.history_table = self._create_table(4, has_cores=True, has_time=True, bg_color=self.HISTORY_BG)
+        self.history_table = self._create_table(4, mode_cols="cpu", has_time=True, bg_color=self.HISTORY_BG)
         history_layout.addWidget(self.history_table)
 
         self.splitter.addWidget(self.history_section)
@@ -269,17 +291,24 @@ class MainWindow(QMainWindow):
         pause_action.triggered.connect(self._toggle_pause)
         view_menu.addAction(pause_action)
 
-    def _create_table(self, rows: int, has_cores: bool = False, has_time: bool = False, bg_color: str = None) -> QTableWidget:
-        """Create a styled table."""
+    def _create_table(self, rows: int, mode_cols: str = "none", has_time: bool = False, bg_color: str = None) -> QTableWidget:
+        """Create a styled table.
+
+        Args:
+            rows: Number of rows
+            mode_cols: "cpu" for Cores/Threads, "mem" for USS/VMS, "none" for no extra cols
+            has_time: Add Time column
+            bg_color: Background color
+        """
         if bg_color is None:
             bg_color = self.CARD_COLOR
 
-        cols = 2  # Process, Usage
-        headers = ["Process", "Usage"]
+        cols = 3  # #, Process, Usage
+        headers = ["#", "Process", "Usage"]
 
-        if has_cores:
-            cols += 1
-            headers.append("Threads")
+        if mode_cols == "cpu":
+            cols += 2
+            headers.extend(["Cores", "Threads"])
         if has_time:
             cols += 1
             headers.append("Time")
@@ -293,12 +322,22 @@ class MainWindow(QMainWindow):
 
         # Column widths
         header = table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        table.setColumnWidth(1, 100)
+        # # column (row number)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        table.setColumnWidth(0, 35)
+        # Process column (stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        # Usage column
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        table.setColumnWidth(2, 100)
 
-        col_idx = 2
-        if has_cores:
+        col_idx = 3
+        if mode_cols == "cpu":
+            # Cores column
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Fixed)
+            table.setColumnWidth(col_idx, 50)
+            col_idx += 1
+            # Threads column
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Fixed)
             table.setColumnWidth(col_idx, 60)
             col_idx += 1
@@ -381,6 +420,7 @@ class MainWindow(QMainWindow):
             return
 
         is_cpu = self.settings.mode == MonitorMode.CPU
+        mode_cols = "cpu" if is_cpu else "none"
 
         # Get section layouts
         current_layout = self.current_section.layout()
@@ -392,16 +432,16 @@ class MainWindow(QMainWindow):
         self.current_table.deleteLater()
         self.history_table.deleteLater()
 
-        # Create new tables - Threads only for CPU mode
+        # Create new tables - CPU gets Cores/Threads, Memory gets USS/VMS
         self.current_table = self._create_table(
             self.settings.current_rows,
-            has_cores=is_cpu,
+            mode_cols=mode_cols,
             has_time=False,
             bg_color=self.CURRENT_BG
         )
         self.history_table = self._create_table(
             self.settings.history_rows,
-            has_cores=is_cpu,
+            mode_cols=mode_cols,
             has_time=True,
             bg_color=self.HISTORY_BG
         )
@@ -445,11 +485,11 @@ class MainWindow(QMainWindow):
         hwinfo = data.hwinfo
 
         if is_cpu:
-            # CPU mode: show CPU temps + power in 3 columns
+            # CPU mode: show CPU temp, power, EDC in 3 columns
             sensors = [
-                (f"Tctl: {hwinfo.cpu_tctl:.0f}°C", hwinfo.cpu_tctl) if hwinfo.cpu_tctl else ("", None),
-                (f"{hwinfo.cpu_power:.1f} W", None) if hwinfo.cpu_power else ("", None),
-                (f"CCD1: {hwinfo.cpu_ccd1:.0f}°C", hwinfo.cpu_ccd1) if hwinfo.cpu_ccd1 else ("", None),
+                (f"Tctl: {hwinfo.cpu_tctl:.1f}°C", hwinfo.cpu_tctl) if hwinfo.cpu_tctl else ("", None),
+                (f"PPT: {hwinfo.cpu_power:.1f} W", None) if hwinfo.cpu_power else ("", None),
+                (f"EDC: {hwinfo.cpu_edc:.1f} A", None) if hwinfo.cpu_edc else ("", None),
             ]
             for i, (text, value) in enumerate(sensors):
                 self.sensor_labels[i].setText(text)
@@ -459,7 +499,7 @@ class MainWindow(QMainWindow):
         else:
             # Memory mode: show ambient temp and DRAM bandwidth
             extras = [
-                (f"Amb: {hwinfo.ambient_temp:.0f}°C", hwinfo.ambient_temp) if hwinfo.ambient_temp else ("", None),
+                (f"Amb: {hwinfo.ambient_temp:.1f}°C", hwinfo.ambient_temp) if hwinfo.ambient_temp else ("", None),
                 (f"R: {hwinfo.dram_read:,.0f} MB/s", None) if hwinfo.dram_read else ("", None),
                 (f"W: {hwinfo.dram_write:,.0f} MB/s", None) if hwinfo.dram_write else ("", None),
             ]
@@ -474,13 +514,19 @@ class MainWindow(QMainWindow):
             if row >= self.current_table.rowCount():
                 break
 
-            self.current_table.setItem(row, 0, QTableWidgetItem(proc.name))
+            # Row number
+            self.current_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+            self.current_table.setItem(row, 1, QTableWidgetItem(proc.name))
             value_str = monitor.format_value(proc.value, unit) if monitor else f"{proc.value:.0f}"
-            self.current_table.setItem(row, 1, QTableWidgetItem(value_str))
+            self.current_table.setItem(row, 2, QTableWidgetItem(value_str))
 
             if is_cpu:
+                # Cores column
+                cores_text = str(proc.cores) if proc.cores > 0 else ""
+                self.current_table.setItem(row, 3, QTableWidgetItem(cores_text))
+                # Threads column
                 threads_text = str(proc.threads) if proc.threads > 0 else ""
-                self.current_table.setItem(row, 2, QTableWidgetItem(threads_text))
+                self.current_table.setItem(row, 4, QTableWidgetItem(threads_text))
 
         # Clear empty rows
         for row in range(len(data.processes), self.current_table.rowCount()):
@@ -492,12 +538,19 @@ class MainWindow(QMainWindow):
             if row >= self.history_table.rowCount():
                 break
 
-            self.history_table.setItem(row, 0, QTableWidgetItem(record.name))
+            # Row number
+            self.history_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+            self.history_table.setItem(row, 1, QTableWidgetItem(record.name))
             value_str = monitor.format_value(record.value, unit) if monitor else f"{record.value:.0f}"
-            self.history_table.setItem(row, 1, QTableWidgetItem(value_str))
+            self.history_table.setItem(row, 2, QTableWidgetItem(value_str))
 
-            col = 2
+            col = 3
             if is_cpu:
+                # Cores column
+                cores_text = str(record.cores) if record.cores > 0 else ""
+                self.history_table.setItem(row, col, QTableWidgetItem(cores_text))
+                col += 1
+                # Threads column
                 threads_text = str(record.threads) if record.threads > 0 else ""
                 self.history_table.setItem(row, col, QTableWidgetItem(threads_text))
                 col += 1

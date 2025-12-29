@@ -32,7 +32,7 @@ class HWiNFOData:
     # CPU mode sensors
     cpu_tctl: Optional[float] = None      # CPU (Tctl/Tdie)
     cpu_power: Optional[float] = None     # CPU Package Power (W)
-    cpu_ccd1: Optional[float] = None      # CPU CCD1 (Tdie)
+    cpu_edc: Optional[float] = None       # CPU EDC (Electrical Design Current %)
 
     # Memory mode sensors
     ambient_temp: Optional[float] = None  # Motherboard/Ambient
@@ -60,6 +60,45 @@ _CloseHandle.argtypes = [wintypes.HANDLE]
 _CloseHandle.restype = wintypes.BOOL
 
 _FILE_MAP_READ = 0x0004
+
+# Windows API for thread processor info
+_THREAD_QUERY_INFORMATION = 0x0040
+
+class _PROCESSOR_NUMBER(ctypes.Structure):
+    """Windows PROCESSOR_NUMBER structure."""
+    _fields_ = [
+        ("Group", ctypes.c_ushort),
+        ("Number", ctypes.c_ubyte),
+        ("Reserved", ctypes.c_ubyte),
+    ]
+
+_OpenThread = _kernel32.OpenThread
+_OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+_OpenThread.restype = wintypes.HANDLE
+
+_GetThreadIdealProcessorEx = _kernel32.GetThreadIdealProcessorEx
+_GetThreadIdealProcessorEx.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PROCESSOR_NUMBER)]
+_GetThreadIdealProcessorEx.restype = wintypes.BOOL
+
+
+def get_process_cores(pid: int) -> int:
+    """Get number of unique CPU cores used by a process (via ideal processor)."""
+    try:
+        proc = psutil.Process(pid)
+        thread_ids = [t.id for t in proc.threads()]
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return 0
+
+    cores_used: set[int] = set()
+    for tid in thread_ids:
+        handle = _OpenThread(_THREAD_QUERY_INFORMATION, False, tid)
+        if handle:
+            pn = _PROCESSOR_NUMBER()
+            if _GetThreadIdealProcessorEx(handle, ctypes.byref(pn)):
+                cores_used.add(pn.Number)
+            _CloseHandle(handle)
+
+    return len(cores_used)
 
 
 class _HWiNFOHeader(ctypes.Structure):
@@ -104,7 +143,7 @@ class HWiNFOSharedMemory:
     # Sensor targets to find (key -> dataclass attribute)
     TARGETS = [
         ("cpu (tctl/tdie)", "cpu_tctl"),
-        ("cpu ccd1 (tdie)", "cpu_ccd1"),
+        ("cpu edc", "cpu_edc"),
         ("cpu package power", "cpu_power"),
         ("ambient temperature", "ambient_temp"),
         ("dram read bandwidth", "dram_read"),
@@ -185,7 +224,7 @@ class HWiNFOSharedMemory:
     def get_cpu_temp(self) -> Optional[float]:
         """Get primary CPU temperature (Tctl/Tdie preferred)."""
         data = self.get_sensors()
-        return data.cpu_tctl or data.cpu_temp or data.cpu_ccd1
+        return data.cpu_tctl
 
 
 # Global HWiNFO reader instance
@@ -207,7 +246,10 @@ class ProcessInfo:
 
     name: str
     value: float  # CPU % or Memory bytes
-    threads: int = 0  # Number of threads (parallel processes)
+    threads: int = 0  # Number of threads (OS threads)
+    cores: int = 0    # Number of unique CPU cores used
+    page_faults: int = 0  # Page faults count (memory mode)
+    vms: int = 0          # Virtual Memory Size (commit size)
     timestamp: float = field(default_factory=time.time)
 
     def __post_init__(self):
@@ -222,7 +264,10 @@ class HistoryRecord:
     name: str
     value: float
     timestamp: float
-    threads: int = 0  # Number of threads at peak
+    threads: int = 0       # Number of threads at peak
+    cores: int = 0         # Number of cores at peak
+    page_faults: int = 0   # Page faults at peak (memory mode)
+    vms: int = 0           # VMS at peak (memory mode)
 
     @property
     def time_str(self) -> str:
@@ -385,12 +430,14 @@ class ProcessMonitor:
 
     def _get_cpu_processes(self, limit: int) -> list[ProcessInfo]:
         """Get CPU usage per process."""
-        aggregated: dict[str, tuple[float, int]] = defaultdict(lambda: (0.0, 0))  # (cpu%, threads)
+        # (cpu%, threads, pids)
+        aggregated: dict[str, tuple[float, int, list[int]]] = defaultdict(lambda: (0.0, 0, []))
         total_cpu = 0.0
 
-        for proc in psutil.process_iter(['name', 'cpu_percent', 'num_threads']):
+        for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'num_threads']):
             try:
                 info = proc.info
+                pid = info['pid']
                 name = info['name']
                 cpu_pct = info['cpu_percent']
                 num_threads = info.get('num_threads', 0) or 0
@@ -405,7 +452,11 @@ class ProcessMonitor:
 
                 display_name = get_process_display_name(name)
                 current = aggregated[display_name]
-                aggregated[display_name] = (current[0] + cpu_pct, current[1] + num_threads)
+                aggregated[display_name] = (
+                    current[0] + cpu_pct,
+                    current[1] + num_threads,
+                    current[2] + [pid],
+                )
 
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
@@ -418,22 +469,40 @@ class ProcessMonitor:
             self.stats.max_usage = total_cpu
             self.stats.max_usage_time = datetime.now()
 
-        # Convert to ProcessInfo list
+        # Sort by CPU usage to find top N
+        sorted_items = sorted(aggregated.items(), key=lambda x: x[1][0], reverse=True)
+
+        # Convert to ProcessInfo list, getting cores only for top N
         processes = []
-        for name, (cpu_pct, threads) in aggregated.items():
+        for i, (name, (cpu_pct, threads, pids)) in enumerate(sorted_items[:limit]):
+            # Get cores for this process group (expensive, only for top N)
+            cores_set: set[int] = set()
+            for pid in pids:
+                try:
+                    p = psutil.Process(pid)
+                    for t in p.threads():
+                        handle = _OpenThread(_THREAD_QUERY_INFORMATION, False, t.id)
+                        if handle:
+                            pn = _PROCESSOR_NUMBER()
+                            if _GetThreadIdealProcessorEx(handle, ctypes.byref(pn)):
+                                cores_set.add(pn.Number)
+                            _CloseHandle(handle)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
             processes.append(ProcessInfo(
                 name=name,
                 value=cpu_pct,
                 threads=threads,
+                cores=len(cores_set),
             ))
 
-        # Sort by usage and limit
-        processes.sort(key=lambda p: p.value, reverse=True)
-        return processes[:limit]
+        return processes
 
     def _get_memory_processes(self, limit: int) -> list[ProcessInfo]:
         """Get memory usage per process."""
-        aggregated: dict[str, int] = defaultdict(int)
+        # (rss, page_faults, vms)
+        aggregated: dict[str, tuple[int, int, int]] = defaultdict(lambda: (0, 0, 0))
         total_memory = 0
 
         for proc in psutil.process_iter(['name', 'memory_info']):
@@ -446,9 +515,18 @@ class ProcessMonitor:
                     continue
 
                 display_name = get_process_display_name(name)
-                mem_bytes = mem_info.rss
-                aggregated[display_name] += mem_bytes
-                total_memory += mem_bytes
+                rss = mem_info.rss
+                vms = mem_info.vms
+                # Page faults available on Windows via num_page_faults
+                pf = getattr(mem_info, 'num_page_faults', 0) or 0
+
+                current = aggregated[display_name]
+                aggregated[display_name] = (
+                    current[0] + rss,
+                    current[1] + pf,
+                    current[2] + vms,
+                )
+                total_memory += rss
 
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
@@ -461,15 +539,20 @@ class ProcessMonitor:
             self.stats.max_usage = total_memory
             self.stats.max_usage_time = datetime.now()
 
-        # Convert to ProcessInfo list
-        processes = [
-            ProcessInfo(name=name, value=mem_bytes)
-            for name, mem_bytes in aggregated.items()
-        ]
+        # Sort by RSS to find top N
+        sorted_items = sorted(aggregated.items(), key=lambda x: x[1][0], reverse=True)
 
-        # Sort by usage and limit
-        processes.sort(key=lambda p: p.value, reverse=True)
-        return processes[:limit]
+        # Convert to ProcessInfo list
+        processes = []
+        for name, (rss, pf, vms) in sorted_items[:limit]:
+            processes.append(ProcessInfo(
+                name=name,
+                value=rss,
+                page_faults=pf,
+                vms=vms,
+            ))
+
+        return processes
 
     def update_history(self, processes: list[ProcessInfo]):
         """
@@ -506,6 +589,9 @@ class ProcessMonitor:
                         value=proc.value,
                         timestamp=now,
                         threads=proc.threads,
+                        cores=proc.cores,
+                        page_faults=proc.page_faults,
+                        vms=proc.vms,
                     )
             else:
                 # Add new record if we have space or this beats the lowest
@@ -515,6 +601,9 @@ class ProcessMonitor:
                         value=proc.value,
                         timestamp=now,
                         threads=proc.threads,
+                        cores=proc.cores,
+                        page_faults=proc.page_faults,
+                        vms=proc.vms,
                     ))
                 elif self.history and proc.value > self.history[-1].value:
                     # Replace lowest record
@@ -523,6 +612,9 @@ class ProcessMonitor:
                         value=proc.value,
                         timestamp=now,
                         threads=proc.threads,
+                        cores=proc.cores,
+                        page_faults=proc.page_faults,
+                        vms=proc.vms,
                     )
 
         # Sort history by value (descending)
