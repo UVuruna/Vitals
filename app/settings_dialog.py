@@ -2,12 +2,14 @@
 Settings Dialog - Simple and Working
 """
 
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import psutil
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QPalette, QColor
+from PySide6.QtGui import QFont, QIcon, QPalette, QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -21,6 +23,13 @@ from PySide6.QtWidgets import (
 
 from .monitor import MonitorMode
 from .styles import Defaults
+
+
+def get_base_path() -> Path:
+    """Get base path for resources (handles PyInstaller frozen exe)."""
+    if getattr(sys, 'frozen', False):
+        return Path(sys._MEIPASS)
+    return Path(__file__).parent.parent
 
 
 @dataclass
@@ -52,6 +61,11 @@ class SettingsDialog(QDialog):
         # Set dark palette for entire dialog
         self.setWindowTitle("Process Monitor - Settings")
         self.setFixedSize(480, 580)
+
+        # Set window icon
+        icon_path = get_base_path() / "assets" / "icon.ico"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
 
         palette = QPalette()
         palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e2e"))

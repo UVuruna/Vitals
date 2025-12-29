@@ -1,9 +1,0 @@
-{
-  "temp_colors": {
-    "normal": "#ffffff",
-    "warning": "#ffa500",
-    "critical": "#ff4444",
-    "warning_threshold": 60,
-    "critical_threshold": 75
-  }
-}

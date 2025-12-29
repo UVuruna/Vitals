@@ -3,11 +3,21 @@ Main Window - Process Monitor Display
 """
 
 import json
+import sys
 from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QFont, QPalette, QColor
+
+
+def get_base_path() -> Path:
+    """Get base path for resources (handles PyInstaller frozen exe)."""
+    if getattr(sys, 'frozen', False):
+        return Path(sys._MEIPASS)
+    return Path(__file__).parent.parent
+
+
+from PySide6.QtGui import QAction, QFont, QIcon, QPalette, QColor
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
@@ -78,6 +88,14 @@ class MainWindow(QMainWindow):
         self.worker.data_ready.connect(self._on_data_ready)
         self.is_paused = False
 
+        # Set window icon
+        base = get_base_path()
+        icon_path = base / "assets" / "icon.ico"
+        if not icon_path.exists():
+            icon_path = base / "assets" / "icon.svg"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+
         self._load_config()
         self._apply_dark_theme()
         self._setup_ui()
@@ -85,7 +103,7 @@ class MainWindow(QMainWindow):
 
     def _load_config(self):
         """Load temperature color config from JSON."""
-        config_path = Path(__file__).parent.parent / "config.json"
+        config_path = get_base_path() / "config" / "config.json"
         self.temp_config = self.DEFAULT_TEMP_CONFIG.copy()
 
         if config_path.exists():
