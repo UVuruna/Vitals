@@ -1,7 +1,5 @@
 """
-Settings Dialog
-
-Configuration dialog for Process Monitor settings.
+Settings Dialog - Simple and Working
 """
 
 from dataclasses import dataclass
@@ -9,30 +7,25 @@ from typing import Optional
 
 import psutil
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QPalette, QColor
 from PySide6.QtWidgets import (
-    QButtonGroup,
     QComboBox,
     QDialog,
-    QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QRadioButton,
     QSlider,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from .monitor import MonitorMode
-from .styles import Colors, Defaults, Dimensions, Fonts
+from .styles import Defaults
 
 
 @dataclass
 class MonitorSettings:
     """Application settings container."""
-
     mode: MonitorMode = MonitorMode.CPU
     current_rows: int = Defaults.CURRENT_ROWS
     history_rows: int = Defaults.HISTORY_ROWS
@@ -50,249 +43,278 @@ class MonitorSettings:
 
 
 class SettingsDialog(QDialog):
-    """
-    Settings configuration dialog.
-
-    Allows user to configure monitoring mode and display options.
-    """
+    """Settings configuration dialog."""
 
     def __init__(self, parent: Optional[QWidget] = None, settings: Optional[MonitorSettings] = None):
         super().__init__(parent)
         self.settings = settings or MonitorSettings()
+
+        # Set dark palette for entire dialog
+        self.setWindowTitle("Process Monitor")
+        self.setFixedSize(480, 600)
+
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e2e"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#2a2a3e"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Button, QColor("#3a3a4e"))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#e94560"))
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
+
         self._setup_ui()
         self._load_settings()
 
+    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: str = "#ffffff") -> QLabel:
+        """Create a styled label."""
+        label = QLabel(text)
+        weight = QFont.Weight.Bold if bold else QFont.Weight.Normal
+        label.setFont(QFont("Segoe UI", size, weight))
+        label.setStyleSheet(f"color: {color}; background: transparent;")
+        return label
+
+    def _make_combo(self, items: list, default: str, width: int = 100) -> QComboBox:
+        """Create a styled combo box."""
+        combo = QComboBox()
+        combo.addItems(items)
+        combo.setCurrentText(default)
+        combo.setFont(QFont("Segoe UI", 11))
+        combo.setFixedWidth(width)
+        combo.setFixedHeight(32)
+        combo.setStyleSheet("""
+            QComboBox {
+                background-color: #3a3a4e;
+                color: #ffffff;
+                border: 1px solid #4a4a5e;
+                border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 24px;
+            }
+            QComboBox::down-arrow {
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #ffffff;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #3a3a4e;
+                color: #ffffff;
+                selection-background-color: #e94560;
+            }
+        """)
+        return combo
+
     def _setup_ui(self):
         """Initialize the UI components."""
-        self.setWindowTitle("Process Monitor - Settings")
-        self.setFixedSize(Dimensions.SETTINGS_WIDTH, Dimensions.SETTINGS_HEIGHT)
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {Colors.BACKGROUND};
-            }}
-            QGroupBox {{
-                font-family: {Fonts.FAMILY};
-                font-size: {Fonts.SIZE_BODY}pt;
-                font-weight: bold;
-                border: 1px solid #ccc;
-                border-radius: 6px;
-                margin-top: 12px;
-                padding-top: 10px;
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-            }}
-            QLabel {{
-                font-family: {Fonts.FAMILY};
-                font-size: {Fonts.SIZE_BODY}pt;
-            }}
-            QPushButton {{
-                font-family: {Fonts.FAMILY};
-                font-size: {Fonts.SIZE_BODY}pt;
-                padding: 8px 20px;
-                border-radius: 4px;
-            }}
-            QPushButton#startButton {{
-                background-color: {Colors.ACCENT_CPU};
-                color: white;
-                font-weight: bold;
-            }}
-            QPushButton#startButton:hover {{
-                background-color: #FF5252;
-            }}
-            QComboBox, QSpinBox {{
-                font-family: {Fonts.FAMILY};
-                font-size: {Fonts.SIZE_BODY}pt;
-                padding: 4px;
-            }}
-            QSlider::groove:horizontal {{
-                height: 6px;
-                background: #ddd;
-                border-radius: 3px;
-            }}
-            QSlider::handle:horizontal {{
-                background: {Colors.ACCENT_CPU};
-                width: 16px;
-                margin: -5px 0;
-                border-radius: 8px;
-            }}
-        """)
-
         layout = QVBoxLayout(self)
-        layout.setSpacing(Dimensions.SPACING)
-        layout.setContentsMargins(
-            Dimensions.MARGIN,
-            Dimensions.MARGIN,
-            Dimensions.MARGIN,
-            Dimensions.MARGIN,
-        )
+        layout.setSpacing(20)
+        layout.setContentsMargins(30, 30, 30, 30)
 
-        # Monitor Mode Group
-        mode_group = self._create_mode_group()
-        layout.addWidget(mode_group)
+        # Title
+        title = self._make_label("Process Monitor", 22, bold=True)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
 
-        # Display Settings Group
-        display_group = self._create_display_group()
-        layout.addWidget(display_group)
+        subtitle = self._make_label("Configure monitoring preferences", 10, color="#888888")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(subtitle)
 
-        # System Settings Group
-        system_group = self._create_system_group()
-        layout.addWidget(system_group)
+        layout.addSpacing(15)
 
-        # Buttons
-        layout.addStretch()
-        button_layout = self._create_buttons()
-        layout.addLayout(button_layout)
+        # === Monitor Mode ===
+        layout.addWidget(self._make_label("Monitor Mode", 13, bold=True))
 
-    def _create_mode_group(self) -> QGroupBox:
-        """Create monitor mode selection group."""
-        group = QGroupBox("Monitor Mode")
-        layout = QHBoxLayout(group)
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(10)
 
-        self.mode_group = QButtonGroup(self)
+        self.cpu_btn = QPushButton("CPU Usage")
+        self.cpu_btn.setFont(QFont("Segoe UI", 11))
+        self.cpu_btn.setFixedHeight(38)
+        self.cpu_btn.setCheckable(True)
+        self.cpu_btn.setChecked(True)
+        self.cpu_btn.clicked.connect(lambda: self._set_mode(MonitorMode.CPU))
+        mode_row.addWidget(self.cpu_btn)
 
-        self.cpu_radio = QRadioButton("CPU Usage")
-        self.cpu_radio.setChecked(True)
-        self.mode_group.addButton(self.cpu_radio, 0)
-        layout.addWidget(self.cpu_radio)
+        self.mem_btn = QPushButton("Memory Usage")
+        self.mem_btn.setFont(QFont("Segoe UI", 11))
+        self.mem_btn.setFixedHeight(38)
+        self.mem_btn.setCheckable(True)
+        self.mem_btn.clicked.connect(lambda: self._set_mode(MonitorMode.MEMORY))
+        mode_row.addWidget(self.mem_btn)
 
-        self.memory_radio = QRadioButton("Memory Usage")
-        self.mode_group.addButton(self.memory_radio, 1)
-        layout.addWidget(self.memory_radio)
+        self._update_mode_buttons()
+        layout.addLayout(mode_row)
 
-        layout.addStretch()
+        layout.addSpacing(10)
 
-        return group
+        # === Display Settings ===
+        layout.addWidget(self._make_label("Display Settings", 13, bold=True))
 
-    def _create_display_group(self) -> QGroupBox:
-        """Create display settings group."""
-        group = QGroupBox("Display Settings")
-        layout = QFormLayout(group)
+        # Current processes
+        row1 = QHBoxLayout()
+        row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
+        row1.addStretch()
+        self.current_combo = self._make_combo([str(i) for i in range(1, 16)], "7")
+        row1.addWidget(self.current_combo)
+        layout.addLayout(row1)
 
-        # Current rows
-        self.current_rows_spin = QSpinBox()
-        self.current_rows_spin.setRange(1, 15)
-        self.current_rows_spin.setValue(Defaults.CURRENT_ROWS)
-        layout.addRow("Current processes:", self.current_rows_spin)
+        # History records
+        row2 = QHBoxLayout()
+        row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
+        row2.addStretch()
+        self.history_combo = self._make_combo([str(i) for i in range(1, 16)], "4")
+        row2.addWidget(self.history_combo)
+        layout.addLayout(row2)
 
-        # History rows
-        self.history_rows_spin = QSpinBox()
-        self.history_rows_spin.setRange(1, 15)
-        self.history_rows_spin.setValue(Defaults.HISTORY_ROWS)
-        layout.addRow("History records:", self.history_rows_spin)
-
-        # Refresh rate slider
-        refresh_container = QWidget()
-        refresh_layout = QHBoxLayout(refresh_container)
-        refresh_layout.setContentsMargins(0, 0, 0, 0)
-
+        # Refresh rate
+        row3 = QHBoxLayout()
+        row3.addWidget(self._make_label("Refresh rate:", 11, color="#aaaaaa"))
+        row3.addStretch()
         self.refresh_slider = QSlider(Qt.Orientation.Horizontal)
-        self.refresh_slider.setRange(5, 50)  # 500ms to 5000ms (in 100ms steps)
-        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 100)
-        self.refresh_slider.valueChanged.connect(self._on_refresh_changed)
-        refresh_layout.addWidget(self.refresh_slider)
+        self.refresh_slider.setRange(5, 50)
+        self.refresh_slider.setValue(20)
+        self.refresh_slider.setFixedWidth(140)
+        self.refresh_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
+        """)
+        row3.addWidget(self.refresh_slider)
+        self.refresh_label = self._make_label("2000 ms", 11)
+        self.refresh_label.setFixedWidth(65)
+        self.refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 100} ms"))
+        row3.addWidget(self.refresh_label)
+        layout.addLayout(row3)
 
-        self.refresh_label = QLabel(f"{Defaults.REFRESH_RATE_MS} ms")
-        self.refresh_label.setMinimumWidth(60)
-        refresh_layout.addWidget(self.refresh_label)
-
-        layout.addRow("Refresh rate:", refresh_container)
-
-        # Retention time slider
-        retention_container = QWidget()
-        retention_layout = QHBoxLayout(retention_container)
-        retention_layout.setContentsMargins(0, 0, 0, 0)
-
+        # History retention
+        row4 = QHBoxLayout()
+        row4.addWidget(self._make_label("History retention:", 11, color="#aaaaaa"))
+        row4.addStretch()
         self.retention_slider = QSlider(Qt.Orientation.Horizontal)
         self.retention_slider.setRange(10, 360)
-        self.retention_slider.setValue(Defaults.RETENTION_MINUTES)
-        self.retention_slider.valueChanged.connect(self._on_retention_changed)
-        retention_layout.addWidget(self.retention_slider)
+        self.retention_slider.setValue(120)
+        self.retention_slider.setFixedWidth(140)
+        self.retention_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
+        """)
+        row4.addWidget(self.retention_slider)
+        self.retention_label = self._make_label("120 min", 11)
+        self.retention_label.setFixedWidth(65)
+        self.retention_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.retention_slider.valueChanged.connect(lambda v: self.retention_label.setText(f"{v} min"))
+        row4.addWidget(self.retention_label)
+        layout.addLayout(row4)
 
-        self.retention_label = QLabel(f"{Defaults.RETENTION_MINUTES} min")
-        self.retention_label.setMinimumWidth(60)
-        retention_layout.addWidget(self.retention_label)
+        layout.addSpacing(10)
 
-        layout.addRow("History retention:", retention_container)
-
-        return group
-
-    def _create_system_group(self) -> QGroupBox:
-        """Create system settings group."""
-        group = QGroupBox("System Settings")
-        layout = QFormLayout(group)
+        # === System Settings ===
+        layout.addWidget(self._make_label("System Settings", 13, bold=True))
 
         # Memory unit
-        self.memory_unit_combo = QComboBox()
-        self.memory_unit_combo.addItems(["KB", "MB", "GB"])
-        self.memory_unit_combo.setCurrentText(Defaults.MEMORY_UNIT)
-        layout.addRow("Memory unit:", self.memory_unit_combo)
+        row5 = QHBoxLayout()
+        row5.addWidget(self._make_label("Memory unit:", 11, color="#aaaaaa"))
+        row5.addStretch()
+        self.unit_combo = self._make_combo(["KB", "MB", "GB"], "MB")
+        row5.addWidget(self.unit_combo)
+        layout.addLayout(row5)
 
         # CPU threads
+        row6 = QHBoxLayout()
+        row6.addWidget(self._make_label("CPU threads:", 11, color="#aaaaaa"))
+        row6.addStretch()
         detected_threads = psutil.cpu_count() or 8
-        self.cpu_threads_combo = QComboBox()
-        thread_options = [str(2 ** i) for i in range(1, 8)]  # 2, 4, 8, 16, 32, 64, 128
-        self.cpu_threads_combo.addItems(thread_options)
-        self.cpu_threads_combo.setCurrentText(str(detected_threads))
-        layout.addRow("CPU threads:", self.cpu_threads_combo)
+        self.threads_combo = self._make_combo([str(2**i) for i in range(1, 8)], str(detected_threads))
+        row6.addWidget(self.threads_combo)
+        layout.addLayout(row6)
 
         # RAM
-        detected_ram = round(psutil.virtual_memory().total / (1024 ** 3))
-        self.ram_combo = QComboBox()
-        ram_options = [str(2 ** i) for i in range(2, 8)]  # 4, 8, 16, 32, 64, 128
-        self.ram_combo.addItems(ram_options)
-        self.ram_combo.setCurrentText(str(detected_ram))
-        layout.addRow("RAM (GB):", self.ram_combo)
+        row7 = QHBoxLayout()
+        row7.addWidget(self._make_label("RAM (GB):", 11, color="#aaaaaa"))
+        row7.addStretch()
+        detected_ram = round(psutil.virtual_memory().total / (1024**3))
+        self.ram_combo = self._make_combo([str(2**i) for i in range(2, 8)], str(detected_ram))
+        row7.addWidget(self.ram_combo)
+        layout.addLayout(row7)
 
-        return group
-
-    def _create_buttons(self) -> QHBoxLayout:
-        """Create dialog buttons."""
-        layout = QHBoxLayout()
         layout.addStretch()
 
-        self.start_button = QPushButton("Start Monitoring")
-        self.start_button.setObjectName("startButton")
-        self.start_button.clicked.connect(self.accept)
-        layout.addWidget(self.start_button)
+        # Start Button
+        self.start_btn = QPushButton("Start Monitoring")
+        self.start_btn.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        self.start_btn.setFixedHeight(50)
+        self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.start_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #e94560;
+                color: white;
+                border: none;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #ff6b6b;
+            }
+        """)
+        self.start_btn.clicked.connect(self.accept)
+        layout.addWidget(self.start_btn)
 
-        return layout
+    def _update_mode_buttons(self):
+        """Update mode button styles."""
+        active_style = """
+            QPushButton {
+                background-color: #e94560;
+                color: white;
+                border: none;
+                border-radius: 6px;
+            }
+        """
+        inactive_style = """
+            QPushButton {
+                background-color: #3a3a4e;
+                color: #888888;
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a5e;
+            }
+        """
+        self.cpu_btn.setStyleSheet(active_style if self.cpu_btn.isChecked() else inactive_style)
+        self.mem_btn.setStyleSheet(active_style if self.mem_btn.isChecked() else inactive_style)
 
-    def _on_refresh_changed(self, value: int):
-        """Handle refresh rate slider change."""
-        ms = value * 100
-        self.refresh_label.setText(f"{ms} ms")
-
-    def _on_retention_changed(self, value: int):
-        """Handle retention slider change."""
-        self.retention_label.setText(f"{value} min")
+    def _set_mode(self, mode: MonitorMode):
+        """Set monitoring mode."""
+        is_cpu = mode == MonitorMode.CPU
+        self.cpu_btn.setChecked(is_cpu)
+        self.mem_btn.setChecked(not is_cpu)
+        self._update_mode_buttons()
 
     def _load_settings(self):
         """Load current settings into UI."""
-        if self.settings.mode == MonitorMode.MEMORY:
-            self.memory_radio.setChecked(True)
-        else:
-            self.cpu_radio.setChecked(True)
-
-        self.current_rows_spin.setValue(self.settings.current_rows)
-        self.history_rows_spin.setValue(self.settings.history_rows)
+        self._set_mode(self.settings.mode)
+        self.current_combo.setCurrentText(str(self.settings.current_rows))
+        self.history_combo.setCurrentText(str(self.settings.history_rows))
         self.refresh_slider.setValue(self.settings.refresh_rate_ms // 100)
         self.retention_slider.setValue(self.settings.retention_minutes)
-        self.memory_unit_combo.setCurrentText(self.settings.memory_unit)
-        self.cpu_threads_combo.setCurrentText(str(self.settings.cpu_threads))
+        self.unit_combo.setCurrentText(self.settings.memory_unit)
+        self.threads_combo.setCurrentText(str(self.settings.cpu_threads))
         self.ram_combo.setCurrentText(str(self.settings.ram_gb))
 
     def get_settings(self) -> MonitorSettings:
         """Get settings from UI values."""
         return MonitorSettings(
-            mode=MonitorMode.MEMORY if self.memory_radio.isChecked() else MonitorMode.CPU,
-            current_rows=self.current_rows_spin.value(),
-            history_rows=self.history_rows_spin.value(),
+            mode=MonitorMode.CPU if self.cpu_btn.isChecked() else MonitorMode.MEMORY,
+            current_rows=int(self.current_combo.currentText()),
+            history_rows=int(self.history_combo.currentText()),
             refresh_rate_ms=self.refresh_slider.value() * 100,
             retention_minutes=self.retention_slider.value(),
-            memory_unit=self.memory_unit_combo.currentText(),
-            cpu_threads=int(self.cpu_threads_combo.currentText()),
+            memory_unit=self.unit_combo.currentText(),
+            cpu_threads=int(self.threads_combo.currentText()),
             ram_gb=int(self.ram_combo.currentText()),
         )
