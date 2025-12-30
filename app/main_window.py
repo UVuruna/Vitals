@@ -32,8 +32,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .monitor import MonitorMode, MonitorWorker, MonitorData
-from .settings_dialog import MonitorSettings, SettingsDialog
+from .monitor import MonitorMode, MonitorData, SharedDataCollector
+from .settings_dialog import (
+    InitialSettings,
+    CPUSettings,
+    MemorySettings,
+    CPUSettingsDialog,
+    MemorySettingsDialog,
+)
 
 
 class DoubleClickSplitterHandle(QSplitterHandle):
@@ -57,8 +63,8 @@ class DoubleClickSplitter(QSplitter):
         return DoubleClickSplitterHandle(self.orientation(), self)
 
 
-class MainWindow(QMainWindow):
-    """Main application window."""
+class BaseMonitorWindow(QMainWindow):
+    """Base class for monitor windows (CPU and Memory)."""
 
     # Colors matching settings dialog
     BG_COLOR = "#1e1e2e"
@@ -83,9 +89,6 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.settings: Optional[MonitorSettings] = None
-        self.worker = MonitorWorker(self)
-        self.worker.data_ready.connect(self._on_data_ready)
         self.is_paused = False
 
         # Set window icon
@@ -99,8 +102,22 @@ class MainWindow(QMainWindow):
         self._load_config()
         self._apply_dark_theme()
         self._setup_ui()
-        # Delay settings dialog so MainWindow shows first (fixes taskbar icon)
-        QTimer.singleShot(0, self._show_settings)
+
+    def _get_mode(self) -> MonitorMode:
+        """Get the monitor mode. Must be overridden in subclasses."""
+        raise NotImplementedError("Subclasses must implement _get_mode()")
+
+    def _get_title(self) -> str:
+        """Get the window title. Must be overridden in subclasses."""
+        raise NotImplementedError("Subclasses must implement _get_title()")
+
+    def _get_mode_cols(self) -> str:
+        """Get mode columns ('cpu' or 'none'). Must be overridden in subclasses."""
+        raise NotImplementedError("Subclasses must implement _get_mode_cols()")
+
+    def _show_settings(self):
+        """Show settings dialog. Must be overridden in subclasses."""
+        raise NotImplementedError("Subclasses must implement _show_settings()")
 
     def _load_config(self):
         """Load temperature color config from JSON."""
@@ -141,7 +158,7 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self):
         """Initialize the main UI."""
-        self.setWindowTitle("Process Monitor")
+        self.setWindowTitle(self._get_title())
         self.setMinimumWidth(520)
         self.setMinimumHeight(500)
 
@@ -161,7 +178,7 @@ class MainWindow(QMainWindow):
         header_layout = QVBoxLayout(self.header_widget)
         header_layout.setContentsMargins(16, 12, 16, 12)
 
-        self.title_label = QLabel("CPU Monitor")
+        self.title_label = QLabel(self._get_title())
         self.title_label.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         self.title_label.setStyleSheet(f"color: {self.TEXT}; background: transparent;")
         header_layout.addWidget(self.title_label)
@@ -219,7 +236,7 @@ class MainWindow(QMainWindow):
         self.current_title.setStyleSheet(f"color: {self.TEXT};")
         current_layout.addWidget(self.current_title)
 
-        self.current_table = self._create_table(7, mode_cols="cpu", bg_color=self.CURRENT_BG)
+        self.current_table = self._create_table(7, mode_cols=self._get_mode_cols(), bg_color=self.CURRENT_BG)
         current_layout.addWidget(self.current_table)
 
         self.splitter.addWidget(self.current_section)
@@ -235,7 +252,7 @@ class MainWindow(QMainWindow):
         self.history_title.setStyleSheet(f"color: {self.TEXT};")
         history_layout.addWidget(self.history_title)
 
-        self.history_table = self._create_table(4, mode_cols="cpu", has_time=True, bg_color=self.HISTORY_BG)
+        self.history_table = self._create_table(4, mode_cols=self._get_mode_cols(), has_time=True, bg_color=self.HISTORY_BG)
         history_layout.addWidget(self.history_table)
 
         self.splitter.addWidget(self.history_section)
@@ -389,58 +406,87 @@ class MainWindow(QMainWindow):
 
         return table
 
-    def _show_settings(self):
-        """Show settings dialog."""
-        self.worker.stop()
-        is_first_run = self.settings is None
+    def _rebuild_tables(self):
+        """Rebuild tables based on current settings."""
+        raise NotImplementedError("Subclasses must implement _rebuild_tables()")
 
-        dialog = SettingsDialog(self, self.settings)
-        if dialog.exec():
-            new_settings = dialog.get_settings()
-            self._apply_settings(new_settings)
-            self._start_monitoring()
-        elif is_first_run:
-            # Exit app if settings rejected on first run
-            import os
-            os._exit(0)
+    def _toggle_pause(self):
+        """Toggle pause. Must be implemented by subclasses for proper pause/resume."""
+        self.is_paused = not self.is_paused
+        self.pause_btn.setText("Resume" if self.is_paused else "Pause")
 
-    def _apply_settings(self, new_settings: MonitorSettings):
-        """Apply settings, preserving history if mode unchanged."""
-        self.settings = new_settings
+    def _on_data_ready(self, data: MonitorData):
+        """Handle data from collector (runs on main thread via signal)."""
+        raise NotImplementedError("Subclasses must implement _on_data_ready()")
 
-        # Configure the worker (handles mode change internally)
-        self.worker.configure(
-            mode=new_settings.mode,
-            cpu_threads=new_settings.cpu_threads,
-            ram_gb=new_settings.ram_gb,
-            current_rows=new_settings.current_rows,
-            history_rows=new_settings.history_rows,
-            retention_minutes=new_settings.retention_minutes,
-            refresh_rate_ms=new_settings.refresh_rate_ms,
-            memory_unit=new_settings.memory_unit,
+    def keyPressEvent(self, event):
+        """Handle keys."""
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
+        elif event.key() == Qt.Key.Key_Space:
+            self._toggle_pause()
+        else:
+            super().keyPressEvent(event)
+
+
+class CPUWindow(BaseMonitorWindow):
+    """CPU Monitor window."""
+
+    def __init__(self, initial_settings: InitialSettings, collector: SharedDataCollector):
+        self._initial_settings = initial_settings
+        self._collector = collector
+        self._cpu_settings = CPUSettings(
+            current_rows=initial_settings.current_rows,
+            history_rows=initial_settings.history_rows,
+            refresh_rate_ms=initial_settings.refresh_rate_ms,
+            retention_minutes=initial_settings.retention_minutes,
         )
+        super().__init__()
 
-        # Update title
-        is_cpu = new_settings.mode == MonitorMode.CPU
-        self.title_label.setText("CPU Monitor" if is_cpu else "Memory Monitor")
+        # Connect to collector signal
+        self._collector.cpu_data_ready.connect(self._on_data_ready)
 
-        # Rebuild tables with correct columns
+        # Configure and start collector
+        self._apply_settings()
+        if not self._collector.isRunning():
+            self._collector.start()
+
+    def _get_mode(self) -> MonitorMode:
+        return MonitorMode.CPU
+
+    def _get_title(self) -> str:
+        return "CPU Monitor"
+
+    def _get_mode_cols(self) -> str:
+        return "cpu"
+
+    def _show_settings(self):
+        """Show CPU settings dialog."""
+        dialog = CPUSettingsDialog(self, self._cpu_settings)
+        if dialog.exec():
+            self._cpu_settings = dialog.get_settings()
+            self._apply_settings()
+
+    def _apply_settings(self):
+        """Apply current settings to collector."""
+        self._collector.configure_cpu(
+            cpu_threads=self._initial_settings.cpu_threads,
+            ram_gb=self._initial_settings.ram_gb,
+            current_rows=self._cpu_settings.current_rows,
+            history_rows=self._cpu_settings.history_rows,
+            retention_minutes=self._cpu_settings.retention_minutes,
+            refresh_rate_ms=self._cpu_settings.refresh_rate_ms,
+        )
         self._rebuild_tables()
 
-        # Resize window
+        # Resize window based on row count
         row_height = 32
-        total_rows = new_settings.current_rows + new_settings.history_rows
+        total_rows = self._cpu_settings.current_rows + self._cpu_settings.history_rows
         new_height = 200 + (total_rows + 2) * row_height + 100
         self.resize(520, new_height)
 
     def _rebuild_tables(self):
-        """Rebuild tables based on mode."""
-        if not self.settings:
-            return
-
-        is_cpu = self.settings.mode == MonitorMode.CPU
-        mode_cols = "cpu" if is_cpu else "none"
-
+        """Rebuild tables with current settings."""
         # Get section layouts
         current_layout = self.current_section.layout()
         history_layout = self.history_section.layout()
@@ -451,16 +497,16 @@ class MainWindow(QMainWindow):
         self.current_table.deleteLater()
         self.history_table.deleteLater()
 
-        # Create new tables - CPU gets Cores/Threads, Memory gets USS/VMS
+        # Create new tables
         self.current_table = self._create_table(
-            self.settings.current_rows,
-            mode_cols=mode_cols,
+            self._cpu_settings.current_rows,
+            mode_cols="cpu",
             has_time=False,
             bg_color=self.CURRENT_BG
         )
         self.history_table = self._create_table(
-            self.settings.history_rows,
-            mode_cols=mode_cols,
+            self._cpu_settings.history_rows,
+            mode_cols="cpu",
             has_time=True,
             bg_color=self.HISTORY_BG
         )
@@ -469,32 +515,12 @@ class MainWindow(QMainWindow):
         current_layout.addWidget(self.current_table)
         history_layout.addWidget(self.history_table)
 
-    def _start_monitoring(self):
-        """Start monitoring."""
-        if self.settings:
-            self.worker.start()
-            self.is_paused = False
-            self.pause_btn.setText("Pause")
-
-    def _toggle_pause(self):
-        """Toggle pause."""
-        if self.is_paused:
-            self.worker.start()
-            self.is_paused = False
-            self.pause_btn.setText("Pause")
-        else:
-            self.worker.stop()
-            self.is_paused = True
-            self.pause_btn.setText("Resume")
-
     def _on_data_ready(self, data: MonitorData):
-        """Handle data from worker thread (runs on main thread via signal)."""
-        if not self.settings:
+        """Handle data from collector."""
+        if self.is_paused:
             return
 
-        unit = self.settings.memory_unit
-        is_cpu = self.settings.mode == MonitorMode.CPU
-        monitor = self.worker.monitor
+        monitor = self._collector.cpu_monitor
 
         # Update header
         self.current_label.setText(f"Current: {data.total_display}")
@@ -503,30 +529,187 @@ class MainWindow(QMainWindow):
         # Get HWiNFO sensor data
         hwinfo = data.hwinfo
 
-        if is_cpu:
-            # CPU mode: show CPU temp, power, EDC in 3 columns
-            sensors = [
-                (f"Tctl: {hwinfo.cpu_tctl:.1f}°C", hwinfo.cpu_tctl) if hwinfo.cpu_tctl else ("", None),
-                (f"PPT: {hwinfo.cpu_power:.1f} W", None) if hwinfo.cpu_power else ("", None),
-                (f"EDC: {hwinfo.cpu_edc:.1f} A", None) if hwinfo.cpu_edc else ("", None),
-            ]
-            for i, (text, value) in enumerate(sensors):
-                self.sensor_labels[i].setText(text)
-                self.sensor_labels[i].setStyleSheet(
-                    f"color: {self._get_temp_color(value)}; background: transparent;"
-                )
-        else:
-            # Memory mode: show ambient temp and DRAM bandwidth
-            extras = [
-                (f"Amb: {hwinfo.ambient_temp:.1f}°C", hwinfo.ambient_temp) if hwinfo.ambient_temp else ("", None),
-                (f"R: {hwinfo.dram_read:,.0f} MB/s", None) if hwinfo.dram_read else ("", None),
-                (f"W: {hwinfo.dram_write:,.0f} MB/s", None) if hwinfo.dram_write else ("", None),
-            ]
-            for i, (text, value) in enumerate(extras):
-                self.sensor_labels[i].setText(text)
-                self.sensor_labels[i].setStyleSheet(
-                    f"color: {self._get_temp_color(value) if value else self.TEXT}; background: transparent;"
-                )
+        # CPU mode: show CPU temp, power, EDC in 3 columns
+        sensors = [
+            (f"Tctl: {hwinfo.cpu_tctl:.1f}C", hwinfo.cpu_tctl) if hwinfo.cpu_tctl else ("", None),
+            (f"PPT: {hwinfo.cpu_power:.1f} W", None) if hwinfo.cpu_power else ("", None),
+            (f"EDC: {hwinfo.cpu_edc:.1f} A", None) if hwinfo.cpu_edc else ("", None),
+        ]
+        for i, (text, value) in enumerate(sensors):
+            self.sensor_labels[i].setText(text)
+            self.sensor_labels[i].setStyleSheet(
+                f"color: {self._get_temp_color(value)}; background: transparent;"
+            )
+
+        # Update current table
+        for row, proc in enumerate(data.processes):
+            if row >= self.current_table.rowCount():
+                break
+
+            # Row number
+            self.current_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+            self.current_table.setItem(row, 1, QTableWidgetItem(proc.name))
+            value_str = monitor.format_value(proc.value, "MB") if monitor else f"{proc.value:.0f}"
+            self.current_table.setItem(row, 2, QTableWidgetItem(value_str))
+
+            # Cores column
+            cores_text = str(proc.cores) if proc.cores > 0 else ""
+            self.current_table.setItem(row, 3, QTableWidgetItem(cores_text))
+            # Threads column
+            threads_text = str(proc.threads) if proc.threads > 0 else ""
+            self.current_table.setItem(row, 4, QTableWidgetItem(threads_text))
+
+        # Clear empty rows
+        for row in range(len(data.processes), self.current_table.rowCount()):
+            for col in range(self.current_table.columnCount()):
+                self.current_table.setItem(row, col, QTableWidgetItem(""))
+
+        # Update history table
+        for row, record in enumerate(data.history):
+            if row >= self.history_table.rowCount():
+                break
+
+            # Row number
+            self.history_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+            self.history_table.setItem(row, 1, QTableWidgetItem(record.name))
+            value_str = monitor.format_value(record.value, "MB") if monitor else f"{record.value:.0f}"
+            self.history_table.setItem(row, 2, QTableWidgetItem(value_str))
+
+            # Cores column
+            cores_text = str(record.cores) if record.cores > 0 else ""
+            self.history_table.setItem(row, 3, QTableWidgetItem(cores_text))
+            # Threads column
+            threads_text = str(record.threads) if record.threads > 0 else ""
+            self.history_table.setItem(row, 4, QTableWidgetItem(threads_text))
+
+            self.history_table.setItem(row, 5, QTableWidgetItem(record.time_str))
+
+        # Clear empty rows
+        for row in range(len(data.history), self.history_table.rowCount()):
+            for col in range(self.history_table.columnCount()):
+                self.history_table.setItem(row, col, QTableWidgetItem(""))
+
+    def closeEvent(self, event):
+        """Handle close - disable CPU monitoring."""
+        self._collector.cpu_data_ready.disconnect(self._on_data_ready)
+        self._collector.disable_cpu()
+        super().closeEvent(event)
+
+
+class MemoryWindow(BaseMonitorWindow):
+    """Memory Monitor window."""
+
+    def __init__(self, initial_settings: InitialSettings, collector: SharedDataCollector):
+        self._initial_settings = initial_settings
+        self._collector = collector
+        self._memory_settings = MemorySettings(
+            current_rows=initial_settings.current_rows,
+            history_rows=initial_settings.history_rows,
+            refresh_rate_ms=initial_settings.refresh_rate_ms,
+            retention_minutes=initial_settings.retention_minutes,
+            memory_unit=initial_settings.memory_unit,
+        )
+        super().__init__()
+
+        # Connect to collector signal
+        self._collector.memory_data_ready.connect(self._on_data_ready)
+
+        # Configure and start collector
+        self._apply_settings()
+        if not self._collector.isRunning():
+            self._collector.start()
+
+    def _get_mode(self) -> MonitorMode:
+        return MonitorMode.MEMORY
+
+    def _get_title(self) -> str:
+        return "Memory Monitor"
+
+    def _get_mode_cols(self) -> str:
+        return "none"
+
+    def _show_settings(self):
+        """Show Memory settings dialog."""
+        dialog = MemorySettingsDialog(self, self._memory_settings)
+        if dialog.exec():
+            self._memory_settings = dialog.get_settings()
+            self._apply_settings()
+
+    def _apply_settings(self):
+        """Apply current settings to collector."""
+        self._collector.configure_memory(
+            cpu_threads=self._initial_settings.cpu_threads,
+            ram_gb=self._initial_settings.ram_gb,
+            current_rows=self._memory_settings.current_rows,
+            history_rows=self._memory_settings.history_rows,
+            retention_minutes=self._memory_settings.retention_minutes,
+            refresh_rate_ms=self._memory_settings.refresh_rate_ms,
+            memory_unit=self._memory_settings.memory_unit,
+        )
+        self._rebuild_tables()
+
+        # Resize window based on row count
+        row_height = 32
+        total_rows = self._memory_settings.current_rows + self._memory_settings.history_rows
+        new_height = 200 + (total_rows + 2) * row_height + 100
+        self.resize(520, new_height)
+
+    def _rebuild_tables(self):
+        """Rebuild tables with current settings."""
+        # Get section layouts
+        current_layout = self.current_section.layout()
+        history_layout = self.history_section.layout()
+
+        # Remove old tables
+        current_layout.removeWidget(self.current_table)
+        history_layout.removeWidget(self.history_table)
+        self.current_table.deleteLater()
+        self.history_table.deleteLater()
+
+        # Create new tables (no extra columns for memory)
+        self.current_table = self._create_table(
+            self._memory_settings.current_rows,
+            mode_cols="none",
+            has_time=False,
+            bg_color=self.CURRENT_BG
+        )
+        self.history_table = self._create_table(
+            self._memory_settings.history_rows,
+            mode_cols="none",
+            has_time=True,
+            bg_color=self.HISTORY_BG
+        )
+
+        # Add to section layouts (after title labels)
+        current_layout.addWidget(self.current_table)
+        history_layout.addWidget(self.history_table)
+
+    def _on_data_ready(self, data: MonitorData):
+        """Handle data from collector."""
+        if self.is_paused:
+            return
+
+        monitor = self._collector.memory_monitor
+        unit = self._memory_settings.memory_unit
+
+        # Update header
+        self.current_label.setText(f"Current: {data.total_display}")
+        self.peak_label.setText(data.max_display)
+
+        # Get HWiNFO sensor data
+        hwinfo = data.hwinfo
+
+        # Memory mode: show ambient temp and DRAM bandwidth
+        extras = [
+            (f"Amb: {hwinfo.ambient_temp:.1f}C", hwinfo.ambient_temp) if hwinfo.ambient_temp else ("", None),
+            (f"R: {hwinfo.dram_read:,.0f} MB/s", None) if hwinfo.dram_read else ("", None),
+            (f"W: {hwinfo.dram_write:,.0f} MB/s", None) if hwinfo.dram_write else ("", None),
+        ]
+        for i, (text, value) in enumerate(extras):
+            self.sensor_labels[i].setText(text)
+            self.sensor_labels[i].setStyleSheet(
+                f"color: {self._get_temp_color(value) if value else self.TEXT}; background: transparent;"
+            )
 
         # Update current table
         for row, proc in enumerate(data.processes):
@@ -538,14 +721,6 @@ class MainWindow(QMainWindow):
             self.current_table.setItem(row, 1, QTableWidgetItem(proc.name))
             value_str = monitor.format_value(proc.value, unit) if monitor else f"{proc.value:.0f}"
             self.current_table.setItem(row, 2, QTableWidgetItem(value_str))
-
-            if is_cpu:
-                # Cores column
-                cores_text = str(proc.cores) if proc.cores > 0 else ""
-                self.current_table.setItem(row, 3, QTableWidgetItem(cores_text))
-                # Threads column
-                threads_text = str(proc.threads) if proc.threads > 0 else ""
-                self.current_table.setItem(row, 4, QTableWidgetItem(threads_text))
 
         # Clear empty rows
         for row in range(len(data.processes), self.current_table.rowCount()):
@@ -563,34 +738,15 @@ class MainWindow(QMainWindow):
             value_str = monitor.format_value(record.value, unit) if monitor else f"{record.value:.0f}"
             self.history_table.setItem(row, 2, QTableWidgetItem(value_str))
 
-            col = 3
-            if is_cpu:
-                # Cores column
-                cores_text = str(record.cores) if record.cores > 0 else ""
-                self.history_table.setItem(row, col, QTableWidgetItem(cores_text))
-                col += 1
-                # Threads column
-                threads_text = str(record.threads) if record.threads > 0 else ""
-                self.history_table.setItem(row, col, QTableWidgetItem(threads_text))
-                col += 1
-
-            self.history_table.setItem(row, col, QTableWidgetItem(record.time_str))
+            self.history_table.setItem(row, 3, QTableWidgetItem(record.time_str))
 
         # Clear empty rows
         for row in range(len(data.history), self.history_table.rowCount()):
             for col in range(self.history_table.columnCount()):
                 self.history_table.setItem(row, col, QTableWidgetItem(""))
 
-    def keyPressEvent(self, event):
-        """Handle keys."""
-        if event.key() == Qt.Key.Key_Escape:
-            self.close()
-        elif event.key() == Qt.Key.Key_Space:
-            self._toggle_pause()
-        else:
-            super().keyPressEvent(event)
-
     def closeEvent(self, event):
-        """Handle close."""
-        self.worker.stop()
+        """Handle close - disable Memory monitoring."""
+        self._collector.memory_data_ready.disconnect(self._on_data_ready)
+        self._collector.disable_memory()
         super().closeEvent(event)
