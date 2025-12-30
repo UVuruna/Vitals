@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 
 def get_base_path() -> Path:
@@ -99,7 +99,8 @@ class MainWindow(QMainWindow):
         self._load_config()
         self._apply_dark_theme()
         self._setup_ui()
-        self._show_settings()
+        # Delay settings dialog so MainWindow shows first (fixes taskbar icon)
+        QTimer.singleShot(0, self._show_settings)
 
     def _load_config(self):
         """Load temperature color config from JSON."""

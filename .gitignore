@@ -1,0 +1,16 @@
+# Build outputs
+exe/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE
+.vscode/
+.idea/
+
+# Virtual environment
+venv/
+.venv/
