@@ -606,3 +606,357 @@ class InitialSettingsDialog(QDialog):
             retention_minutes=self.retention_slider.value(),
             memory_unit=self.unit_combo.currentText(),
         )
+
+
+@dataclass
+class CPUSettings:
+    """Settings for CPU window only."""
+    current_rows: int = Defaults.CURRENT_ROWS
+    history_rows: int = Defaults.HISTORY_ROWS
+    refresh_rate_ms: int = Defaults.REFRESH_RATE_MS
+    retention_minutes: int = Defaults.RETENTION_MINUTES
+
+
+@dataclass
+class MemorySettings:
+    """Settings for Memory window only."""
+    current_rows: int = Defaults.CURRENT_ROWS
+    history_rows: int = Defaults.HISTORY_ROWS
+    refresh_rate_ms: int = Defaults.REFRESH_RATE_MS
+    retention_minutes: int = Defaults.RETENTION_MINUTES
+    memory_unit: str = Defaults.MEMORY_UNIT
+
+
+class CPUSettingsDialog(QDialog):
+    """Settings dialog for CPU window (no mode selection, no memory unit)."""
+
+    def __init__(self, parent: Optional[QWidget] = None, settings: Optional[CPUSettings] = None):
+        super().__init__(parent)
+        self.settings = settings or CPUSettings()
+        self.setWindowTitle("CPU Monitor - Settings")
+        self.setFixedSize(400, 380)
+
+        icon_path = get_base_path() / "assets" / "icon.ico"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e2e"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#2a2a3e"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Button, QColor("#3a3a4e"))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#e94560"))
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
+
+        self._setup_ui()
+        self._load_settings()
+
+    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: str = "#ffffff") -> QLabel:
+        """Create a styled label."""
+        label = QLabel(text)
+        weight = QFont.Weight.Bold if bold else QFont.Weight.Normal
+        label.setFont(QFont("Segoe UI", size, weight))
+        label.setStyleSheet(f"color: {color}; background: transparent;")
+        return label
+
+    def _make_combo(self, items: list, default: str, width: int = 100) -> QComboBox:
+        """Create a styled combo box."""
+        combo = QComboBox()
+        combo.addItems(items)
+        combo.setCurrentText(default)
+        combo.setFont(QFont("Segoe UI", 11))
+        combo.setFixedWidth(width)
+        combo.setFixedHeight(32)
+        combo.setStyleSheet("""
+            QComboBox {
+                background-color: #3a3a4e; color: #ffffff;
+                border: 1px solid #4a4a5e; border-radius: 4px; padding: 4px 8px;
+            }
+            QComboBox::drop-down { border: none; width: 24px; }
+            QComboBox::down-arrow {
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #ffffff;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #3a3a4e; color: #ffffff;
+                selection-background-color: #e94560;
+            }
+        """)
+        return combo
+
+    def _setup_ui(self):
+        """Initialize the UI components."""
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(32, 24, 32, 24)
+
+        title = self._make_label("CPU Monitor Settings", 16, bold=True)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        layout.addSpacing(12)
+
+        # Current processes
+        row1 = QHBoxLayout()
+        row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
+        row1.addStretch()
+        self.current_combo = self._make_combo([str(i) for i in range(1, 16)], "7")
+        row1.addWidget(self.current_combo)
+        layout.addLayout(row1)
+
+        # History records
+        row2 = QHBoxLayout()
+        row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
+        row2.addStretch()
+        self.history_combo = self._make_combo([str(i) for i in range(1, 16)], "4")
+        row2.addWidget(self.history_combo)
+        layout.addLayout(row2)
+
+        # Refresh rate
+        row3 = QHBoxLayout()
+        row3.addWidget(self._make_label("Refresh rate:", 11, color="#aaaaaa"))
+        row3.addStretch()
+        self.refresh_slider = QSlider(Qt.Orientation.Horizontal)
+        self.refresh_slider.setRange(5, 50)
+        self.refresh_slider.setValue(20)
+        self.refresh_slider.setFixedWidth(140)
+        self.refresh_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
+        """)
+        row3.addWidget(self.refresh_slider)
+        self.refresh_label = self._make_label("2000 ms", 11)
+        self.refresh_label.setFixedWidth(65)
+        self.refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 100} ms"))
+        row3.addWidget(self.refresh_label)
+        layout.addLayout(row3)
+
+        # Retention
+        row4 = QHBoxLayout()
+        row4.addWidget(self._make_label("History retention:", 11, color="#aaaaaa"))
+        row4.addStretch()
+        self.retention_slider = QSlider(Qt.Orientation.Horizontal)
+        self.retention_slider.setRange(10, 360)
+        self.retention_slider.setValue(120)
+        self.retention_slider.setFixedWidth(140)
+        self.retention_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
+        """)
+        row4.addWidget(self.retention_slider)
+        self.retention_label = self._make_label("120 min", 11)
+        self.retention_label.setFixedWidth(65)
+        self.retention_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.retention_slider.valueChanged.connect(lambda v: self.retention_label.setText(f"{v} min"))
+        row4.addWidget(self.retention_label)
+        layout.addLayout(row4)
+
+        layout.addStretch()
+
+        # Apply button
+        self.apply_btn = QPushButton("Apply")
+        self.apply_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        self.apply_btn.setFixedHeight(44)
+        self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.apply_btn.setStyleSheet("""
+            QPushButton { background-color: #e94560; color: white; border: none; border-radius: 8px; }
+            QPushButton:hover { background-color: #ff6b6b; }
+        """)
+        self.apply_btn.clicked.connect(self.accept)
+        layout.addWidget(self.apply_btn)
+
+    def _load_settings(self):
+        """Load current settings into UI."""
+        self.current_combo.setCurrentText(str(self.settings.current_rows))
+        self.history_combo.setCurrentText(str(self.settings.history_rows))
+        self.refresh_slider.setValue(self.settings.refresh_rate_ms // 100)
+        self.retention_slider.setValue(self.settings.retention_minutes)
+
+    def get_settings(self) -> CPUSettings:
+        """Get settings from UI values."""
+        return CPUSettings(
+            current_rows=int(self.current_combo.currentText()),
+            history_rows=int(self.history_combo.currentText()),
+            refresh_rate_ms=self.refresh_slider.value() * 100,
+            retention_minutes=self.retention_slider.value(),
+        )
+
+
+class MemorySettingsDialog(QDialog):
+    """Settings dialog for Memory window (no mode selection, has memory unit)."""
+
+    def __init__(self, parent: Optional[QWidget] = None, settings: Optional[MemorySettings] = None):
+        super().__init__(parent)
+        self.settings = settings or MemorySettings()
+        self.setWindowTitle("Memory Monitor - Settings")
+        self.setFixedSize(400, 440)
+
+        icon_path = get_base_path() / "assets" / "icon.ico"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e2e"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#2a2a3e"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Button, QColor("#3a3a4e"))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#e94560"))
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
+
+        self._setup_ui()
+        self._load_settings()
+
+    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: str = "#ffffff") -> QLabel:
+        """Create a styled label."""
+        label = QLabel(text)
+        weight = QFont.Weight.Bold if bold else QFont.Weight.Normal
+        label.setFont(QFont("Segoe UI", size, weight))
+        label.setStyleSheet(f"color: {color}; background: transparent;")
+        return label
+
+    def _make_combo(self, items: list, default: str, width: int = 100) -> QComboBox:
+        """Create a styled combo box."""
+        combo = QComboBox()
+        combo.addItems(items)
+        combo.setCurrentText(default)
+        combo.setFont(QFont("Segoe UI", 11))
+        combo.setFixedWidth(width)
+        combo.setFixedHeight(32)
+        combo.setStyleSheet("""
+            QComboBox {
+                background-color: #3a3a4e; color: #ffffff;
+                border: 1px solid #4a4a5e; border-radius: 4px; padding: 4px 8px;
+            }
+            QComboBox::drop-down { border: none; width: 24px; }
+            QComboBox::down-arrow {
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #ffffff;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #3a3a4e; color: #ffffff;
+                selection-background-color: #e94560;
+            }
+        """)
+        return combo
+
+    def _setup_ui(self):
+        """Initialize the UI components."""
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(32, 24, 32, 24)
+
+        title = self._make_label("Memory Monitor Settings", 16, bold=True)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        layout.addSpacing(12)
+
+        # Current processes
+        row1 = QHBoxLayout()
+        row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
+        row1.addStretch()
+        self.current_combo = self._make_combo([str(i) for i in range(1, 16)], "7")
+        row1.addWidget(self.current_combo)
+        layout.addLayout(row1)
+
+        # History records
+        row2 = QHBoxLayout()
+        row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
+        row2.addStretch()
+        self.history_combo = self._make_combo([str(i) for i in range(1, 16)], "4")
+        row2.addWidget(self.history_combo)
+        layout.addLayout(row2)
+
+        # Refresh rate
+        row3 = QHBoxLayout()
+        row3.addWidget(self._make_label("Refresh rate:", 11, color="#aaaaaa"))
+        row3.addStretch()
+        self.refresh_slider = QSlider(Qt.Orientation.Horizontal)
+        self.refresh_slider.setRange(5, 50)
+        self.refresh_slider.setValue(20)
+        self.refresh_slider.setFixedWidth(140)
+        self.refresh_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
+        """)
+        row3.addWidget(self.refresh_slider)
+        self.refresh_label = self._make_label("2000 ms", 11)
+        self.refresh_label.setFixedWidth(65)
+        self.refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 100} ms"))
+        row3.addWidget(self.refresh_label)
+        layout.addLayout(row3)
+
+        # Retention
+        row4 = QHBoxLayout()
+        row4.addWidget(self._make_label("History retention:", 11, color="#aaaaaa"))
+        row4.addStretch()
+        self.retention_slider = QSlider(Qt.Orientation.Horizontal)
+        self.retention_slider.setRange(10, 360)
+        self.retention_slider.setValue(120)
+        self.retention_slider.setFixedWidth(140)
+        self.retention_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
+        """)
+        row4.addWidget(self.retention_slider)
+        self.retention_label = self._make_label("120 min", 11)
+        self.retention_label.setFixedWidth(65)
+        self.retention_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.retention_slider.valueChanged.connect(lambda v: self.retention_label.setText(f"{v} min"))
+        row4.addWidget(self.retention_label)
+        layout.addLayout(row4)
+
+        layout.addSpacing(8)
+
+        # Memory unit
+        layout.addWidget(self._make_label("Memory Settings", 12, bold=True))
+        row5 = QHBoxLayout()
+        row5.addWidget(self._make_label("Display unit:", 11, color="#aaaaaa"))
+        row5.addStretch()
+        self.unit_combo = self._make_combo(["KB", "MB", "GB"], "MB")
+        row5.addWidget(self.unit_combo)
+        layout.addLayout(row5)
+
+        layout.addStretch()
+
+        # Apply button
+        self.apply_btn = QPushButton("Apply")
+        self.apply_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        self.apply_btn.setFixedHeight(44)
+        self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.apply_btn.setStyleSheet("""
+            QPushButton { background-color: #e94560; color: white; border: none; border-radius: 8px; }
+            QPushButton:hover { background-color: #ff6b6b; }
+        """)
+        self.apply_btn.clicked.connect(self.accept)
+        layout.addWidget(self.apply_btn)
+
+    def _load_settings(self):
+        """Load current settings into UI."""
+        self.current_combo.setCurrentText(str(self.settings.current_rows))
+        self.history_combo.setCurrentText(str(self.settings.history_rows))
+        self.refresh_slider.setValue(self.settings.refresh_rate_ms // 100)
+        self.retention_slider.setValue(self.settings.retention_minutes)
+        self.unit_combo.setCurrentText(self.settings.memory_unit)
+
+    def get_settings(self) -> MemorySettings:
+        """Get settings from UI values."""
+        return MemorySettings(
+            current_rows=int(self.current_combo.currentText()),
+            history_rows=int(self.history_combo.currentText()),
+            refresh_rate_ms=self.refresh_slider.value() * 100,
+            retention_minutes=self.retention_slider.value(),
+            memory_unit=self.unit_combo.currentText(),
+        )
