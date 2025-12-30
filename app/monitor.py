@@ -692,6 +692,180 @@ class MonitorData:
     stats: MonitorStats
 
 
+class SharedDataCollector(QThread):
+    """
+    Singleton that collects process data once and distributes to multiple windows.
+    """
+
+    cpu_data_ready = Signal(MonitorData)
+    memory_data_ready = Signal(MonitorData)
+
+    _instance: Optional['SharedDataCollector'] = None
+    _lock = QMutex()
+
+    def __new__(cls, parent=None):
+        """Singleton pattern."""
+        with QMutexLocker(cls._lock):
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+                cls._instance._initialized = False
+            return cls._instance
+
+    def __init__(self, parent=None):
+        if self._initialized:
+            return
+        super().__init__(parent)
+        self._initialized = True
+
+        self._cpu_monitor: Optional[ProcessMonitor] = None
+        self._memory_monitor: Optional[ProcessMonitor] = None
+        self._running = False
+        self._interval_ms = 2000
+        self._mutex = QMutex()
+
+        # Settings per mode
+        self._cpu_settings: Optional[dict] = None
+        self._memory_settings: Optional[dict] = None
+
+        # Subscribers
+        self._cpu_enabled = False
+        self._memory_enabled = False
+
+    def configure_cpu(
+        self,
+        cpu_threads: int,
+        ram_gb: int,
+        current_rows: int,
+        history_rows: int,
+        retention_minutes: int,
+        refresh_rate_ms: int,
+    ):
+        """Configure CPU monitoring."""
+        with QMutexLocker(self._mutex):
+            self._cpu_settings = {
+                'current_rows': current_rows,
+                'history_rows': history_rows,
+            }
+            if self._cpu_monitor is None:
+                self._cpu_monitor = ProcessMonitor(
+                    mode=MonitorMode.CPU,
+                    cpu_threads=cpu_threads,
+                    ram_gb=ram_gb,
+                )
+            self._cpu_monitor.set_history_settings(history_rows, retention_minutes)
+            self._interval_ms = min(self._interval_ms, refresh_rate_ms)
+            self._cpu_enabled = True
+
+    def configure_memory(
+        self,
+        cpu_threads: int,
+        ram_gb: int,
+        current_rows: int,
+        history_rows: int,
+        retention_minutes: int,
+        refresh_rate_ms: int,
+        memory_unit: str,
+    ):
+        """Configure Memory monitoring."""
+        with QMutexLocker(self._mutex):
+            self._memory_settings = {
+                'current_rows': current_rows,
+                'history_rows': history_rows,
+                'memory_unit': memory_unit,
+            }
+            if self._memory_monitor is None:
+                self._memory_monitor = ProcessMonitor(
+                    mode=MonitorMode.MEMORY,
+                    cpu_threads=cpu_threads,
+                    ram_gb=ram_gb,
+                )
+            self._memory_monitor.set_history_settings(history_rows, retention_minutes)
+            self._interval_ms = min(self._interval_ms, refresh_rate_ms)
+            self._memory_enabled = True
+
+    def disable_cpu(self):
+        """Disable CPU monitoring."""
+        with QMutexLocker(self._mutex):
+            self._cpu_enabled = False
+            if not self._memory_enabled:
+                self.stop()
+
+    def disable_memory(self):
+        """Disable Memory monitoring."""
+        with QMutexLocker(self._mutex):
+            self._memory_enabled = False
+            if not self._cpu_enabled:
+                self.stop()
+
+    def run(self):
+        """Main collector loop - collects once, emits to all subscribers."""
+        self._running = True
+
+        while self._running:
+            with QMutexLocker(self._mutex):
+                hwinfo = HWiNFOData()
+                if self._cpu_monitor:
+                    hwinfo = self._cpu_monitor.get_hwinfo_data()
+
+                # Collect CPU data if enabled
+                if self._cpu_enabled and self._cpu_monitor and self._cpu_settings:
+                    processes = self._cpu_monitor.get_processes(self._cpu_settings['current_rows'])
+                    self._cpu_monitor.update_history(processes)
+                    history = self._cpu_monitor.get_history()
+
+                    data = MonitorData(
+                        processes=processes,
+                        history=history,
+                        total_display=self._cpu_monitor.get_total_display("MB"),
+                        max_display=self._cpu_monitor.get_max_display("MB"),
+                        hwinfo=hwinfo,
+                        stats=self._cpu_monitor.stats,
+                    )
+                    self.cpu_data_ready.emit(data)
+
+                # Collect Memory data if enabled
+                if self._memory_enabled and self._memory_monitor and self._memory_settings:
+                    unit = self._memory_settings.get('memory_unit', 'MB')
+                    processes = self._memory_monitor.get_processes(self._memory_settings['current_rows'])
+                    self._memory_monitor.update_history(processes)
+                    history = self._memory_monitor.get_history()
+
+                    data = MonitorData(
+                        processes=processes,
+                        history=history,
+                        total_display=self._memory_monitor.get_total_display(unit),
+                        max_display=self._memory_monitor.get_max_display(unit),
+                        hwinfo=hwinfo,
+                        stats=self._memory_monitor.stats,
+                    )
+                    self.memory_data_ready.emit(data)
+
+            self.msleep(self._interval_ms)
+
+    def stop(self):
+        """Stop the collector."""
+        self._running = False
+        self.wait(2000)
+
+    @property
+    def cpu_monitor(self) -> Optional[ProcessMonitor]:
+        """Get CPU monitor instance."""
+        return self._cpu_monitor
+
+    @property
+    def memory_monitor(self) -> Optional[ProcessMonitor]:
+        """Get Memory monitor instance."""
+        return self._memory_monitor
+
+    @classmethod
+    def reset_instance(cls):
+        """Reset singleton (for testing)."""
+        with QMutexLocker(cls._lock):
+            if cls._instance is not None:
+                cls._instance.stop()
+                cls._instance = None
+
+
 class MonitorWorker(QThread):
     """Background worker for process monitoring."""
 
