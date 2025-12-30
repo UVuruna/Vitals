@@ -3,14 +3,6 @@
 Process Monitor - Entry Point
 
 Real-time CPU and Memory usage monitoring for Windows processes.
-
-Usage:
-    python main.py
-
-Requirements:
-    - Python 3.11+
-    - PySide6
-    - psutil
 """
 
 import sys
@@ -19,13 +11,14 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from app import MainWindow
+from app.main_window import CPUWindow, MemoryWindow
+from app.monitor import SharedDataCollector
+from app.settings_dialog import InitialSettingsDialog
 
 
 def get_base_path() -> Path:
     """Get base path for resources (handles PyInstaller frozen exe)."""
     if getattr(sys, 'frozen', False):
-        # Running as PyInstaller exe
         return Path(sys._MEIPASS)
     return Path(__file__).parent
 
@@ -40,13 +33,11 @@ def main():
         pass
 
     app = QApplication(sys.argv)
-
-    # Set application metadata
     app.setApplicationName("Process Monitor")
-    app.setApplicationVersion("2.0.0")
+    app.setApplicationVersion("2.1.0")
     app.setOrganizationName("PC Gadgets")
 
-    # Set app icon (prefer .ico for Windows)
+    # Set app icon
     base = get_base_path()
     icon_path = base / "assets" / "icon.ico"
     if not icon_path.exists():
@@ -54,13 +45,50 @@ def main():
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
-    # Create and show main window
-    window = MainWindow()
-    window.show()
+    # Show initial settings dialog
+    dialog = InitialSettingsDialog()
+    if not dialog.exec():
+        return 0
+
+    settings = dialog.get_settings()
+
+    # Create shared data collector
+    collector = SharedDataCollector()
+
+    # Track windows
+    windows = []
+
+    # Create CPU window if enabled
+    if settings.cpu_enabled:
+        cpu_window = CPUWindow(settings, collector)
+        cpu_window.show()
+        windows.append(cpu_window)
+
+    # Create Memory window if enabled
+    if settings.memory_enabled:
+        memory_window = MemoryWindow(settings, collector)
+        memory_window.show()
+        # Offset second window
+        if len(windows) > 0:
+            memory_window.move(
+                windows[0].x() + windows[0].width() + 20,
+                windows[0].y()
+            )
+        windows.append(memory_window)
+
+    # Start collector if not already running
+    if not collector.isRunning():
+        collector.start()
 
     # Run event loop
-    sys.exit(app.exec())
+    result = app.exec()
+
+    # Cleanup
+    collector.stop()
+    SharedDataCollector.reset_instance()
+
+    return result
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
