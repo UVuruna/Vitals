@@ -27,7 +27,7 @@ Real-time CPU and Memory usage monitoring for Windows processes.
 | Feature | Description |
 |---------|-------------|
 | **Real-time Monitoring** | Live updates of CPU % and Memory per process |
-| **Dual Mode** | Switch between CPU and Memory monitoring |
+| **Dual Monitor** | Run CPU and Memory monitors simultaneously in separate windows |
 | **Process Aggregation** | Groups sub-processes (e.g., all Chrome tabs as "Chrome") |
 | **Historical Tracking** | Records highest usage with timestamps |
 | **Thread Count** | Shows parallel threads per process (CPU mode) |
@@ -85,7 +85,7 @@ python main.py
 
 1. **Launch** - Run `python main.py`
 2. **Configure** - Settings dialog opens on first run
-3. **Select Mode** - Choose CPU or Memory monitoring
+3. **Select Mode** - Choose CPU, Memory, or both monitors
 4. **Adjust Settings** - Set display preferences
 5. **Start** - Click "Start" to begin monitoring
 
@@ -106,7 +106,7 @@ python main.py
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| **Monitor Mode** | CPU or Memory | CPU |
+| **Monitor Mode** | CPU, Memory, or Both | CPU |
 | **Current Rows** | Processes to display | 7 |
 | **History Rows** | Historical records | 4 |
 | **Refresh Rate** | Update interval (ms) | 2000 |
@@ -126,26 +126,30 @@ python main.py
 ```mermaid
 flowchart TB
     subgraph APP["Application"]
-        MW[MainWindow]
-        SD[SettingsDialog]
-        PM[ProcessMonitor]
+        ISD[InitialSettingsDialog]
+        SDC[SharedDataCollector]
+        subgraph WINDOWS["Windows"]
+            CPU[CPUWindow]
+            MEM[MemoryWindow]
+        end
     end
 
-    MW --> PM
-    SD --> MW
-    PM --> psutil[(psutil)]
-
-    QTimer[QTimer] --> PM
-    PM --> Tables[QTableWidget]
+    ISD -->|settings| SDC
+    ISD -->|settings| CPU
+    ISD -->|settings| MEM
+    SDC -->|cpu_data_ready| CPU
+    SDC -->|memory_data_ready| MEM
+    SDC --> psutil[(psutil)]
 ```
 
 ### Data Flow
 
-1. **QTimer** triggers monitor update at configured interval
-2. **ProcessMonitor** queries psutil for all processes
-3. **Aggregator** groups processes by name (Chrome, VS Code, etc.)
-4. **Sorter** orders by resource usage (descending)
-5. **UI** displays in tables with formatting
+1. **InitialSettingsDialog** configures monitor mode and display options
+2. **SharedDataCollector** queries psutil once per interval for all process data
+3. **SharedDataCollector** emits separate signals for CPU and Memory windows
+4. **Aggregator** groups processes by name (Chrome, VS Code, etc.)
+5. **Sorter** orders by resource usage (descending)
+6. **UI** displays in tables with formatting
 
 ### Process Aggregation
 
@@ -166,12 +170,14 @@ Similar processes are grouped together:
   📝 README.md            ← This file
   📝 CLAUDE.md            ← AI assistant guidance
   📁 app/
-    📝 __index.md         ← App module documentation
     🐍 __init__.py        ← Package init
-    🐍 main_window.py     ← Main application window
-    🐍 settings_dialog.py ← Settings configuration dialog
-    🐍 monitor.py         ← Process monitoring logic
+    🐍 main_window.py     ← CPU and Memory window classes
+    🐍 settings_dialog.py ← Initial settings dialog
+    🐍 monitor.py         ← SharedDataCollector and process monitoring
     🐍 styles.py          ← UI colors and styling
+  📁 utils/
+    🐍 __init__.py        ← Utils package init
+    🐍 build_exe.py       ← Build executable script
 ```
 
 ### Module Descriptions
@@ -179,10 +185,10 @@ Similar processes are grouped together:
 | Module | Purpose |
 |--------|---------|
 | [main.py](main.py) | Application entry point |
-| [app/main_window.py](app/main_window.md) | Main window with tables and headers |
-| [app/settings_dialog.py](app/settings_dialog.md) | Configuration dialog |
-| [app/monitor.py](app/monitor.md) | psutil integration, process data |
-| [app/styles.py](app/styles.md) | Colors, fonts, dimensions |
+| [app/main_window.py](app/main_window.py) | CPUWindow and MemoryWindow classes |
+| [app/settings_dialog.py](app/settings_dialog.py) | Initial settings dialog for mode selection |
+| [app/monitor.py](app/monitor.py) | SharedDataCollector, psutil integration |
+| [app/styles.py](app/styles.py) | Colors, fonts, dimensions |
 
 ---
 
