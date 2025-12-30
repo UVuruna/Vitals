@@ -238,6 +238,7 @@ class MonitorMode(Enum):
 
     CPU = auto()
     MEMORY = auto()
+    BOTH = auto()  # Opens both CPU and Memory windows
 
 
 @dataclass
