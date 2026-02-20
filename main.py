@@ -8,6 +8,7 @@ Real-time CPU and Memory usage monitoring for Windows processes.
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -34,7 +35,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Process Monitor")
-    app.setApplicationVersion("1.1.150")
+    app.setApplicationVersion("1.1.160")
     app.setOrganizationName("PC Gadgets")
 
     # Set app icon
@@ -58,21 +59,28 @@ def main():
     # Track windows
     windows = []
 
-    # Create CPU window if enabled
+    # Create windows — second window is a child of the first so
+    # Windows groups them under a single taskbar icon
+    primary = None
+
     if settings.cpu_enabled:
         cpu_window = CPUWindow(settings, collector)
         cpu_window.show()
         windows.append(cpu_window)
+        primary = cpu_window
 
-    # Create Memory window if enabled
     if settings.memory_enabled:
-        memory_window = MemoryWindow(settings, collector)
+        # Child of primary window: shares taskbar entry but stays independently movable
+        parent = primary
+        memory_window = MemoryWindow(settings, collector, parent)
+        if parent:
+            memory_window.setWindowFlags(memory_window.windowFlags() | Qt.WindowType.Window)
         memory_window.show()
         # Offset second window
-        if len(windows) > 0:
+        if primary:
             memory_window.move(
-                windows[0].x() + windows[0].width() + 20,
-                windows[0].y()
+                primary.x() + primary.width() + 20,
+                primary.y()
             )
         windows.append(memory_window)
 

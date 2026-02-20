@@ -87,8 +87,8 @@ class BaseMonitorWindow(QMainWindow):
         "critical_threshold": 75,
     }
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.is_paused = False
 
         # Set window icon
@@ -428,7 +428,7 @@ class BaseMonitorWindow(QMainWindow):
 class CPUWindow(BaseMonitorWindow):
     """CPU Monitor window."""
 
-    def __init__(self, initial_settings: InitialSettings, collector: SharedDataCollector):
+    def __init__(self, initial_settings: InitialSettings, collector: SharedDataCollector, parent=None):
         self._initial_settings = initial_settings
         self._collector = collector
         self._cpu_settings = CPUSettings(
@@ -437,7 +437,7 @@ class CPUWindow(BaseMonitorWindow):
             refresh_rate_ms=initial_settings.refresh_rate_ms,
             retention_minutes=initial_settings.retention_minutes,
         )
-        super().__init__()
+        super().__init__(parent)
 
         # Connect to collector signal
         self._collector.cpu_data_ready.connect(self._on_data_ready)
@@ -589,7 +589,7 @@ class CPUWindow(BaseMonitorWindow):
 class MemoryWindow(BaseMonitorWindow):
     """Memory Monitor window."""
 
-    def __init__(self, initial_settings: InitialSettings, collector: SharedDataCollector):
+    def __init__(self, initial_settings: InitialSettings, collector: SharedDataCollector, parent=None):
         self._initial_settings = initial_settings
         self._collector = collector
         self._memory_settings = MemorySettings(
@@ -599,7 +599,7 @@ class MemoryWindow(BaseMonitorWindow):
             retention_minutes=initial_settings.retention_minutes,
             memory_unit=initial_settings.memory_unit,
         )
-        super().__init__()
+        super().__init__(parent)
 
         # Connect to collector signal
         self._collector.memory_data_ready.connect(self._on_data_ready)
