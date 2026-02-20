@@ -16,7 +16,10 @@
       "Skill(superpowers:verification-before-completion)",
       "Skill(superpowers:verification-before-completion:*)",
       "Bash(python -m py_compile:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(ls:*)",
+      "Bash(git tag:*)",
+      "Bash(git push:*)"
     ]
   }
 }
