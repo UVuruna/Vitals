@@ -147,6 +147,120 @@ class MemoryMonitor(BaseMonitor): ...
 
 ---
 
+### Rule #7: No Hardcoded Values
+
+**Before hardcoding ANY value, ASK:** "Should this be in `styles.py`?"
+
+```python
+# ❌ FORBIDDEN
+TIMEOUT = 300
+TABLE_ROW_HEIGHT = 28  # hardcoded in function
+
+# ✅ REQUIRED
+from app.styles import Dimensions
+row_height = Dimensions.TABLE_ROW_HEIGHT
+```
+
+All thresholds, dimensions, colors, and tunable values live in `styles.py`. No other file should contain magic numbers.
+
+**When to hardcode:** Only constants that NEVER change (`PI = 3.14159`), enum values, and loop counters.
+
+---
+
+### Rule #8: No Defensive Programming for Impossible Scenarios
+
+**Before adding try/except, ASK:** "Can this scenario actually happen?"
+
+```python
+# ❌ FORBIDDEN — checking impossible scenario
+def update_table(self, data):
+    if data is None:  # Impossible! Monitor always returns a list
+        return
+
+# ✅ REQUIRED — trust initialization and internal guarantees
+def update_table(self, data):
+    for i, process in enumerate(data):
+        self._fill_row(i, process)
+```
+
+**When defensive code IS appropriate:** External input, file I/O, psutil API calls, OS interactions.
+
+**Principle:** If a scenario is impossible, let it fail loudly. Don't hide bugs with silent fallbacks.
+
+---
+
+### Rule #9: Read-Only on Init
+
+**When starting a new session, only READ documentation — do not suggest changes.**
+
+- Read CLAUDE.md and relevant files to understand the project
+- Do NOT propose improvements, additions, or modifications to existing files unprompted
+- Purpose of init is context gathering, not a documentation review session
+
+---
+
+### Rule #10: Plans are Discussions
+
+**Plans should be discussions, not code previews.**
+
+- Explain WHAT you will do and WHICH files you will modify
+- Do NOT write out full code blocks that will later be copied to files
+- Plan = brainstorming, approach discussion
+- NOT: "I will write this exact code" → then write the same code again in implementation
+
+---
+
+### Rule #11: Progress Logging for Long Tasks
+
+**Any long-running operation MUST have progress visibility.**
+
+```python
+# ❌ FORBIDDEN — silent long-running process
+for item in huge_dataset:
+    process(item)
+
+# ✅ REQUIRED — progress logging
+for i, item in enumerate(huge_dataset):
+    process(item)
+    if i % 100 == 0:
+        print(f"Processing {i}/{total}...")
+```
+
+---
+
+### Rule #12: No Capacity Lies
+
+**If a task exceeds my capabilities, I MUST say so honestly.**
+
+- Never claim to have read/processed something I didn't
+- Never provide answers based on partial data while implying complete analysis
+- Honest "I can't" is infinitely better than fake "I did"
+
+---
+
+### Rule #13: No Error Masking
+
+**Errors MUST be visible. Never hide problems with silent fallbacks.**
+
+```python
+# ❌ FORBIDDEN
+except Exception:
+    pass
+
+# ❌ FORBIDDEN
+except Exception:
+    result = default_value  # Error hidden!
+
+# ✅ REQUIRED
+except SpecificError as e:
+    logger.error(f"Operation failed: {e}")
+    raise
+```
+
+**When fallbacks ARE acceptable:** Explicitly documented behavior, retry logic with eventual failure escalation.
+
+---
+
 ## PROJECT STRUCTURE
 
 ```
@@ -227,6 +341,17 @@ REQUIRED: monitor.py (edit directly)
 
 ---
 
+### Guideline #3: Ask Before Deleting
+
+**Before deleting ANY code or file:**
+1. Search for all usages
+2. Understand what it does
+3. ASK if not certain it's obsolete — don't assume
+
+**Rule:** Better 100 questions than 1 deleted core feature.
+
+---
+
 ## REMEMBER ALWAYS
 
 1. **ASK questions before work** - Never assume
@@ -235,3 +360,6 @@ REQUIRED: monitor.py (edit directly)
 4. **Verify Dependencies** - Check what your change affects
 5. **When Unsure → ASK** - Better 100 questions than 1 bug
 6. **Commit after work** - Version-numbered commits, logical grouping (Rule #6)
+7. **No hardcoded values** - Use `styles.py` for all constants (Rule #7)
+8. **No capacity lies** - Honest "I can't" > fake "I did" (Rule #12)
+9. **No error masking** - Hidden bugs become massive problems (Rule #13)
