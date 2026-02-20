@@ -159,8 +159,8 @@ class BaseMonitorWindow(QMainWindow):
     def _setup_ui(self):
         """Initialize the main UI."""
         self.setWindowTitle(self._get_title())
-        self.setMinimumWidth(520)
-        self.setMinimumHeight(500)
+        self.setMinimumWidth(340)
+        self.setMinimumHeight(400)
 
         # Central widget
         central = QWidget()
@@ -356,26 +356,26 @@ class BaseMonitorWindow(QMainWindow):
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setShowGrid(False)
 
-        # Column widths
+        # Column widths (all data columns are user-resizable)
         header = table.horizontalHeader()
-        # # column (row number)
+        # # column (row number) - fixed, narrow
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        table.setColumnWidth(0, 35)
-        # Process column (stretch)
+        table.setColumnWidth(0, 30)
+        # Process column (stretch to fill remaining space)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        # Usage column
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        table.setColumnWidth(2, 100)
+        # Usage column - resizable
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        table.setColumnWidth(2, 80)
 
         col_idx = 3
         if mode_cols == "cpu":
-            # Threads column
-            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Fixed)
-            table.setColumnWidth(col_idx, 60)
+            # Threads column - resizable
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
+            table.setColumnWidth(col_idx, 55)
             col_idx += 1
         if has_time:
-            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Fixed)
-            table.setColumnWidth(col_idx, 60)
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
+            table.setColumnWidth(col_idx, 55)
 
         # Styling
         table.setStyleSheet(f"""
@@ -479,7 +479,7 @@ class CPUWindow(BaseMonitorWindow):
         row_height = 32
         total_rows = self._cpu_settings.current_rows + self._cpu_settings.history_rows
         new_height = 200 + (total_rows + 2) * row_height + 100
-        self.resize(520, new_height)
+        self.resize(400, new_height)
 
     def _rebuild_tables(self):
         """Rebuild tables with current settings."""
@@ -642,7 +642,7 @@ class MemoryWindow(BaseMonitorWindow):
         row_height = 32
         total_rows = self._memory_settings.current_rows + self._memory_settings.history_rows
         new_height = 200 + (total_rows + 2) * row_height + 100
-        self.resize(520, new_height)
+        self.resize(400, new_height)
 
     def _rebuild_tables(self):
         """Rebuild tables with current settings."""
