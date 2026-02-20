@@ -15,8 +15,20 @@ from pathlib import Path
 
 CERT_DIR = Path(__file__).parent / "cert"
 PFX_PATH = CERT_DIR / "PMUsage.pfx"
+PASSWORD_PATH = CERT_DIR / "password.txt"
 PUBLISHER = "UVuruna"
-PFX_PASSWORD = "PMUsage2025"
+
+
+def _load_password() -> str:
+    if not PASSWORD_PATH.exists():
+        raise FileNotFoundError(
+            f"Password file not found: {PASSWORD_PATH}\n"
+            "Create setup/cert/password.txt with the certificate password."
+        )
+    return PASSWORD_PATH.read_text(encoding="utf-8").strip()
+
+
+PFX_PASSWORD = _load_password()
 
 
 def create_certificate():

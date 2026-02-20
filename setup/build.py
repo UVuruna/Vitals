@@ -30,9 +30,20 @@ BUILD_DIR = PROJECT_DIR / "build"
 
 ICON_PATH = PROJECT_DIR / "assets" / "icon.ico"
 CERT_PATH = SETUP_DIR / "cert" / "PMUsage.pfx"
+PASSWORD_PATH = SETUP_DIR / "cert" / "password.txt"
 NSI_PATH = SETUP_DIR / "installer.nsi"
 
-CERT_PASSWORD = "PMUsage2025"
+
+def _load_password() -> str:
+    if not PASSWORD_PATH.exists():
+        raise FileNotFoundError(
+            f"Password file not found: {PASSWORD_PATH}\n"
+            "Create setup/cert/password.txt with the certificate password."
+        )
+    return PASSWORD_PATH.read_text(encoding="utf-8").strip()
+
+
+CERT_PASSWORD = _load_password()
 APP_NAME = "PMUsage"
 ENTRY_POINT = PROJECT_DIR / "main.py"
 
