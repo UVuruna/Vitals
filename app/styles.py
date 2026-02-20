@@ -5,6 +5,7 @@ Colors, fonts, and dimensions for the Process Monitor application.
 """
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,7 @@ PROCESS_ALIASES = {
 }
 
 
+@lru_cache(maxsize=512)
 def get_process_display_name(name: str) -> str:
     """
     Convert process name to display-friendly name.

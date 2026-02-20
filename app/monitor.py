@@ -9,11 +9,12 @@ Uses background thread for non-blocking UI.
 import ctypes
 from ctypes import wintypes
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
 from typing import Optional
+
+import heapq
 
 import psutil
 from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
@@ -193,6 +194,14 @@ _hwinfo_reader: Optional[HWiNFOSharedMemory] = None
 from .styles import MEMORY_UNITS, get_process_display_name
 
 
+# Indices into the aggregated per-process list [cpu_pct, threads, rss, vms, pf]
+_CPU_IDX     = 0
+_THREADS_IDX = 1
+_RSS_IDX     = 2
+_VMS_IDX     = 3
+_PF_IDX      = 4
+
+
 class MonitorMode(Enum):
     """Monitoring mode selection."""
 
@@ -244,6 +253,77 @@ class MonitorStats:
     max_usage: float = 0.0
     max_usage_time: Optional[datetime] = None
     process_count: int = 0
+
+
+def _collect_processes(
+    need_cpu: bool,
+    need_mem: bool,
+    cpu_threads: int,
+) -> tuple[dict[str, list], float, int]:
+    """
+    Single psutil pass collecting CPU and/or memory data.
+
+    Args:
+        need_cpu: Collect cpu_percent and num_threads
+        need_mem: Collect rss, vms, page_faults
+        cpu_threads: Total logical CPU count (for idle calculation)
+
+    Returns:
+        (aggregated, total_cpu, total_rss)
+        aggregated: {display_name: [cpu_pct, threads, rss, vms, pf]}
+    """
+    attrs = ['name']
+    if need_cpu:
+        attrs += ['pid', 'cpu_percent', 'num_threads']
+    if need_mem:
+        attrs += ['memory_info']
+
+    aggregated: dict[str, list] = {}
+    total_cpu = 0.0
+    total_rss = 0
+
+    for proc in psutil.process_iter(attrs):
+        try:
+            info = proc.info
+            name = info['name']
+            if not name:
+                continue
+
+            cpu_pct = 0.0
+            threads = 0
+            if need_cpu:
+                cpu_pct = info.get('cpu_percent') or 0.0
+                threads = info.get('num_threads') or 0
+                if name == 'System Idle Process':
+                    total_cpu = (cpu_threads * 100) - cpu_pct
+                    continue
+
+            rss = 0
+            vms = 0
+            pf = 0
+            if need_mem:
+                mem_info = info.get('memory_info')
+                if mem_info:
+                    rss = mem_info.rss
+                    vms = mem_info.vms
+                    pf = getattr(mem_info, 'num_page_faults', 0) or 0
+                    total_rss += rss
+
+            display_name = get_process_display_name(name)
+            if display_name in aggregated:
+                entry = aggregated[display_name]
+                entry[_CPU_IDX]     += cpu_pct
+                entry[_THREADS_IDX] += threads
+                entry[_RSS_IDX]     += rss
+                entry[_VMS_IDX]     += vms
+                entry[_PF_IDX]      += pf
+            else:
+                aggregated[display_name] = [cpu_pct, threads, rss, vms, pf]
+
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    return aggregated, total_cpu, total_rss
 
 
 class ProcessMonitor:
@@ -376,7 +456,7 @@ class ProcessMonitor:
 
     def get_processes(self, limit: int = 10) -> list[ProcessInfo]:
         """
-        Get current process usage data.
+        Get current process usage data (single-mode convenience method).
 
         Args:
             limit: Maximum number of processes to return
@@ -384,45 +464,15 @@ class ProcessMonitor:
         Returns:
             List of ProcessInfo sorted by usage (descending)
         """
-        if self.mode == MonitorMode.CPU:
-            return self._get_cpu_processes(limit)
-        else:
-            return self._get_memory_processes(limit)
+        need_cpu = self.mode == MonitorMode.CPU
+        need_mem = self.mode == MonitorMode.MEMORY
+        aggregated, total_cpu, total_rss = _collect_processes(need_cpu, need_mem, self.cpu_threads)
+        if need_cpu:
+            return self._extract_cpu_top(aggregated, total_cpu, limit)
+        return self._extract_mem_top(aggregated, total_rss, limit)
 
-    def _get_cpu_processes(self, limit: int) -> list[ProcessInfo]:
-        """Get CPU usage per process."""
-        # (cpu%, threads, pids)
-        aggregated: dict[str, tuple[float, int, list[int]]] = defaultdict(lambda: (0.0, 0, []))
-        total_cpu = 0.0
-
-        for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'num_threads']):
-            try:
-                info = proc.info
-                pid = info['pid']
-                name = info['name']
-                cpu_pct = info['cpu_percent']
-                num_threads = info.get('num_threads', 0) or 0
-
-                if name == 'System Idle Process':
-                    # Calculate actual CPU usage from idle
-                    total_cpu = (self.cpu_threads * 100) - cpu_pct
-                    continue
-
-                if not name:
-                    continue
-
-                display_name = get_process_display_name(name)
-                current = aggregated[display_name]
-                aggregated[display_name] = (
-                    current[0] + cpu_pct,
-                    current[1] + num_threads,
-                    current[2] + [pid],
-                )
-
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-
-        # Update stats
+    def _extract_cpu_top(self, aggregated: dict[str, list], total_cpu: float, limit: int) -> list[ProcessInfo]:
+        """Extract top CPU processes from aggregated data and update stats."""
         self.stats.total_usage = total_cpu
         self.stats.process_count = len(aggregated)
 
@@ -430,74 +480,26 @@ class ProcessMonitor:
             self.stats.max_usage = total_cpu
             self.stats.max_usage_time = datetime.now()
 
-        # Sort by CPU usage to find top N
-        sorted_items = sorted(aggregated.items(), key=lambda x: x[1][0], reverse=True)
+        top = heapq.nlargest(limit, aggregated.items(), key=lambda x: x[1][_CPU_IDX])
+        return [
+            ProcessInfo(name=name, value=entry[_CPU_IDX], threads=entry[_THREADS_IDX])
+            for name, entry in top
+        ]
 
-        # Convert to ProcessInfo list
-        processes = []
-        for name, (cpu_pct, threads, pids) in sorted_items[:limit]:
-            processes.append(ProcessInfo(
-                name=name,
-                value=cpu_pct,
-                threads=threads,
-            ))
-
-        return processes
-
-    def _get_memory_processes(self, limit: int) -> list[ProcessInfo]:
-        """Get memory usage per process."""
-        # (rss, page_faults, vms)
-        aggregated: dict[str, tuple[int, int, int]] = defaultdict(lambda: (0, 0, 0))
-        total_memory = 0
-
-        for proc in psutil.process_iter(['name', 'memory_info']):
-            try:
-                info = proc.info
-                name = info['name']
-                mem_info = info['memory_info']
-
-                if not name or not mem_info:
-                    continue
-
-                display_name = get_process_display_name(name)
-                rss = mem_info.rss
-                vms = mem_info.vms
-                # Page faults available on Windows via num_page_faults
-                pf = getattr(mem_info, 'num_page_faults', 0) or 0
-
-                current = aggregated[display_name]
-                aggregated[display_name] = (
-                    current[0] + rss,
-                    current[1] + pf,
-                    current[2] + vms,
-                )
-                total_memory += rss
-
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-
-        # Update stats
-        self.stats.total_usage = total_memory
+    def _extract_mem_top(self, aggregated: dict[str, list], total_rss: int, limit: int) -> list[ProcessInfo]:
+        """Extract top memory processes from aggregated data and update stats."""
+        self.stats.total_usage = total_rss
         self.stats.process_count = len(aggregated)
 
-        if total_memory > self.stats.max_usage:
-            self.stats.max_usage = total_memory
+        if total_rss > self.stats.max_usage:
+            self.stats.max_usage = total_rss
             self.stats.max_usage_time = datetime.now()
 
-        # Sort by RSS to find top N
-        sorted_items = sorted(aggregated.items(), key=lambda x: x[1][0], reverse=True)
-
-        # Convert to ProcessInfo list
-        processes = []
-        for name, (rss, pf, vms) in sorted_items[:limit]:
-            processes.append(ProcessInfo(
-                name=name,
-                value=rss,
-                page_faults=pf,
-                vms=vms,
-            ))
-
-        return processes
+        top = heapq.nlargest(limit, aggregated.items(), key=lambda x: x[1][_RSS_IDX])
+        return [
+            ProcessInfo(name=name, value=entry[_RSS_IDX], page_faults=entry[_PF_IDX], vms=entry[_VMS_IDX])
+            for name, entry in top
+        ]
 
     def update_history(self, processes: list[ProcessInfo]):
         """
@@ -755,7 +757,7 @@ class SharedDataCollector(QThread):
         return min(rates) if rates else 1000
 
     def run(self):
-        """Main collector loop - collects once, emits to all subscribers."""
+        """Main collector loop - single psutil pass, emits to all subscribers."""
         self._running = True
 
         while self._running:
@@ -769,41 +771,40 @@ class SharedDataCollector(QThread):
                 mem_settings = self._memory_settings.copy() if self._memory_settings else None
                 interval = self._interval_ms
 
-            # Collect data outside lock (slow part - doesn't block UI)
-            hwinfo = HWiNFOData()
-            if cpu_monitor:
-                hwinfo = cpu_monitor.get_hwinfo_data()
+            need_cpu = bool(cpu_enabled and cpu_monitor and cpu_settings)
+            need_mem = bool(mem_enabled and mem_monitor and mem_settings)
 
-            if cpu_enabled and cpu_monitor and cpu_settings:
-                processes = cpu_monitor.get_processes(cpu_settings['current_rows'])
-                cpu_monitor.update_history(processes)
-                history = cpu_monitor.get_history()
+            if need_cpu or need_mem:
+                # Single psutil iteration for both CPU and RAM
+                cpu_threads = cpu_monitor.cpu_threads if cpu_monitor else psutil.cpu_count()
+                aggregated, total_cpu, total_rss = _collect_processes(need_cpu, need_mem, cpu_threads)
 
-                data = MonitorData(
-                    processes=processes,
-                    history=history,
-                    total_display=cpu_monitor.get_total_display("MB"),
-                    max_display=cpu_monitor.get_max_display("MB"),
-                    hwinfo=hwinfo,
-                    stats=cpu_monitor.stats,
-                )
-                self.cpu_data_ready.emit(data)
+                hwinfo = cpu_monitor.get_hwinfo_data() if cpu_monitor else HWiNFOData()
 
-            if mem_enabled and mem_monitor and mem_settings:
-                unit = mem_settings.get('memory_unit', 'MB')
-                processes = mem_monitor.get_processes(mem_settings['current_rows'])
-                mem_monitor.update_history(processes)
-                history = mem_monitor.get_history()
+                if need_cpu:
+                    processes = cpu_monitor._extract_cpu_top(aggregated, total_cpu, cpu_settings['current_rows'])
+                    cpu_monitor.update_history(processes)
+                    self.cpu_data_ready.emit(MonitorData(
+                        processes=processes,
+                        history=cpu_monitor.get_history(),
+                        total_display=cpu_monitor.get_total_display("MB"),
+                        max_display=cpu_monitor.get_max_display("MB"),
+                        hwinfo=hwinfo,
+                        stats=cpu_monitor.stats,
+                    ))
 
-                data = MonitorData(
-                    processes=processes,
-                    history=history,
-                    total_display=mem_monitor.get_total_display(unit),
-                    max_display=mem_monitor.get_max_display(unit),
-                    hwinfo=hwinfo,
-                    stats=mem_monitor.stats,
-                )
-                self.memory_data_ready.emit(data)
+                if need_mem:
+                    unit = mem_settings.get('memory_unit', 'MB')
+                    processes = mem_monitor._extract_mem_top(aggregated, total_rss, mem_settings['current_rows'])
+                    mem_monitor.update_history(processes)
+                    self.memory_data_ready.emit(MonitorData(
+                        processes=processes,
+                        history=mem_monitor.get_history(),
+                        total_display=mem_monitor.get_total_display(unit),
+                        max_display=mem_monitor.get_max_display(unit),
+                        hwinfo=hwinfo,
+                        stats=mem_monitor.stats,
+                    ))
 
             self.msleep(interval)
 
