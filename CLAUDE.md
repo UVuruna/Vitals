@@ -121,6 +121,32 @@ class MemoryMonitor(BaseMonitor): ...
 
 ---
 
+### Rule #6: Commit After Completing Work
+
+**After finishing a task, stage changes and create commits.**
+
+**Commit message format:** `MAJOR.MINOR.PATCH description`
+
+- Follow the existing version sequence — check `git log --oneline -5` for the latest version number
+- Increment the patch number by 10 for each commit (e.g., `1.1.180` → `1.1.190`)
+- Description is short, English, starts with a noun or verb
+- Use em dash `—` to separate additional details when needed
+
+**Splitting into multiple commits:**
+- Group related changes into logical units
+- Each commit should represent one cohesive change
+- Complex work = multiple commits, each with its own version increment
+- Simple work = single commit
+
+**Procedure:**
+1. Check the latest version with `git log --oneline -3`
+2. Group changes into logical commits (by topic/module)
+3. Stage specific files for each commit (`git add file1 file2`, NOT `git add .`)
+4. Commit with the next version number and descriptive message
+5. Repeat for remaining groups if multiple commits are needed
+
+---
+
 ## PROJECT STRUCTURE
 
 ```
@@ -208,3 +234,4 @@ REQUIRED: monitor.py (edit directly)
 3. **MD-First** - Read documentation before modifying
 4. **Verify Dependencies** - Check what your change affects
 5. **When Unsure → ASK** - Better 100 questions than 1 bug
+6. **Commit after work** - Version-numbered commits, logical grouping (Rule #6)
