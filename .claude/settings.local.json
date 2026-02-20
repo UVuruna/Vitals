@@ -19,7 +19,9 @@
       "Bash(python:*)",
       "Bash(ls:*)",
       "Bash(git tag:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(pip install:*)",
+      "Bash(gh release create:*)"
     ]
   }
 }

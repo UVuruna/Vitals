@@ -91,17 +91,125 @@ class BaseMonitorWindow(QMainWindow):
         super().__init__(parent)
         self.is_paused = False
 
-        # Set window icon
+        # Set window icon (Qt level)
         base = get_base_path()
         icon_path = base / "assets" / "icon.ico"
         if not icon_path.exists():
             icon_path = base / "assets" / "icon.svg"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
+        self._ico_path = icon_path
 
         self._load_config()
         self._apply_dark_theme()
         self._setup_ui()
+
+    def showEvent(self, event):
+        """Set native Windows icon after window is shown for taskbar."""
+        super().showEvent(event)
+        if not getattr(self, '_native_icon_set', False):
+            self._native_icon_set = True
+            self._set_native_taskbar_icon()
+
+    def _set_native_taskbar_icon(self):
+        """Set per-window icon via COM IPropertyStore + WM_SETICON.
+
+        When multiple windows share a process-level AppUserModelID, Windows
+        uses the group icon (from the exe) instead of per-window icons.
+        Setting PKEY_AppUserModel_ID and PKEY_AppUserModel_RelaunchIconResource
+        per-window via IPropertyStore tells the shell exactly which icon to use.
+        """
+        try:
+            import ctypes
+            from ctypes import (
+                Structure, c_ulong, c_ushort, c_byte, c_void_p,
+                c_wchar_p, POINTER, byref, HRESULT, WINFUNCTYPE,
+            )
+
+            ico_path = getattr(self, '_ico_path', None)
+            if not ico_path or not ico_path.exists():
+                return
+
+            hwnd = int(self.winId())
+            ico_abs = str(ico_path.resolve())
+
+            # --- COM structures for IPropertyStore ---
+            class GUID(Structure):
+                _fields_ = [
+                    ('Data1', c_ulong), ('Data2', c_ushort),
+                    ('Data3', c_ushort), ('Data4', c_byte * 8),
+                ]
+
+            class PROPERTYKEY(Structure):
+                _fields_ = [('fmtid', GUID), ('pid', c_ulong)]
+
+            class PROPVARIANT(Structure):
+                _fields_ = [
+                    ('vt', c_ushort), ('r1', c_ushort),
+                    ('r2', c_ushort), ('r3', c_ushort),
+                    ('ptr', c_void_p), ('_pad', c_void_p),
+                ]
+
+            VT_LPWSTR = 31
+
+            IID_IPropertyStore = GUID(
+                0x886D8EEB, 0x8CF2, 0x4446,
+                (c_byte * 8)(0x8D, 0x02, 0xCD, 0xBA, 0x1D, 0xBD, 0xCF, 0x99),
+            )
+            APPMODEL_FMTID = GUID(
+                0x9F4C2855, 0x9F79, 0x4B39,
+                (c_byte * 8)(0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3),
+            )
+            PK_ID = PROPERTYKEY(APPMODEL_FMTID, 5)    # AppUserModel_ID
+            PK_ICON = PROPERTYKEY(APPMODEL_FMTID, 3)  # RelaunchIconResource
+
+            pps = c_void_p()
+            hr = ctypes.windll.shell32.SHGetPropertyStoreForWindow(
+                hwnd, byref(IID_IPropertyStore), byref(pps),
+            )
+            if hr == 0 and pps:
+                try:
+                    vt_ptr = ctypes.cast(pps, POINTER(c_void_p))[0]
+                    vt = ctypes.cast(vt_ptr, POINTER(c_void_p * 8)).contents
+                    SET_FN = WINFUNCTYPE(
+                        HRESULT, c_void_p,
+                        POINTER(PROPERTYKEY), POINTER(PROPVARIANT),
+                    )
+                    SetValue = SET_FN(vt[6])
+
+                    def _set_prop(key, text):
+                        pv = PROPVARIANT()
+                        pv.vt = VT_LPWSTR
+                        buf = c_wchar_p(text)
+                        pv.ptr = ctypes.cast(buf, c_void_p)
+                        SetValue(pps, byref(key), byref(pv))
+
+                    _set_prop(PK_ID, "PCGadgets.PMUsage")
+
+                    # Icon resource: exe when frozen, ico file from source
+                    if getattr(sys, 'frozen', False):
+                        _set_prop(PK_ICON, f"{sys.executable},0")
+                    else:
+                        _set_prop(PK_ICON, f"{ico_abs},0")
+                finally:
+                    REL_FN = WINFUNCTYPE(c_ulong, c_void_p)
+                    REL_FN(vt[2])(pps)
+
+            # --- WM_SETICON fallback ---
+            if ico_abs.endswith('.ico'):
+                LR_LOADFROMFILE = 0x00000010
+                hbig = ctypes.windll.user32.LoadImageW(
+                    None, ico_abs, 1, 32, 32, LR_LOADFROMFILE,
+                )
+                hsmall = ctypes.windll.user32.LoadImageW(
+                    None, ico_abs, 1, 16, 16, LR_LOADFROMFILE,
+                )
+                if hbig:
+                    ctypes.windll.user32.SendMessageW(hwnd, 0x0080, 1, hbig)
+                if hsmall:
+                    ctypes.windll.user32.SendMessageW(hwnd, 0x0080, 0, hsmall)
+        except Exception:
+            pass
 
     def _get_mode(self) -> MonitorMode:
         """Get the monitor mode. Must be overridden in subclasses."""
