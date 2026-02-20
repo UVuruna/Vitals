@@ -2,12 +2,13 @@
 Build PMUsage into a distributable package.
 
 Steps:
-  1. Run PyInstaller (--onedir mode) to create the exe
-  2. Sign the exe with self-signed certificate (optional)
-  3. Call NSIS to create the installer
+  1. Generate ICO from SVG (svg_to_ico — supersampled multi-resolution)
+  2. Run PyInstaller (--onedir mode) to create the exe
+  3. Sign the exe with self-signed certificate (optional)
+  4. Call NSIS to create the installer
 
 Prerequisites:
-  - pip install pyinstaller
+  - pip install pyinstaller pillow
   - Run create_cert.py once (for code signing, optional)
   - Install NSIS (https://nsis.sourceforge.io/) and add to PATH
 
@@ -54,8 +55,13 @@ def run(cmd: list[str], **kwargs):
     return result
 
 
+def generate_ico():
+    step("1/4  Generating ICO from SVG")
+    run([sys.executable, str(SETUP_DIR / "svg_to_ico.py")])
+
+
 def build_pyinstaller():
-    step("1/3  Building exe with PyInstaller")
+    step("2/4  Building exe with PyInstaller")
 
     # Clean previous build
     for d in [DIST_DIR, BUILD_DIR]:
@@ -131,7 +137,7 @@ def build_pyinstaller():
 
 
 def sign_exe(exe_path: Path):
-    step("2/3  Signing exe with certificate")
+    step("3/4  Signing exe with certificate")
 
     if not CERT_PATH.exists():
         print(f"  WARNING: Certificate not found: {CERT_PATH}")
@@ -174,7 +180,7 @@ def sign_exe(exe_path: Path):
 
 
 def build_installer():
-    step("3/3  Building installer with NSIS")
+    step("4/4  Building installer with NSIS")
 
     makensis = shutil.which("makensis")
     if not makensis:
@@ -220,10 +226,12 @@ def main():
         print(f"ERROR: Entry point not found: {ENTRY_POINT}")
         sys.exit(1)
 
-    if not ICON_PATH.exists():
-        print(f"ERROR: Icon not found: {ICON_PATH}")
+    svg_path = PROJECT_DIR / "assets" / "icon.svg"
+    if not svg_path.exists():
+        print(f"ERROR: SVG icon not found: {svg_path}")
         sys.exit(1)
 
+    generate_ico()
     exe_path = build_pyinstaller()
     sign_exe(exe_path)
     build_installer()
