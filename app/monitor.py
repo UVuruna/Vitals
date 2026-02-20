@@ -61,46 +61,6 @@ _CloseHandle.restype = wintypes.BOOL
 
 _FILE_MAP_READ = 0x0004
 
-# Windows API for thread processor info
-_THREAD_QUERY_INFORMATION = 0x0040
-
-class _PROCESSOR_NUMBER(ctypes.Structure):
-    """Windows PROCESSOR_NUMBER structure."""
-    _fields_ = [
-        ("Group", ctypes.c_ushort),
-        ("Number", ctypes.c_ubyte),
-        ("Reserved", ctypes.c_ubyte),
-    ]
-
-_OpenThread = _kernel32.OpenThread
-_OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-_OpenThread.restype = wintypes.HANDLE
-
-_GetThreadIdealProcessorEx = _kernel32.GetThreadIdealProcessorEx
-_GetThreadIdealProcessorEx.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PROCESSOR_NUMBER)]
-_GetThreadIdealProcessorEx.restype = wintypes.BOOL
-
-
-def get_process_cores(pid: int) -> int:
-    """Get number of unique CPU cores used by a process (via ideal processor)."""
-    try:
-        proc = psutil.Process(pid)
-        thread_ids = [t.id for t in proc.threads()]
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        return 0
-
-    cores_used: set[int] = set()
-    for tid in thread_ids:
-        handle = _OpenThread(_THREAD_QUERY_INFORMATION, False, tid)
-        if handle:
-            pn = _PROCESSOR_NUMBER()
-            if _GetThreadIdealProcessorEx(handle, ctypes.byref(pn)):
-                cores_used.add(pn.Number)
-            _CloseHandle(handle)
-
-    return len(cores_used)
-
-
 class _HWiNFOHeader(ctypes.Structure):
     """HWiNFO shared memory header structure."""
     _pack_ = 1
@@ -473,29 +433,13 @@ class ProcessMonitor:
         # Sort by CPU usage to find top N
         sorted_items = sorted(aggregated.items(), key=lambda x: x[1][0], reverse=True)
 
-        # Convert to ProcessInfo list, getting cores only for top N
+        # Convert to ProcessInfo list
         processes = []
-        for i, (name, (cpu_pct, threads, pids)) in enumerate(sorted_items[:limit]):
-            # Get cores for this process group (expensive, only for top N)
-            cores_set: set[int] = set()
-            for pid in pids:
-                try:
-                    p = psutil.Process(pid)
-                    for t in p.threads():
-                        handle = _OpenThread(_THREAD_QUERY_INFORMATION, False, t.id)
-                        if handle:
-                            pn = _PROCESSOR_NUMBER()
-                            if _GetThreadIdealProcessorEx(handle, ctypes.byref(pn)):
-                                cores_set.add(pn.Number)
-                            _CloseHandle(handle)
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-
+        for name, (cpu_pct, threads, pids) in sorted_items[:limit]:
             processes.append(ProcessInfo(
                 name=name,
                 value=cpu_pct,
                 threads=threads,
-                cores=len(cores_set),
             ))
 
         return processes
@@ -802,45 +746,53 @@ class SharedDataCollector(QThread):
         self._running = True
 
         while self._running:
+            # Read settings under lock (fast)
             with QMutexLocker(self._mutex):
-                hwinfo = HWiNFOData()
-                if self._cpu_monitor:
-                    hwinfo = self._cpu_monitor.get_hwinfo_data()
+                cpu_enabled = self._cpu_enabled
+                cpu_monitor = self._cpu_monitor
+                cpu_settings = self._cpu_settings.copy() if self._cpu_settings else None
+                mem_enabled = self._memory_enabled
+                mem_monitor = self._memory_monitor
+                mem_settings = self._memory_settings.copy() if self._memory_settings else None
+                interval = self._interval_ms
 
-                # Collect CPU data if enabled
-                if self._cpu_enabled and self._cpu_monitor and self._cpu_settings:
-                    processes = self._cpu_monitor.get_processes(self._cpu_settings['current_rows'])
-                    self._cpu_monitor.update_history(processes)
-                    history = self._cpu_monitor.get_history()
+            # Collect data outside lock (slow part - doesn't block UI)
+            hwinfo = HWiNFOData()
+            if cpu_monitor:
+                hwinfo = cpu_monitor.get_hwinfo_data()
 
-                    data = MonitorData(
-                        processes=processes,
-                        history=history,
-                        total_display=self._cpu_monitor.get_total_display("MB"),
-                        max_display=self._cpu_monitor.get_max_display("MB"),
-                        hwinfo=hwinfo,
-                        stats=self._cpu_monitor.stats,
-                    )
-                    self.cpu_data_ready.emit(data)
+            if cpu_enabled and cpu_monitor and cpu_settings:
+                processes = cpu_monitor.get_processes(cpu_settings['current_rows'])
+                cpu_monitor.update_history(processes)
+                history = cpu_monitor.get_history()
 
-                # Collect Memory data if enabled
-                if self._memory_enabled and self._memory_monitor and self._memory_settings:
-                    unit = self._memory_settings.get('memory_unit', 'MB')
-                    processes = self._memory_monitor.get_processes(self._memory_settings['current_rows'])
-                    self._memory_monitor.update_history(processes)
-                    history = self._memory_monitor.get_history()
+                data = MonitorData(
+                    processes=processes,
+                    history=history,
+                    total_display=cpu_monitor.get_total_display("MB"),
+                    max_display=cpu_monitor.get_max_display("MB"),
+                    hwinfo=hwinfo,
+                    stats=cpu_monitor.stats,
+                )
+                self.cpu_data_ready.emit(data)
 
-                    data = MonitorData(
-                        processes=processes,
-                        history=history,
-                        total_display=self._memory_monitor.get_total_display(unit),
-                        max_display=self._memory_monitor.get_max_display(unit),
-                        hwinfo=hwinfo,
-                        stats=self._memory_monitor.stats,
-                    )
-                    self.memory_data_ready.emit(data)
+            if mem_enabled and mem_monitor and mem_settings:
+                unit = mem_settings.get('memory_unit', 'MB')
+                processes = mem_monitor.get_processes(mem_settings['current_rows'])
+                mem_monitor.update_history(processes)
+                history = mem_monitor.get_history()
 
-            self.msleep(self._interval_ms)
+                data = MonitorData(
+                    processes=processes,
+                    history=history,
+                    total_display=mem_monitor.get_total_display(unit),
+                    max_display=mem_monitor.get_max_display(unit),
+                    hwinfo=hwinfo,
+                    stats=mem_monitor.stats,
+                )
+                self.memory_data_ready.emit(data)
+
+            self.msleep(interval)
 
     def stop(self):
         """Stop the collector."""

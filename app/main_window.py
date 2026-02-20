@@ -343,8 +343,8 @@ class BaseMonitorWindow(QMainWindow):
         headers = ["#", "Process", "Usage"]
 
         if mode_cols == "cpu":
-            cols += 2
-            headers.extend(["Cores", "Threads"])
+            cols += 1
+            headers.append("Threads")
         if has_time:
             cols += 1
             headers.append("Time")
@@ -369,10 +369,6 @@ class BaseMonitorWindow(QMainWindow):
 
         col_idx = 3
         if mode_cols == "cpu":
-            # Cores column
-            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Fixed)
-            table.setColumnWidth(col_idx, 50)
-            col_idx += 1
             # Threads column
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Fixed)
             table.setColumnWidth(col_idx, 60)
@@ -552,12 +548,9 @@ class CPUWindow(BaseMonitorWindow):
             value_str = monitor.format_value(proc.value, "MB") if monitor else f"{proc.value:.0f}"
             self.current_table.setItem(row, 2, QTableWidgetItem(value_str))
 
-            # Cores column
-            cores_text = str(proc.cores) if proc.cores > 0 else ""
-            self.current_table.setItem(row, 3, QTableWidgetItem(cores_text))
             # Threads column
             threads_text = str(proc.threads) if proc.threads > 0 else ""
-            self.current_table.setItem(row, 4, QTableWidgetItem(threads_text))
+            self.current_table.setItem(row, 3, QTableWidgetItem(threads_text))
 
         # Clear empty rows
         for row in range(len(data.processes), self.current_table.rowCount()):
@@ -575,14 +568,11 @@ class CPUWindow(BaseMonitorWindow):
             value_str = monitor.format_value(record.value, "MB") if monitor else f"{record.value:.0f}"
             self.history_table.setItem(row, 2, QTableWidgetItem(value_str))
 
-            # Cores column
-            cores_text = str(record.cores) if record.cores > 0 else ""
-            self.history_table.setItem(row, 3, QTableWidgetItem(cores_text))
             # Threads column
             threads_text = str(record.threads) if record.threads > 0 else ""
-            self.history_table.setItem(row, 4, QTableWidgetItem(threads_text))
+            self.history_table.setItem(row, 3, QTableWidgetItem(threads_text))
 
-            self.history_table.setItem(row, 5, QTableWidgetItem(record.time_str))
+            self.history_table.setItem(row, 4, QTableWidgetItem(record.time_str))
 
         # Clear empty rows
         for row in range(len(data.history), self.history_table.rowCount()):
