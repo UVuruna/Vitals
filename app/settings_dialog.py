@@ -109,13 +109,14 @@ class SettingsDialog(QDialog):
         label.setStyleSheet(f"color: {color}; background: transparent;")
         return label
 
-    def _make_combo(self, items: list, default: str, width: int = 100) -> QComboBox:
+    def _make_combo(self, items: list, default: str) -> QComboBox:
         """Create a styled combo box."""
         combo = QComboBox()
         combo.addItems(items)
         combo.setCurrentText(default)
         combo.setFont(QFont("Segoe UI", 11))
-        combo.setFixedWidth(width)
+        combo.setMinimumContentsLength(max(len(item) for item in items))
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         combo.setFixedHeight(32)
         combo.setStyleSheet("""
             QComboBox {
@@ -210,7 +211,7 @@ class SettingsDialog(QDialog):
         row3.addStretch()
         self.refresh_slider = QSlider(Qt.Orientation.Horizontal)
         self.refresh_slider.setRange(5, 50)
-        self.refresh_slider.setValue(20)
+        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 100)
         self.refresh_slider.setFixedWidth(140)
         self.refresh_slider.setStyleSheet("""
             QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
@@ -218,7 +219,7 @@ class SettingsDialog(QDialog):
             QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
         """)
         row3.addWidget(self.refresh_slider)
-        self.refresh_label = self._make_label("2000 ms", 11)
+        self.refresh_label = self._make_label(f"{Defaults.REFRESH_RATE_MS} ms", 11)
         self.refresh_label.setFixedWidth(65)
         self.refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 100} ms"))
@@ -374,13 +375,14 @@ class InitialSettingsDialog(QDialog):
         label.setStyleSheet(f"color: {color}; background: transparent;")
         return label
 
-    def _make_combo(self, items: list, default: str, width: int = 100) -> QComboBox:
+    def _make_combo(self, items: list, default: str) -> QComboBox:
         """Create a styled combo box."""
         combo = QComboBox()
         combo.addItems(items)
         combo.setCurrentText(default)
         combo.setFont(QFont("Segoe UI", 11))
-        combo.setFixedWidth(width)
+        combo.setMinimumContentsLength(max(len(item) for item in items))
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         combo.setFixedHeight(32)
         combo.setStyleSheet("""
             QComboBox {
@@ -684,13 +686,14 @@ class CPUSettingsDialog(QDialog):
         label.setStyleSheet(f"color: {color}; background: transparent;")
         return label
 
-    def _make_combo(self, items: list, default: str, width: int = 100) -> QComboBox:
+    def _make_combo(self, items: list, default: str) -> QComboBox:
         """Create a styled combo box."""
         combo = QComboBox()
         combo.addItems(items)
         combo.setCurrentText(default)
         combo.setFont(QFont("Segoe UI", 11))
-        combo.setFixedWidth(width)
+        combo.setMinimumContentsLength(max(len(item) for item in items))
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         combo.setFixedHeight(32)
         combo.setStyleSheet("""
             QComboBox {
@@ -743,7 +746,7 @@ class CPUSettingsDialog(QDialog):
         row3.addStretch()
         self.refresh_slider = QSlider(Qt.Orientation.Horizontal)
         self.refresh_slider.setRange(5, 50)
-        self.refresh_slider.setValue(20)
+        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 100)
         self.refresh_slider.setFixedWidth(140)
         self.refresh_slider.setStyleSheet("""
             QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
@@ -751,7 +754,7 @@ class CPUSettingsDialog(QDialog):
             QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
         """)
         row3.addWidget(self.refresh_slider)
-        self.refresh_label = self._make_label("2000 ms", 11)
+        self.refresh_label = self._make_label(f"{Defaults.REFRESH_RATE_MS} ms", 11)
         self.refresh_label.setFixedWidth(65)
         self.refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 100} ms"))
@@ -845,13 +848,14 @@ class MemorySettingsDialog(QDialog):
         label.setStyleSheet(f"color: {color}; background: transparent;")
         return label
 
-    def _make_combo(self, items: list, default: str, width: int = 100) -> QComboBox:
+    def _make_combo(self, items: list, default: str) -> QComboBox:
         """Create a styled combo box."""
         combo = QComboBox()
         combo.addItems(items)
         combo.setCurrentText(default)
         combo.setFont(QFont("Segoe UI", 11))
-        combo.setFixedWidth(width)
+        combo.setMinimumContentsLength(max(len(item) for item in items))
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         combo.setFixedHeight(32)
         combo.setStyleSheet("""
             QComboBox {
@@ -904,7 +908,7 @@ class MemorySettingsDialog(QDialog):
         row3.addStretch()
         self.refresh_slider = QSlider(Qt.Orientation.Horizontal)
         self.refresh_slider.setRange(5, 50)
-        self.refresh_slider.setValue(20)
+        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 100)
         self.refresh_slider.setFixedWidth(140)
         self.refresh_slider.setStyleSheet("""
             QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
@@ -912,7 +916,7 @@ class MemorySettingsDialog(QDialog):
             QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
         """)
         row3.addWidget(self.refresh_slider)
-        self.refresh_label = self._make_label("2000 ms", 11)
+        self.refresh_label = self._make_label(f"{Defaults.REFRESH_RATE_MS} ms", 11)
         self.refresh_label.setFixedWidth(65)
         self.refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 100} ms"))

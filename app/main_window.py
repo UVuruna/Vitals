@@ -466,9 +466,8 @@ class BaseMonitorWindow(QMainWindow):
 
         # Column widths (all data columns are user-resizable)
         header = table.horizontalHeader()
-        # # column (row number) - fixed, narrow
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        table.setColumnWidth(0, 30)
+        # # column (row number) - fit to content
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         # Process column (stretch to fill remaining space)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         # Usage column - resizable

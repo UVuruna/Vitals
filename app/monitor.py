@@ -664,7 +664,9 @@ class SharedDataCollector(QThread):
         self._cpu_monitor: Optional[ProcessMonitor] = None
         self._memory_monitor: Optional[ProcessMonitor] = None
         self._running = False
-        self._interval_ms = 2000
+        self._interval_ms = 1000
+        self._cpu_refresh_ms = 1000
+        self._memory_refresh_ms = 1000
         self._mutex = QMutex()
 
         # Settings per mode
@@ -697,8 +699,9 @@ class SharedDataCollector(QThread):
                     ram_gb=ram_gb,
                 )
             self._cpu_monitor.set_history_settings(history_rows, retention_minutes)
-            self._interval_ms = min(self._interval_ms, refresh_rate_ms)
+            self._cpu_refresh_ms = refresh_rate_ms
             self._cpu_enabled = True
+            self._interval_ms = self._compute_interval()
 
     def configure_memory(
         self,
@@ -724,8 +727,9 @@ class SharedDataCollector(QThread):
                     ram_gb=ram_gb,
                 )
             self._memory_monitor.set_history_settings(history_rows, retention_minutes)
-            self._interval_ms = min(self._interval_ms, refresh_rate_ms)
+            self._memory_refresh_ms = refresh_rate_ms
             self._memory_enabled = True
+            self._interval_ms = self._compute_interval()
 
     def disable_cpu(self):
         """Disable CPU monitoring."""
@@ -740,6 +744,15 @@ class SharedDataCollector(QThread):
             self._memory_enabled = False
             if not self._cpu_enabled:
                 self.stop()
+
+    def _compute_interval(self) -> int:
+        """Compute interval as min of all enabled modes. Must be called within mutex."""
+        rates = []
+        if self._cpu_enabled:
+            rates.append(self._cpu_refresh_ms)
+        if self._memory_enabled:
+            rates.append(self._memory_refresh_ms)
+        return min(rates) if rates else 1000
 
     def run(self):
         """Main collector loop - collects once, emits to all subscribers."""
