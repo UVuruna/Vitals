@@ -1,5 +1,10 @@
 # Build outputs
 exe/
+dist/
+build/
+
+# Code signing certificate (never commit)
+setup/cert/
 
 # Python
 __pycache__/
