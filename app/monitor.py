@@ -627,7 +627,7 @@ class ProcessMonitor:
 
 @dataclass
 class MonitorData:
-    """Data emitted by MonitorWorker."""
+    """Data emitted by SharedDataCollector."""
     processes: list[ProcessInfo]
     history: list[HistoryRecord]
     total_display: str
@@ -816,88 +816,3 @@ class SharedDataCollector(QThread):
             if cls._instance is not None:
                 cls._instance.stop()
                 cls._instance = None
-
-
-class MonitorWorker(QThread):
-    """Background worker for process monitoring."""
-
-    data_ready = Signal(MonitorData)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._monitor: Optional[ProcessMonitor] = None
-        self._running = False
-        self._interval_ms = 2000
-        self._current_rows = 7
-        self._memory_unit = "MB"
-        self._mutex = QMutex()
-
-    def configure(
-        self,
-        mode: MonitorMode,
-        cpu_threads: int,
-        ram_gb: int,
-        current_rows: int,
-        history_rows: int,
-        retention_minutes: int,
-        refresh_rate_ms: int,
-        memory_unit: str,
-    ):
-        """Configure the monitor (thread-safe)."""
-        with QMutexLocker(self._mutex):
-            # Check if mode changed
-            if self._monitor is None or self._monitor.mode != mode:
-                self._monitor = ProcessMonitor(
-                    mode=mode,
-                    cpu_threads=cpu_threads,
-                    ram_gb=ram_gb,
-                )
-            else:
-                self._monitor.cpu_threads = cpu_threads
-                self._monitor.ram_bytes = ram_gb * (1024 ** 3)
-
-            self._monitor.set_history_settings(history_rows, retention_minutes)
-            self._interval_ms = refresh_rate_ms
-            self._current_rows = current_rows
-            self._memory_unit = memory_unit
-
-    def run(self):
-        """Main worker loop."""
-        self._running = True
-
-        while self._running:
-            with QMutexLocker(self._mutex):
-                if self._monitor is None:
-                    continue
-
-                # Collect data (this is the slow part - now in background!)
-                processes = self._monitor.get_processes(self._current_rows)
-                self._monitor.update_history(processes)
-                history = self._monitor.get_history()
-                hwinfo = self._monitor.get_hwinfo_data()
-
-                # Prepare display strings
-                data = MonitorData(
-                    processes=processes,
-                    history=history,
-                    total_display=self._monitor.get_total_display(self._memory_unit),
-                    max_display=self._monitor.get_max_display(self._memory_unit),
-                    hwinfo=hwinfo,
-                    stats=self._monitor.stats,
-                )
-
-            # Emit signal to main thread
-            self.data_ready.emit(data)
-
-            # Sleep for interval
-            self.msleep(self._interval_ms)
-
-    def stop(self):
-        """Stop the worker."""
-        self._running = False
-        self.wait(2000)  # Wait up to 2 seconds for thread to finish
-
-    @property
-    def monitor(self) -> Optional[ProcessMonitor]:
-        """Get the monitor instance (for format_value etc.)."""
-        return self._monitor

@@ -124,7 +124,7 @@ class MemoryMonitor(BaseMonitor): ...
 ## PROJECT STRUCTURE
 
 ```
-📁 ProcessMemoryUsage/
+📁 PMUsage/
   🐍 main.py              ← Entry point
   📝 README.md            ← Project documentation
   📝 CLAUDE.md            ← AI assistant guidance
@@ -134,6 +134,15 @@ class MemoryMonitor(BaseMonitor): ...
     🐍 settings_dialog.py ← Settings configuration
     🐍 monitor.py         ← Process monitoring logic
     🐍 styles.py          ← UI styling constants
+  📁 assets/
+    🖼️ icon.ico           ← Application icon
+    🖼️ icon.svg           ← SVG source
+  📁 config/
+    📄 config.json         ← Temperature color config
+  📁 setup/
+    🐍 build.py            ← Build orchestrator (PyInstaller + NSIS)
+    🐍 create_cert.py      ← Self-signed certificate generator
+    📄 installer.nsi       ← NSIS installer script
 ```
 
 ---

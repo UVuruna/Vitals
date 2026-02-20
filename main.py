@@ -34,7 +34,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Process Monitor")
-    app.setApplicationVersion("2.1.0")
+    app.setApplicationVersion("1.1.140")
     app.setOrganizationName("PC Gadgets")
 
     # Set app icon
