@@ -836,7 +836,7 @@ class MemoryWindow(BaseMonitorWindow):
 
         # Memory mode: Committed, Read, Write
         committed_str = (
-            monitor.format_value(hwinfo.virt_committed * 1024 * 1024, unit)
+            monitor.format_value(hwinfo.virt_committed, unit)
             if (monitor and hwinfo.virt_committed)
             else "—"
         )

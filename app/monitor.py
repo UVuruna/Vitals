@@ -36,7 +36,7 @@ class HWiNFOData:
     cpu_edc: Optional[float] = None       # CPU EDC (Electrical Design Current %)
 
     # Memory mode sensors
-    virt_committed: Optional[float] = None  # Virtual Memory Committed (MB)
+    virt_committed: Optional[float] = None  # Virtual Memory Committed (bytes, converted from HWiNFO unit)
     dram_read: Optional[float] = None       # DRAM Read Bandwidth (MB/s)
     dram_write: Optional[float] = None      # DRAM Write Bandwidth (MB/s)
 
@@ -115,14 +115,16 @@ class HWiNFOSharedMemory:
         self._cache: Optional[HWiNFOData] = None
         self._last_read: float = 0
         self._cache_seconds: float = 0.5
-        # Cached sensor indices (found on first scan)
+        # Cached sensor indices and units (found on first scan)
         self._sensor_indices: Optional[dict[str, int]] = None
+        self._sensor_units: Optional[dict[str, str]] = None
         self._reading_offset: int = 0
         self._reading_size: int = 0
 
-    def _find_sensor_indices(self, base: int, header: _HWiNFOHeader) -> dict[str, int]:
-        """Scan once to find indices of target sensors."""
+    def _find_sensor_indices(self, base: int, header: _HWiNFOHeader) -> tuple[dict[str, int], dict[str, str]]:
+        """Scan once to find indices and units of target sensors."""
         indices: dict[str, int] = {}
+        units: dict[str, str] = {}
 
         for i in range(header.dwNumReadingElements):
             addr = base + header.dwOffsetOfReadingSection + i * header.dwSizeOfReadingElement
@@ -135,9 +137,10 @@ class HWiNFOSharedMemory:
             for target_key, target_name in self.TARGETS:
                 if target_key in label_orig or target_key in label_user:
                     indices[target_name] = i
+                    units[target_name] = reading.szUnit.decode('utf-8', errors='ignore').rstrip('\x00')
                     break
 
-        return indices
+        return indices, units
 
     def get_sensors(self) -> HWiNFOData:
         """Get sensor values from HWiNFO (fast - only reads cached indices)."""
@@ -161,15 +164,25 @@ class HWiNFOSharedMemory:
             self._reading_offset = header.dwOffsetOfReadingSection
             self._reading_size = header.dwSizeOfReadingElement
 
-            # First time: scan all to find indices
+            # First time: scan all to find indices and units
             if self._sensor_indices is None:
-                self._sensor_indices = self._find_sensor_indices(base, header)
+                self._sensor_indices, self._sensor_units = self._find_sensor_indices(base, header)
 
-            # Fast path: only read the 6 sensors we need
+            # Fast path: only read the sensors we need
             for attr_name, idx in self._sensor_indices.items():
                 addr = base + self._reading_offset + idx * self._reading_size
                 reading = _HWiNFOReading.from_address(addr)
-                setattr(data, attr_name, reading.Value)
+                value = reading.Value
+                # Convert virt_committed to bytes using HWiNFO's reported unit
+                if attr_name == 'virt_committed' and self._sensor_units:
+                    hw_unit = self._sensor_units.get(attr_name, 'MB')
+                    if hw_unit == 'GB':
+                        value *= 1024 ** 3
+                    elif hw_unit == 'MB':
+                        value *= 1024 ** 2
+                    elif hw_unit == 'KB':
+                        value *= 1024
+                setattr(data, attr_name, value)
 
             _UnmapViewOfFile(base)
             _CloseHandle(handle)
