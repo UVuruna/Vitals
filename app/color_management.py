@@ -58,9 +58,6 @@ _DEFAULT_VALUE_RANGES = [
 # Near-white for processes with no company information at all (text color in table)
 _DEFAULT_NO_COMPANY_COLOR = "#FFFFFF"
 
-# Warm tan for singleton companies (exactly 1 process name) — shared "Other" color
-_DEFAULT_OTHER_COLOR = "#c8aa80"
-
 # HSL parameters for named multi-company hues (vivid pastels, readable on dark background)
 _COMPANY_HUE_SATURATION = 0.84
 _COMPANY_HUE_LIGHTNESS = 0.84
@@ -77,6 +74,15 @@ def _get_config_path() -> Path:
     else:
         base = Path(__file__).parent.parent
     return base / "config" / "config.json"
+
+
+def _get_last_setup_path() -> Path:
+    """Resolve config/last_setup.json for user-writable storage."""
+    if getattr(sys, 'frozen', False):
+        base = Path(sys.executable).parent  # exe directory, writable
+    else:
+        base = Path(__file__).parent.parent
+    return base / "config" / "last_setup.json"
 
 
 try:
@@ -144,15 +150,15 @@ def _read_company_name(exe_path: str) -> Optional[str]:
 # ProcessColorManager — singleton, thread-safe
 # ---------------------------------------------------------------------------
 
-def _company_hue_color(index: int, total: int) -> QColor:
+def _company_hue_color(index: int, total: int, saturation: float, lightness: float) -> QColor:
     """
-    Return a vivid pastel QColor for a multi-company at discovery index `index` out of `total`.
+    Return a QColor for a multi-company at discovery index `index` out of `total`.
 
     Hues are evenly distributed: hue = index / total * 360°.
-    Saturation and lightness are fixed for readability on dark backgrounds.
+    Saturation and lightness are user-configurable via ProcessColorManager.
     """
     hue = (index / total) * 360.0
-    return QColor.fromHslF(hue / 360.0, _COMPANY_HUE_SATURATION, _COMPANY_HUE_LIGHTNESS)
+    return QColor.fromHslF(hue / 360.0, saturation, lightness)
 
 
 class ProcessColorManager:
@@ -198,10 +204,12 @@ class ProcessColorManager:
         # Total companies that have ever reached count > 1 (used for hue spacing)
         self._company_multi_count: int = 0
 
-        # Near-white for processes with no company info
+        # White for processes with no company info
         self._no_company_color = QColor(_DEFAULT_NO_COMPANY_COLOR)
-        # Warm tan shared by all singleton companies (count == 1)
-        self._other_color = QColor(_DEFAULT_OTHER_COLOR)
+
+        # HSL parameters for multi-company hue colors (user-configurable)
+        self._hue_saturation: float = _COMPANY_HUE_SATURATION
+        self._hue_lightness: float = _COMPANY_HUE_LIGHTNESS
 
         # Value color ranges — CPU and Memory start from same config, tuned independently
         self._value_ranges_cpu: list[tuple[float, QColor]] = []
@@ -234,6 +242,20 @@ class ProcessColorManager:
         # CPU and Memory start from the same config; each can be tuned independently
         self._value_ranges_cpu = list(parsed_ranges)
         self._value_ranges_memory = list(parsed_ranges)
+
+        # Load user-set hue params from last_setup.json (overrides defaults if present)
+        setup_path = _get_last_setup_path()
+        if setup_path.exists():
+            try:
+                with open(setup_path, encoding="utf-8") as f:
+                    setup_data = json.load(f)
+                hue = setup_data.get("hue_params", {})
+                if "saturation" in hue:
+                    self._hue_saturation = float(hue["saturation"])
+                if "lightness" in hue:
+                    self._hue_lightness = float(hue["lightness"])
+            except Exception:
+                pass
 
     def lookup_company(self, name: str, pid: int):
         """
@@ -281,7 +303,7 @@ class ProcessColorManager:
 
         Returns None if the name has not been looked up yet.
         Returns a hue color for multi-company processes (count > 1).
-        Returns _other_color for singleton-company processes (count == 1).
+        Returns a hue color for singleton-company processes (count == 1) — last slot in ring.
         Returns _no_company_color for processes with no company info.
         """
         with QMutexLocker(self._mutex):
@@ -291,12 +313,42 @@ class ProcessColorManager:
             if not company:
                 return self._no_company_color
             count = self._company_counts.get(company, 0)
-            if count <= 1:
-                return self._other_color
             n = self._company_multi_count
-            i = self._company_multi_idx.get(company, 0)
+            total = n + 1  # +1 reserves last slot for "Other"
+            i = n if count <= 1 else self._company_multi_idx.get(company, 0)
+            sat = self._hue_saturation
+            light = self._hue_lightness
 
-        return _company_hue_color(i, n)
+        return _company_hue_color(i, total, sat, light)
+
+    def get_hue_params(self) -> tuple[float, float]:
+        """Return current (saturation, lightness) for multi-company hue colors."""
+        with QMutexLocker(self._mutex):
+            return self._hue_saturation, self._hue_lightness
+
+    def update_hue_params(self, saturation: float, lightness: float):
+        """Update hue saturation and lightness in-memory and persist to last_setup.json.
+
+        Args:
+            saturation: 0.0–1.0
+            lightness:  0.0–1.0
+        """
+        with QMutexLocker(self._mutex):
+            self._hue_saturation = saturation
+            self._hue_lightness = lightness
+
+        path = _get_last_setup_path()
+        try:
+            data: dict = {}
+            if path.exists():
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+            data["hue_params"] = {"saturation": saturation, "lightness": lightness}
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception:
+            pass
 
     def update_value_thresholds(self, thresholds: list, mode: str):
         """Update the 4 color zone thresholds in-memory (session only, resets on restart).
@@ -328,12 +380,16 @@ class ProcessColorManager:
     def get_legend(self) -> list[tuple[str, QColor, int]]:
         """Return (label, color, count) sorted by count descending.
 
-        Multi-companies (count > 1) are listed individually with their hue color.
-        Singleton companies (count == 1) are grouped as a single "Other" entry.
+        Multi-companies (count > 1) are listed individually; hue index = their multi_idx.
+        Singleton companies (count == 1) are grouped as "Other"; hue index = last slot.
+        Total hue ring size = multi_count + 1 (Other always occupies the last slot).
         No-company processes appear as "Unknown" with a white swatch at the end.
         """
         with QMutexLocker(self._mutex):
             n = self._company_multi_count
+            total = n + 1  # Other occupies the last slot
+            sat = self._hue_saturation
+            light = self._hue_lightness
             result = []
             singleton_count = 0
 
@@ -342,13 +398,14 @@ class ProcessColorManager:
             ):
                 if count > 1:
                     i = self._company_multi_idx.get(company, 0)
-                    color = _company_hue_color(i, n) if n > 0 else self._other_color
+                    color = _company_hue_color(i, total, sat, light)
                     result.append((company, color, count))
                 else:
                     singleton_count += 1
 
             if singleton_count > 0:
-                result.append(("Other", self._other_color, singleton_count))
+                other_color = _company_hue_color(n, total, sat, light)
+                result.append(("Other", other_color, singleton_count))
 
             no_company_count = sum(
                 1 for c in self._company_cache.values() if c is None

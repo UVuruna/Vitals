@@ -49,7 +49,11 @@ def _save_last_setup(settings: 'InitialSettings', thresholds: list) -> None:
     path = get_last_setup_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = {
+        data: dict = {}
+        if path.exists():
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        data.update({
             "cpu_enabled": settings.cpu_enabled,
             "memory_enabled": settings.memory_enabled,
             "current_rows": settings.current_rows,
@@ -58,7 +62,7 @@ def _save_last_setup(settings: 'InitialSettings', thresholds: list) -> None:
             "retention_minutes": settings.retention_minutes,
             "memory_unit": settings.memory_unit,
             "color_thresholds": thresholds,
-        }
+        })
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
     except Exception:
@@ -250,6 +254,7 @@ class CompanyLegendDialog(QDialog):
         layout.addWidget(title)
 
         legend = ProcessColorManager().get_legend()
+        self._swatches: list[QLabel] = []
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -285,6 +290,7 @@ class CompanyLegendDialog(QDialog):
                     f"background-color: {color.name()}; border-radius: 3px;"
                 )
                 row.addWidget(swatch)
+                self._swatches.append(swatch)
 
                 name_lbl = QLabel(company)
                 name_lbl.setFont(QFont("Segoe UI", 10))
@@ -303,11 +309,59 @@ class CompanyLegendDialog(QDialog):
         scroll.setWidget(content)
         layout.addWidget(scroll)
 
-        note = QLabel("Colored = named company  ·  Gray = no company info")
+        note = QLabel("Colored = named company  ·  White = no company info")
         note.setFont(QFont("Segoe UI", 8))
         note.setStyleSheet("color: #555555; background: transparent;")
         note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(note)
+
+        # Hue color sliders
+        sat_init, light_init = ProcessColorManager().get_hue_params()
+
+        slider_style = """
+            QSlider::groove:horizontal {
+                height: 4px; background: #3a3a4e; border-radius: 2px;
+            }
+            QSlider::handle:horizontal {
+                width: 14px; height: 14px; margin: -5px 0;
+                background: #e94560; border-radius: 7px;
+            }
+            QSlider::sub-page:horizontal { background: #e94560; border-radius: 2px; }
+        """
+
+        for label_text, attr_slider, attr_val, init_val in [
+            ("Saturation", "_sat_slider", "_sat_val", sat_init),
+            ("Lightness",  "_light_slider", "_light_val", light_init),
+        ]:
+            row_w = QWidget()
+            row_w.setStyleSheet("background: transparent;")
+            row = QHBoxLayout(row_w)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(8)
+
+            lbl = QLabel(label_text)
+            lbl.setFont(QFont("Segoe UI", 9))
+            lbl.setStyleSheet("color: #aaaaaa; background: transparent;")
+            lbl.setFixedWidth(70)
+            row.addWidget(lbl)
+
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, 100)
+            slider.setValue(int(init_val * 100))
+            slider.setStyleSheet(slider_style)
+            row.addWidget(slider, 1)
+            setattr(self, attr_slider, slider)
+
+            val_lbl = QLabel(f"{int(init_val * 100)}%")
+            val_lbl.setFont(QFont("Segoe UI", 9))
+            val_lbl.setStyleSheet("color: #aaaaaa; background: transparent;")
+            val_lbl.setFixedWidth(34)
+            val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            row.addWidget(val_lbl)
+            setattr(self, attr_val, val_lbl)
+
+            slider.valueChanged.connect(self._on_hue_params_changed)
+            layout.addWidget(row_w)
 
         close_btn = QPushButton("Close")
         close_btn.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
@@ -319,6 +373,18 @@ class CompanyLegendDialog(QDialog):
         """)
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
+
+    def _on_hue_params_changed(self):
+        sat = self._sat_slider.value() / 100.0
+        light = self._light_slider.value() / 100.0
+        self._sat_val.setText(f"{self._sat_slider.value()}%")
+        self._light_val.setText(f"{self._light_slider.value()}%")
+        ProcessColorManager().update_hue_params(sat, light)
+        legend = ProcessColorManager().get_legend()
+        for i, swatch in enumerate(self._swatches):
+            if i < len(legend):
+                _, color, _ = legend[i]
+                swatch.setStyleSheet(f"background-color: {color.name()}; border-radius: 3px;")
 
 
 # ---------------------------------------------------------------------------
