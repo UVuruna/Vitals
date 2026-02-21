@@ -2,6 +2,7 @@
 Settings Dialog - Simple and Working
 """
 
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,48 @@ def get_base_path() -> Path:
     if getattr(sys, 'frozen', False):
         return Path(sys._MEIPASS)
     return Path(__file__).parent.parent
+
+
+def _get_last_setup_path() -> Path:
+    """Resolve config/last_setup.json for user-writable storage."""
+    if getattr(sys, 'frozen', False):
+        base = Path(sys.executable).parent  # exe directory, writable
+    else:
+        base = Path(__file__).parent.parent
+    return base / "config" / "last_setup.json"
+
+
+def _save_last_setup(settings: 'InitialSettings', thresholds: list) -> None:
+    """Persist the last-used login settings to config/last_setup.json."""
+    path = _get_last_setup_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "cpu_enabled": settings.cpu_enabled,
+            "memory_enabled": settings.memory_enabled,
+            "current_rows": settings.current_rows,
+            "history_rows": settings.history_rows,
+            "refresh_rate_ms": settings.refresh_rate_ms,
+            "retention_minutes": settings.retention_minutes,
+            "memory_unit": settings.memory_unit,
+            "color_thresholds": thresholds,
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass  # Best-effort: don't break app if save fails
+
+
+def _load_last_setup() -> dict:
+    """Load last-used login settings from config/last_setup.json."""
+    path = _get_last_setup_path()
+    if path.exists():
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +206,11 @@ class ColorScaleWidget(QWidget):
     def thresholds(self) -> list:
         return list(self._thresholds)
 
+    def set_thresholds(self, thresholds: list) -> None:
+        """Update displayed thresholds (e.g. from saved settings) and repaint."""
+        self._thresholds = list(thresholds)
+        self.update()
+
 
 # ---------------------------------------------------------------------------
 # CompanyLegendDialog
@@ -255,7 +303,7 @@ class CompanyLegendDialog(QDialog):
         scroll.setWidget(content)
         layout.addWidget(scroll)
 
-        note = QLabel("Colored = multi-process company  ·  Gray = singleton")
+        note = QLabel("Colored = named company  ·  Gray = no company info")
         note.setFont(QFont("Segoe UI", 8))
         note.setStyleSheet("color: #555555; background: transparent;")
         note.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -591,6 +639,9 @@ class InitialSettingsDialog(QDialog):
         self.start_btn.clicked.connect(self._on_start)
         layout.addWidget(self.start_btn)
 
+        # Restore last session settings (no-op if file doesn't exist)
+        self._apply_last_setup(_load_last_setup())
+
     def _update_mode_buttons(self):
         active_style = """
             QPushButton { background-color: #e94560; color: white; border: none; border-radius: 6px; }
@@ -612,7 +663,31 @@ class InitialSettingsDialog(QDialog):
         color_mgr = ProcessColorManager()
         color_mgr.update_value_thresholds(thresholds, "cpu")
         color_mgr.update_value_thresholds(thresholds, "memory")
+        _save_last_setup(self.get_settings(), thresholds)
         self.accept()
+
+    def _apply_last_setup(self, saved: dict) -> None:
+        """Apply saved settings to controls after _setup_ui is done."""
+        if not saved:
+            return
+        if "cpu_enabled" in saved:
+            self.cpu_btn.setChecked(bool(saved["cpu_enabled"]))
+        if "memory_enabled" in saved:
+            self.mem_btn.setChecked(bool(saved["memory_enabled"]))
+        self._update_mode_buttons()
+        if "current_rows" in saved:
+            self.current_combo.setCurrentText(str(saved["current_rows"]))
+        if "history_rows" in saved:
+            self.history_combo.setCurrentText(str(saved["history_rows"]))
+        if "refresh_rate_ms" in saved:
+            self.refresh_slider.setValue(int(saved["refresh_rate_ms"]) // 100)
+        if "retention_minutes" in saved:
+            self.retention_slider.setValue(int(saved["retention_minutes"]))
+        if "memory_unit" in saved:
+            self.unit_combo.setCurrentText(saved["memory_unit"])
+        thresholds = saved.get("color_thresholds")
+        if isinstance(thresholds, list) and len(thresholds) == 4:
+            self._color_scale.set_thresholds(thresholds)
 
     def get_settings(self) -> InitialSettings:
         return InitialSettings(
