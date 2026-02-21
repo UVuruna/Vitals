@@ -193,7 +193,7 @@ class SettingsDialog(QDialog):
         row1 = QHBoxLayout()
         row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
         row1.addStretch()
-        self.current_combo = self._make_combo([str(i) for i in range(1, 16)], "7")
+        self.current_combo = self._make_combo([str(i) for i in range(1, Defaults.MAX_ROWS + 1)], "7")
         row1.addWidget(self.current_combo)
         layout.addLayout(row1)
 
@@ -201,7 +201,7 @@ class SettingsDialog(QDialog):
         row2 = QHBoxLayout()
         row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
         row2.addStretch()
-        self.history_combo = self._make_combo([str(i) for i in range(1, 16)], "4")
+        self.history_combo = self._make_combo([str(i) for i in range(1, Defaults.MAX_ROWS + 1)], "4")
         row2.addWidget(self.history_combo)
         layout.addLayout(row2)
 
@@ -487,7 +487,7 @@ class InitialSettingsDialog(QDialog):
         row1 = QHBoxLayout()
         row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
         row1.addStretch()
-        self.current_combo = self._make_combo([str(i) for i in range(1, 16)], str(Defaults.CURRENT_ROWS))
+        self.current_combo = self._make_combo([str(i) for i in range(1, Defaults.MAX_ROWS + 1)], str(Defaults.CURRENT_ROWS))
         row1.addWidget(self.current_combo)
         layout.addLayout(row1)
 
@@ -495,7 +495,7 @@ class InitialSettingsDialog(QDialog):
         row2 = QHBoxLayout()
         row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
         row2.addStretch()
-        self.history_combo = self._make_combo([str(i) for i in range(1, 16)], str(Defaults.HISTORY_ROWS))
+        self.history_combo = self._make_combo([str(i) for i in range(1, Defaults.MAX_ROWS + 1)], str(Defaults.HISTORY_ROWS))
         row2.addWidget(self.history_combo)
         layout.addLayout(row2)
 
@@ -728,7 +728,7 @@ class CPUSettingsDialog(QDialog):
         row1 = QHBoxLayout()
         row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
         row1.addStretch()
-        self.current_combo = self._make_combo([str(i) for i in range(1, 16)], "7")
+        self.current_combo = self._make_combo([str(i) for i in range(1, Defaults.MAX_ROWS + 1)], "7")
         row1.addWidget(self.current_combo)
         layout.addLayout(row1)
 
@@ -736,7 +736,7 @@ class CPUSettingsDialog(QDialog):
         row2 = QHBoxLayout()
         row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
         row2.addStretch()
-        self.history_combo = self._make_combo([str(i) for i in range(1, 16)], "4")
+        self.history_combo = self._make_combo([str(i) for i in range(1, Defaults.MAX_ROWS + 1)], "4")
         row2.addWidget(self.history_combo)
         layout.addLayout(row2)
 
@@ -890,7 +890,7 @@ class MemorySettingsDialog(QDialog):
         row1 = QHBoxLayout()
         row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
         row1.addStretch()
-        self.current_combo = self._make_combo([str(i) for i in range(1, 16)], "7")
+        self.current_combo = self._make_combo([str(i) for i in range(1, Defaults.MAX_ROWS + 1)], "7")
         row1.addWidget(self.current_combo)
         layout.addLayout(row1)
 
@@ -898,7 +898,7 @@ class MemorySettingsDialog(QDialog):
         row2 = QHBoxLayout()
         row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
         row2.addStretch()
-        self.history_combo = self._make_combo([str(i) for i in range(1, 16)], "4")
+        self.history_combo = self._make_combo([str(i) for i in range(1, Defaults.MAX_ROWS + 1)], "4")
         row2.addWidget(self.history_combo)
         layout.addLayout(row2)
 

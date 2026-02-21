@@ -68,6 +68,7 @@ class Defaults:
 
     CURRENT_ROWS = 7
     HISTORY_ROWS = 4
+    MAX_ROWS = 30
     REFRESH_RATE_MS = 1000
     RETENTION_MINUTES = 120
 
