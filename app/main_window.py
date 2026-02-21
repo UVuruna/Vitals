@@ -470,19 +470,16 @@ class BaseMonitorWindow(QMainWindow):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         # Process column (stretch to fill remaining space)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        # Usage column - resizable
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
-        table.setColumnWidth(2, 80)
+        # Usage column - fit to content
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
 
         col_idx = 3
         if mode_cols == "cpu":
-            # Threads column - resizable
-            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
-            table.setColumnWidth(col_idx, 55)
+            # Threads column - fit to content
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.ResizeToContents)
             col_idx += 1
         if has_time:
-            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
-            table.setColumnWidth(col_idx, 55)
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.ResizeToContents)
 
         # Styling
         table.setStyleSheet(f"""
