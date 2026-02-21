@@ -54,7 +54,7 @@ _DEFAULT_VALUE_RANGES = [
 ]
 
 # Gray for processes with no company information at all
-_DEFAULT_NO_COMPANY_COLOR = "#999999"
+_DEFAULT_NO_COMPANY_COLOR = "#C3C3C3"
 
 # HSL parameters for named-company hues (pastel, readable on dark background)
 _COMPANY_HUE_SATURATION = 0.35

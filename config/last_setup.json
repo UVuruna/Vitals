@@ -1,0 +1,15 @@
+{
+  "cpu_enabled": true,
+  "memory_enabled": true,
+  "current_rows": 30,
+  "history_rows": 30,
+  "refresh_rate_ms": 3000,
+  "retention_minutes": 120,
+  "memory_unit": "MB",
+  "color_thresholds": [
+    3,
+    8,
+    20,
+    40
+  ]
+}
