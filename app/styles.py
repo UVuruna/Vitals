@@ -1,36 +1,12 @@
 """
 UI Styling Constants
 
-Colors, fonts, and dimensions for the Process Monitor application.
+Fonts, dimensions, and layout constants for the Process Monitor application.
+Color management has been moved to color_management.py.
 """
 
 from dataclasses import dataclass
 from functools import lru_cache
-
-
-@dataclass(frozen=True)
-class Colors:
-    """Application color palette."""
-
-    # Background colors
-    BACKGROUND = "#ECF5F9"
-
-    # Current processes (red theme)
-    CURRENT_HEADER = "#FFC6C6"
-    CURRENT_BODY = "#FFE2E2"
-
-    # Historical processes (blue theme)
-    HISTORY_HEADER = "#A2D2FF"
-    HISTORY_BODY = "#E2F1FF"
-
-    # Text
-    TEXT_PRIMARY = "#060606"
-    TEXT_SECONDARY = "#444444"
-
-    # Accents
-    ACCENT_CPU = "#FF6B6B"
-    ACCENT_MEMORY = "#4ECDC4"
-    ACCENT_CORES = "#95E1D3"
 
 
 @dataclass(frozen=True)

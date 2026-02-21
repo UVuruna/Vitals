@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from .monitor import MonitorMode, MonitorData, SharedDataCollector
+from .color_management import ProcessColorManager
 from .settings_dialog import (
     InitialSettings,
     CPUSettings,
@@ -697,14 +698,26 @@ class CPUWindow(BaseMonitorWindow):
             )
 
         # Update current table
+        color_mgr = ProcessColorManager()
         for row, proc in enumerate(data.processes):
             if row >= self.current_table.rowCount():
                 break
 
             self.current_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
-            self.current_table.setItem(row, 1, QTableWidgetItem(proc.name))
+
+            name_item = QTableWidgetItem(proc.name)
+            proc_color = color_mgr.get_process_color(proc.name)
+            if proc_color:
+                name_item.setForeground(proc_color)
+            self.current_table.setItem(row, 1, name_item)
+
             value_str = monitor.format_value(proc.value, "MB") if monitor else f"{proc.value:.0f}"
-            self.current_table.setItem(row, 2, QTableWidgetItem(value_str))
+            value_item = QTableWidgetItem(value_str)
+            if monitor:
+                pct = proc.value / (monitor.cpu_threads * 100) * 100
+                value_item.setForeground(color_mgr.get_value_color(pct))
+            self.current_table.setItem(row, 2, value_item)
+
             self.current_table.setItem(row, 3, QTableWidgetItem(str(proc.count)))
             self.current_table.setItem(row, 4, QTableWidgetItem(str(proc.threads) if proc.threads > 0 else ""))
 
@@ -719,9 +732,20 @@ class CPUWindow(BaseMonitorWindow):
                 break
 
             self.history_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
-            self.history_table.setItem(row, 1, QTableWidgetItem(record.name))
+
+            name_item = QTableWidgetItem(record.name)
+            proc_color = color_mgr.get_process_color(record.name)
+            if proc_color:
+                name_item.setForeground(proc_color)
+            self.history_table.setItem(row, 1, name_item)
+
             value_str = monitor.format_value(record.value, "MB") if monitor else f"{record.value:.0f}"
-            self.history_table.setItem(row, 2, QTableWidgetItem(value_str))
+            value_item = QTableWidgetItem(value_str)
+            if monitor:
+                pct = record.value / (monitor.cpu_threads * 100) * 100
+                value_item.setForeground(color_mgr.get_value_color(pct))
+            self.history_table.setItem(row, 2, value_item)
+
             self.history_table.setItem(row, 3, QTableWidgetItem(str(record.count)))
             self.history_table.setItem(row, 4, QTableWidgetItem(str(record.threads) if record.threads > 0 else ""))
             self.history_table.setItem(row, 5, QTableWidgetItem(record.time_str))
@@ -859,14 +883,26 @@ class MemoryWindow(BaseMonitorWindow):
             self.sensor_value_labels[i].setStyleSheet(f"color: {self.TEXT}; background: transparent;")
 
         # Update current table
+        color_mgr = ProcessColorManager()
         for row, proc in enumerate(data.processes):
             if row >= self.current_table.rowCount():
                 break
 
             self.current_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
-            self.current_table.setItem(row, 1, QTableWidgetItem(proc.name))
+
+            name_item = QTableWidgetItem(proc.name)
+            proc_color = color_mgr.get_process_color(proc.name)
+            if proc_color:
+                name_item.setForeground(proc_color)
+            self.current_table.setItem(row, 1, name_item)
+
             value_str = monitor.format_value(proc.value, unit) if monitor else f"{proc.value:.0f}"
-            self.current_table.setItem(row, 2, QTableWidgetItem(value_str))
+            value_item = QTableWidgetItem(value_str)
+            if monitor:
+                pct = proc.value / monitor.ram_bytes * 100
+                value_item.setForeground(color_mgr.get_value_color(pct))
+            self.current_table.setItem(row, 2, value_item)
+
             commit_str = monitor.format_value(proc.vms, unit) if (monitor and proc.vms > 0) else ""
             self.current_table.setItem(row, 3, QTableWidgetItem(commit_str))
 
@@ -881,9 +917,20 @@ class MemoryWindow(BaseMonitorWindow):
                 break
 
             self.history_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
-            self.history_table.setItem(row, 1, QTableWidgetItem(record.name))
+
+            name_item = QTableWidgetItem(record.name)
+            proc_color = color_mgr.get_process_color(record.name)
+            if proc_color:
+                name_item.setForeground(proc_color)
+            self.history_table.setItem(row, 1, name_item)
+
             value_str = monitor.format_value(record.value, unit) if monitor else f"{record.value:.0f}"
-            self.history_table.setItem(row, 2, QTableWidgetItem(value_str))
+            value_item = QTableWidgetItem(value_str)
+            if monitor:
+                pct = record.value / monitor.ram_bytes * 100
+                value_item.setForeground(color_mgr.get_value_color(pct))
+            self.history_table.setItem(row, 2, value_item)
+
             commit_str = monitor.format_value(record.vms, unit) if (monitor and record.vms > 0) else ""
             self.history_table.setItem(row, 3, QTableWidgetItem(commit_str))
             self.history_table.setItem(row, 4, QTableWidgetItem(record.time_str))

@@ -205,14 +205,16 @@ class HWiNFOSharedMemory:
 _hwinfo_reader: Optional[HWiNFOSharedMemory] = None
 
 from .styles import MEMORY_UNITS, format_pct, get_process_display_name
+from .color_management import ProcessColorManager
 
 
-# Indices into the aggregated per-process list [cpu_pct, threads, rss, vms, count]
+# Indices into the aggregated per-process list [cpu_pct, threads, rss, vms, count, pid]
 _CPU_IDX     = 0
 _THREADS_IDX = 1
 _RSS_IDX     = 2
 _VMS_IDX     = 3
 _COUNT_IDX   = 4
+_PID_IDX     = 5
 
 
 class MonitorMode(Enum):
@@ -283,9 +285,9 @@ def _collect_processes(
         (aggregated, total_cpu, total_rss)
         aggregated: {display_name: [cpu_pct, threads, rss, vms, pf]}
     """
-    attrs = ['name']
+    attrs = ['name', 'pid']
     if need_cpu:
-        attrs += ['pid', 'cpu_percent', 'num_threads']
+        attrs += ['cpu_percent', 'num_threads']
     if need_mem:
         attrs += ['memory_info']
 
@@ -318,6 +320,7 @@ def _collect_processes(
                     vms = mem_info.vms
                     total_rss += rss
 
+            pid = info.get('pid') or 0
             display_name = get_process_display_name(name)
             if display_name in aggregated:
                 entry = aggregated[display_name]
@@ -326,8 +329,9 @@ def _collect_processes(
                 entry[_RSS_IDX]     += rss
                 entry[_VMS_IDX]     += vms
                 entry[_COUNT_IDX]   += 1
+                # Keep first-seen PID for company lookup
             else:
-                aggregated[display_name] = [cpu_pct, threads, rss, vms, 1]
+                aggregated[display_name] = [cpu_pct, threads, rss, vms, 1, pid]
 
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
@@ -774,6 +778,11 @@ class SharedDataCollector(QThread):
                 # Single psutil iteration for both CPU and RAM
                 cpu_threads = cpu_monitor.cpu_threads if cpu_monitor else psutil.cpu_count()
                 aggregated, total_cpu, total_rss = _collect_processes(need_cpu, need_mem, cpu_threads)
+
+                # Register new process names for company color lookup (fast no-op for cached names)
+                color_mgr = ProcessColorManager()
+                for proc_name, entry in aggregated.items():
+                    color_mgr.lookup_company(proc_name, entry[_PID_IDX])
 
                 hwinfo = cpu_monitor.get_hwinfo_data() if cpu_monitor else HWiNFOData()
 

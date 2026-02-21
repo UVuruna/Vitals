@@ -5,5 +5,34 @@
     "critical": "#ff4444",
     "warning_threshold": 60,
     "critical_threshold": 75
+  },
+  "value_colors": {
+    "ranges": [
+      {"max_pct": 3,  "color": "#5B9BD5"},
+      {"max_pct": 8,  "color": "#6AAF6A"},
+      {"max_pct": 20, "color": "#C8B040"},
+      {"max_pct": 40, "color": "#D4803A"},
+      {"max_pct": 100,"color": "#C85555"}
+    ]
+  },
+  "company_colors": {
+    "palette": [
+      "#C99B9B",
+      "#C9AE9B",
+      "#C9C09B",
+      "#C0C99B",
+      "#AEC99C",
+      "#9CC99C",
+      "#9CC9AE",
+      "#9CC9C0",
+      "#9CC0C9",
+      "#9CAEC9",
+      "#9C9CC9",
+      "#AE9CC9",
+      "#C09CC9",
+      "#C99CC0",
+      "#C99CAE"
+    ],
+    "other_color": "#888888"
   }
 }
