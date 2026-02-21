@@ -2,8 +2,10 @@
 Color Management
 
 Handles all color logic for the Process Monitor:
-- Company-based process name coloring — hues distributed evenly as 360°/N where N grows
-  as new companies are discovered; all named-company processes get a color, no-company gray.
+- Company-based process name coloring:
+    Companies with >1 process name get an individual hue (360°/N evenly spaced).
+    Companies with exactly 1 process name share a single "Other" color.
+    Processes with no company info at all get a fixed near-white color.
 - Value-based usage coloring (per-monitor-mode thresholds: CPU and Memory are independent)
 - Application color palette (moved from styles.py)
 
@@ -53,12 +55,15 @@ _DEFAULT_VALUE_RANGES = [
     {"max_pct": 100, "color": "#C85555"},
 ]
 
-# Gray for processes with no company information at all
-_DEFAULT_NO_COMPANY_COLOR = "#C3C3C3"
+# Near-white for processes with no company information at all (text color in table)
+_DEFAULT_NO_COMPANY_COLOR = "#EDEDED"
 
-# HSL parameters for named-company hues (pastel, readable on dark background)
-_COMPANY_HUE_SATURATION = 0.35
-_COMPANY_HUE_LIGHTNESS = 0.70
+# Warm tan for singleton companies (exactly 1 process name) — shared "Other" color
+_DEFAULT_OTHER_COLOR = "#c8aa80"
+
+# HSL parameters for named multi-company hues (vivid pastels, readable on dark background)
+_COMPANY_HUE_SATURATION = 0.75
+_COMPANY_HUE_LIGHTNESS = 0.80
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +146,7 @@ def _read_company_name(exe_path: str) -> Optional[str]:
 
 def _company_hue_color(index: int, total: int) -> QColor:
     """
-    Return a pastel QColor for company at discovery index `index` out of `total`.
+    Return a vivid pastel QColor for a multi-company at discovery index `index` out of `total`.
 
     Hues are evenly distributed: hue = index / total * 360°.
     Saturation and lightness are fixed for readability on dark backgrounds.
@@ -154,12 +159,14 @@ class ProcessColorManager:
     """
     Manages color assignment for processes.
 
-    Company-based coloring:
-      - lookup_company() is called from the background thread for each new process name.
-      - get_process_color() is called from the main thread during table rendering.
-      - Every named company gets a hue computed as index/N * 360° where N is the total
-        number of distinct named companies discovered so far. Colors shift as N grows.
-      - Processes with no company info get a fixed gray "no company" color.
+    Company-based coloring (three tiers):
+      - Multi-company (count > 1): individual hue, 360°/N evenly spaced where N = number
+        of such companies. When a new multi-company is discovered N grows and all hues shift.
+      - Singleton company (count == 1): shared "Other" color (warm tan).
+      - No company info: fixed near-white color.
+
+    Legend shows multi-companies individually, singletons grouped as "Other",
+    and no-company processes as "Unknown" (white swatch).
 
     Value-based coloring:
       - get_value_color(pct, mode) maps 0-100% to a color using per-mode thresholds.
@@ -186,13 +193,15 @@ class ProcessColorManager:
         self._company_cache: dict[str, Optional[str]] = {}
         # {company_name -> count of distinct process names}
         self._company_counts: dict[str, int] = {}
-        # {company_name -> discovery index} — used for hue computation
-        self._company_idx: dict[str, int] = {}
-        # Total named companies discovered so far
-        self._company_count_named: int = 0
+        # {company_name -> hue index} — only for companies with count > 1
+        self._company_multi_idx: dict[str, int] = {}
+        # Total companies that have ever reached count > 1 (used for hue spacing)
+        self._company_multi_count: int = 0
 
-        # Gray for processes with no company info
+        # Near-white for processes with no company info
         self._no_company_color = QColor(_DEFAULT_NO_COMPANY_COLOR)
+        # Warm tan shared by all singleton companies (count == 1)
+        self._other_color = QColor(_DEFAULT_OTHER_COLOR)
 
         # Value color ranges — CPU and Memory start from same config, tuned independently
         self._value_ranges_cpu: list[tuple[float, QColor]] = []
@@ -231,6 +240,8 @@ class ProcessColorManager:
         Register a process name and resolve its company (background thread).
 
         Safe to call on every refresh — fast no-op for already-cached names.
+        When a company's process-name count reaches 2, it is promoted to a
+        multi-company and receives its own hue index.
 
         Args:
             name: Display process name (after alias mapping)
@@ -258,19 +269,20 @@ class ProcessColorManager:
                 prev = self._company_counts.get(company, 0)
                 self._company_counts[company] = prev + 1
 
-                # Record discovery index on first encounter of this company.
-                # Hue = discovery_index / total_companies * 360° — recalculated dynamically.
-                if prev == 0:
-                    self._company_idx[company] = self._company_count_named
-                    self._company_count_named += 1
+                # Promote to multi-company when count goes from 1 → 2.
+                # Hue = multi_idx / multi_count * 360° — recalculated dynamically.
+                if prev == 1:
+                    self._company_multi_idx[company] = self._company_multi_count
+                    self._company_multi_count += 1
 
     def get_process_color(self, name: str) -> Optional[QColor]:
         """
         Return the color for a process name text (main thread).
 
-        Returns None for unknown names (not yet looked up).
-        Returns a hue color (evenly distributed across 360°) for named-company processes.
-        Returns no_company_color (gray) for processes with no company info.
+        Returns None if the name has not been looked up yet.
+        Returns a hue color for multi-company processes (count > 1).
+        Returns _other_color for singleton-company processes (count == 1).
+        Returns _no_company_color for processes with no company info.
         """
         with QMutexLocker(self._mutex):
             if name not in self._company_cache:
@@ -278,8 +290,11 @@ class ProcessColorManager:
             company = self._company_cache[name]
             if not company:
                 return self._no_company_color
-            n = self._company_count_named
-            i = self._company_idx.get(company, 0)
+            count = self._company_counts.get(company, 0)
+            if count <= 1:
+                return self._other_color
+            n = self._company_multi_count
+            i = self._company_multi_idx.get(company, 0)
 
         return _company_hue_color(i, n)
 
@@ -313,24 +328,33 @@ class ProcessColorManager:
     def get_legend(self) -> list[tuple[str, QColor, int]]:
         """Return (label, color, count) sorted by count descending.
 
-        Hues are recomputed dynamically from current total company count.
-        Includes an 'Unknown' entry at the end for processes with no company info.
+        Multi-companies (count > 1) are listed individually with their hue color.
+        Singleton companies (count == 1) are grouped as a single "Other" entry.
+        No-company processes appear as "Unknown" with a white swatch at the end.
         """
         with QMutexLocker(self._mutex):
-            n = self._company_count_named
+            n = self._company_multi_count
             result = []
+            singleton_count = 0
+
             for company, count in sorted(
                 self._company_counts.items(), key=lambda x: -x[1]
             ):
-                i = self._company_idx.get(company, 0)
-                color = _company_hue_color(i, n) if n > 0 else self._no_company_color
-                result.append((company, color, count))
+                if count > 1:
+                    i = self._company_multi_idx.get(company, 0)
+                    color = _company_hue_color(i, n) if n > 0 else self._other_color
+                    result.append((company, color, count))
+                else:
+                    singleton_count += 1
+
+            if singleton_count > 0:
+                result.append(("Other", self._other_color, singleton_count))
 
             no_company_count = sum(
-                1 for company in self._company_cache.values() if company is None
+                1 for c in self._company_cache.values() if c is None
             )
             if no_company_count > 0:
-                result.append(("Unknown", self._no_company_color, no_company_count))
+                result.append(("Unknown", QColor("#ffffff"), no_company_count))
 
             return result
 
