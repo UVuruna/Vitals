@@ -101,6 +101,23 @@ PROCESS_ALIASES = {
 }
 
 
+def format_pct(value: float) -> str:
+    """
+    Format a percentage value with adaptive decimal precision.
+
+    Always occupies at most 3 significant digits before the '%':
+      >= 100  → integer      e.g. "100%", "1600%"
+      >= 10   → 1 decimal    e.g. "10.0%", "99.9%"
+      < 10    → 2 decimals   e.g. "0.05%", "9.99%"
+    """
+    if value >= 100:
+        return f"{value:.0f}%"
+    elif value >= 10:
+        return f"{value:.1f}%"
+    else:
+        return f"{value:.2f}%"
+
+
 @lru_cache(maxsize=512)
 def get_process_display_name(name: str) -> str:
     """

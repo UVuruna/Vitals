@@ -204,7 +204,7 @@ class HWiNFOSharedMemory:
 # Global HWiNFO reader instance
 _hwinfo_reader: Optional[HWiNFOSharedMemory] = None
 
-from .styles import MEMORY_UNITS, get_process_display_name
+from .styles import MEMORY_UNITS, format_pct, get_process_display_name
 
 
 # Indices into the aggregated per-process list [cpu_pct, threads, rss, vms, count]
@@ -581,8 +581,7 @@ class ProcessMonitor:
             Formatted string
         """
         if self.mode == MonitorMode.CPU:
-            # No decimals for CPU percentage
-            return f"{value:.0f}%"
+            return format_pct(value)
         else:
             divisor = MEMORY_UNITS.get(unit, MEMORY_UNITS["MB"])
             converted = value / divisor
@@ -596,15 +595,15 @@ class ProcessMonitor:
         """Get formatted total usage string."""
         if self.mode == MonitorMode.CPU:
             total_pct = (self.stats.total_usage / (self.cpu_threads * 100)) * 100
-            return f"{self.stats.total_usage:.0f}% ({total_pct:.0f}%)"
+            return f"{format_pct(self.stats.total_usage)} ({format_pct(total_pct)})"
         else:
             divisor = MEMORY_UNITS.get(unit, MEMORY_UNITS["MB"])
             total = self.stats.total_usage / divisor
             pct = (self.stats.total_usage / self.ram_bytes) * 100
             if unit == "GB":
-                return f"{total:,.2f} {unit} ({pct:.0f}%)"
+                return f"{total:,.2f} {unit} ({format_pct(pct)})"
             else:
-                return f"{total:,.0f} {unit} ({pct:.0f}%)"
+                return f"{total:,.0f} {unit} ({format_pct(pct)})"
 
     def get_max_display(self, unit: str = "MB") -> str:
         """Get formatted maximum usage string."""
@@ -614,7 +613,7 @@ class ProcessMonitor:
         time_str = self.stats.max_usage_time.strftime("%H:%M")
 
         if self.mode == MonitorMode.CPU:
-            return f"Peak: {self.stats.max_usage:.0f}% at {time_str}"
+            return f"Peak: {format_pct(self.stats.max_usage)} at {time_str}"
         else:
             divisor = MEMORY_UNITS.get(unit, MEMORY_UNITS["MB"])
             value = self.stats.max_usage / divisor
