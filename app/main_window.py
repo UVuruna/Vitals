@@ -40,6 +40,7 @@ from .settings_dialog import (
     MemorySettings,
     CPUSettingsDialog,
     MemorySettingsDialog,
+    get_last_setup_path,
 )
 
 
@@ -91,6 +92,9 @@ class BaseMonitorWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.is_paused = False
+        self._saved_col_widths_current: list[int] | None = None
+        self._saved_col_widths_history: list[int] | None = None
+        self._layout_restored: bool = False
 
         # Set window icon (Qt level)
         base = get_base_path()
@@ -111,6 +115,9 @@ class BaseMonitorWindow(QMainWindow):
         if not getattr(self, '_native_icon_set', False):
             self._native_icon_set = True
             self._set_native_taskbar_icon()
+        if not self._layout_restored:
+            self._layout_restored = True
+            self._restore_window_layout()
 
     def _set_native_taskbar_icon(self):
         """Set per-window icon via COM IPropertyStore + WM_SETICON.
@@ -224,9 +231,78 @@ class BaseMonitorWindow(QMainWindow):
         """Get mode columns ('cpu' or 'none'). Must be overridden in subclasses."""
         raise NotImplementedError("Subclasses must implement _get_mode_cols()")
 
+    def _get_window_key(self) -> str:
+        """Return JSON key for this window's layout ('cpu' or 'memory')."""
+        raise NotImplementedError("Subclasses must implement _get_window_key()")
+
     def _show_settings(self):
         """Show settings dialog. Must be overridden in subclasses."""
         raise NotImplementedError("Subclasses must implement _show_settings()")
+
+    def _apply_col_widths(self, table: QTableWidget, widths: list[int]):
+        """Apply saved widths to interactive columns (col 2 onward)."""
+        for i, w in enumerate(widths):
+            col = i + 2
+            if col < table.columnCount():
+                table.setColumnWidth(col, w)
+
+    def _save_window_layout(self):
+        """Save window geometry, splitter sizes, and column widths to last_setup.json."""
+        path = get_last_setup_path()
+        try:
+            data = {}
+            if path.exists():
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+            if "windows" not in data:
+                data["windows"] = {}
+            geo = self.geometry()
+            data["windows"][self._get_window_key()] = {
+                "x": geo.x(), "y": geo.y(),
+                "width": geo.width(), "height": geo.height(),
+                "splitter": self.splitter.sizes(),
+                "current_cols": [
+                    self.current_table.columnWidth(c)
+                    for c in range(2, self.current_table.columnCount())
+                ],
+                "history_cols": [
+                    self.history_table.columnWidth(c)
+                    for c in range(2, self.history_table.columnCount())
+                ],
+            }
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception:
+            pass
+
+    def _restore_window_layout(self):
+        """Restore window geometry, splitter sizes, and column widths from last_setup.json."""
+        path = get_last_setup_path()
+        if not path.exists():
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return
+        layout = data.get("windows", {}).get(self._get_window_key())
+        if not layout:
+            return
+        x, y, w, h = layout.get("x"), layout.get("y"), layout.get("width"), layout.get("height")
+        if all(v is not None for v in [x, y, w, h]):
+            self.setGeometry(x, y, w, h)
+        splitter_sizes = layout.get("splitter")
+        if isinstance(splitter_sizes, list) and len(splitter_sizes) == 2:
+            self.splitter.setSizes(splitter_sizes)
+        current_cols = layout.get("current_cols")
+        if isinstance(current_cols, list):
+            self._saved_col_widths_current = current_cols
+            self._apply_col_widths(self.current_table, current_cols)
+        history_cols = layout.get("history_cols")
+        if isinstance(history_cols, list):
+            self._saved_col_widths_history = history_cols
+            self._apply_col_widths(self.history_table, history_cols)
 
     def _load_config(self):
         """Load temperature color config from JSON."""
@@ -614,6 +690,9 @@ class CPUWindow(BaseMonitorWindow):
     def _get_mode_cols(self) -> str:
         return "cpu"
 
+    def _get_window_key(self) -> str:
+        return "cpu"
+
     def _show_settings(self):
         """Show CPU settings dialog."""
         dialog = CPUSettingsDialog(self, self._cpu_settings)
@@ -668,6 +747,12 @@ class CPUWindow(BaseMonitorWindow):
         # Add to section layouts (after title labels)
         current_layout.addWidget(self.current_table)
         history_layout.addWidget(self.history_table)
+
+        # Re-apply saved column widths after rebuild
+        if self._saved_col_widths_current:
+            self._apply_col_widths(self.current_table, self._saved_col_widths_current)
+        if self._saved_col_widths_history:
+            self._apply_col_widths(self.history_table, self._saved_col_widths_history)
 
     def _on_data_ready(self, data: MonitorData):
         """Handle data from collector."""
@@ -757,6 +842,7 @@ class CPUWindow(BaseMonitorWindow):
 
     def closeEvent(self, event):
         """Handle close - disable CPU monitoring."""
+        self._save_window_layout()
         self._collector.cpu_data_ready.disconnect(self._on_data_ready)
         self._collector.disable_cpu()
         super().closeEvent(event)
@@ -793,6 +879,9 @@ class MemoryWindow(BaseMonitorWindow):
 
     def _get_mode_cols(self) -> str:
         return "mem"
+
+    def _get_window_key(self) -> str:
+        return "memory"
 
     def _show_settings(self):
         """Show Memory settings dialog."""
@@ -849,6 +938,12 @@ class MemoryWindow(BaseMonitorWindow):
         # Add to section layouts (after title labels)
         current_layout.addWidget(self.current_table)
         history_layout.addWidget(self.history_table)
+
+        # Re-apply saved column widths after rebuild
+        if self._saved_col_widths_current:
+            self._apply_col_widths(self.current_table, self._saved_col_widths_current)
+        if self._saved_col_widths_history:
+            self._apply_col_widths(self.history_table, self._saved_col_widths_history)
 
     def _on_data_ready(self, data: MonitorData):
         """Handle data from collector."""
@@ -942,6 +1037,7 @@ class MemoryWindow(BaseMonitorWindow):
 
     def closeEvent(self, event):
         """Handle close - disable Memory monitoring."""
+        self._save_window_layout()
         self._collector.memory_data_ready.disconnect(self._on_data_ready)
         self._collector.disable_memory()
         super().closeEvent(event)

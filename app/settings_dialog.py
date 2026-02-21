@@ -35,7 +35,7 @@ def get_base_path() -> Path:
     return Path(__file__).parent.parent
 
 
-def _get_last_setup_path() -> Path:
+def get_last_setup_path() -> Path:
     """Resolve config/last_setup.json for user-writable storage."""
     if getattr(sys, 'frozen', False):
         base = Path(sys.executable).parent  # exe directory, writable
@@ -46,7 +46,7 @@ def _get_last_setup_path() -> Path:
 
 def _save_last_setup(settings: 'InitialSettings', thresholds: list) -> None:
     """Persist the last-used login settings to config/last_setup.json."""
-    path = _get_last_setup_path()
+    path = get_last_setup_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {
@@ -67,7 +67,7 @@ def _save_last_setup(settings: 'InitialSettings', thresholds: list) -> None:
 
 def _load_last_setup() -> dict:
     """Load last-used login settings from config/last_setup.json."""
-    path = _get_last_setup_path()
+    path = get_last_setup_path()
     if path.exists():
         try:
             with open(path, encoding="utf-8") as f:
