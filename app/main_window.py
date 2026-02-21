@@ -470,16 +470,17 @@ class BaseMonitorWindow(QMainWindow):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         # Process column (stretch to fill remaining space)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        # Usage column - fit to content
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        # Usage column - interactive (user-draggable), initially sized to content
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
 
         col_idx = 3
         if mode_cols == "cpu":
-            # Threads column - fit to content
-            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.ResizeToContents)
+            # Threads column - interactive (user-draggable), initially sized to content
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
             col_idx += 1
         if has_time:
-            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.ResizeToContents)
+            # Time column - interactive (user-draggable), initially sized to content
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
 
         # Styling
         table.setStyleSheet(f"""
@@ -503,6 +504,15 @@ class BaseMonitorWindow(QMainWindow):
         """)
 
         table.verticalHeader().setDefaultSectionSize(32)
+
+        # Set initial widths for interactive columns based on header text (one-time)
+        table.resizeColumnToContents(2)
+        col_idx = 3
+        if mode_cols == "cpu":
+            table.resizeColumnToContents(col_idx)
+            col_idx += 1
+        if has_time:
+            table.resizeColumnToContents(col_idx)
 
         return table
 
