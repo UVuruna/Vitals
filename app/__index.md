@@ -14,11 +14,12 @@ The `app` module provides all GUI and business logic components for the Process 
 
 ```
 📁 app/
-  🐍 __init__.py        ← Package exports
-  🐍 main_window.py     ← Main application window
-  🐍 settings_dialog.py ← Configuration dialog
-  🐍 monitor.py         ← Process monitoring logic
-  🐍 styles.py          ← UI styling constants
+  🐍 __init__.py           ← Package exports
+  🐍 main_window.py        ← Main application window (CPUWindow, MemoryWindow)
+  🐍 settings_dialog.py   ← Configuration dialogs (Initial, CPU, Memory)
+  🐍 monitor.py            ← Process monitoring logic
+  🐍 color_management.py  ← Company and value-based process coloring
+  🐍 styles.py             ← UI styling constants
 ```
 
 ---
@@ -27,9 +28,10 @@ The `app` module provides all GUI and business logic components for the Process 
 
 | Component | Documentation | Description |
 |-----------|---------------|-------------|
-| MainWindow | [main_window.md](main_window.md) | Primary window with tables and controls |
-| SettingsDialog | [settings_dialog.md](settings_dialog.md) | Configuration dialog |
+| CPUWindow / MemoryWindow | [main_window.md](main_window.md) | Monitor windows with tables and controls |
+| Settings Dialogs | [settings_dialog.md](settings_dialog.md) | Initial, CPU, and Memory configuration dialogs |
 | ProcessMonitor | [monitor.md](monitor.md) | psutil integration for data collection |
+| ProcessColorManager | [color_management.md](color_management.md) | Company hue assignment and value color mapping |
 | Styles | [styles.md](styles.md) | Colors, fonts, dimensions |
 
 ---
@@ -39,18 +41,22 @@ The `app` module provides all GUI and business logic components for the Process 
 ```mermaid
 flowchart TB
     subgraph APP["App Module"]
-        MW[MainWindow]
-        SD[SettingsDialog]
+        MW[CPUWindow / MemoryWindow]
+        SD[SettingsDialogs]
         PM[ProcessMonitor]
+        CM[ProcessColorManager]
         ST[Styles]
     end
 
     main.py --> MW
     MW --> SD
     MW --> PM
+    MW --> CM
+    SD --> CM
     SD --> ST
     MW --> ST
     PM --> psutil[(psutil)]
+    CM --> version.dll[(version.dll)]
 ```
 
 ---
