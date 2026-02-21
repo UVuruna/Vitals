@@ -65,12 +65,13 @@ def main():
 
     if settings.memory_enabled:
         memory_window = MemoryWindow(settings, collector)
-        memory_window.show()
         if len(windows) > 0:
+            # Default side-by-side position; overridden by saved layout during showEvent
             memory_window.move(
                 windows[0].x() + windows[0].width() + 20,
                 windows[0].y()
             )
+        memory_window.show()
         windows.append(memory_window)
 
     # Start collector if not already running
