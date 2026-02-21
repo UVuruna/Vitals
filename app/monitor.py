@@ -351,7 +351,7 @@ class ProcessMonitor:
 
         # State
         self.stats = MonitorStats()
-        self.history: list[HistoryRecord] = []
+        self.history: dict[str, HistoryRecord] = {}
         self.history_max_size = 10
         self.retention_seconds = 120 * 60  # 2 hours default
 
@@ -507,27 +507,20 @@ class ProcessMonitor:
         now = time.time()
 
         # Remove expired records
-        self.history = [
-            record for record in self.history
+        self.history = {
+            name: record for name, record in self.history.items()
             if (now - record.timestamp) < self.retention_seconds
-        ]
+        }
 
         # Check each process against history
         for proc in processes:
             if proc.value <= 0:
                 continue
 
-            # Find existing record for this process
-            existing_idx = None
-            for i, record in enumerate(self.history):
-                if record.name == proc.name:
-                    existing_idx = i
-                    break
-
-            if existing_idx is not None:
+            if proc.name in self.history:
                 # Update if current value is higher
-                if proc.value > self.history[existing_idx].value:
-                    self.history[existing_idx] = HistoryRecord(
+                if proc.value > self.history[proc.name].value:
+                    self.history[proc.name] = HistoryRecord(
                         name=proc.name,
                         value=proc.value,
                         timestamp=now,
@@ -538,17 +531,7 @@ class ProcessMonitor:
             else:
                 # Add new record if we have space or this beats the lowest
                 if len(self.history) < self.history_max_size:
-                    self.history.append(HistoryRecord(
-                        name=proc.name,
-                        value=proc.value,
-                        timestamp=now,
-                        threads=proc.threads,
-                        count=proc.count,
-                        vms=proc.vms,
-                    ))
-                elif self.history and proc.value > self.history[-1].value:
-                    # Replace lowest record
-                    self.history[-1] = HistoryRecord(
+                    self.history[proc.name] = HistoryRecord(
                         name=proc.name,
                         value=proc.value,
                         timestamp=now,
@@ -556,13 +539,22 @@ class ProcessMonitor:
                         count=proc.count,
                         vms=proc.vms,
                     )
-
-        # Sort history by value (descending)
-        self.history.sort(key=lambda r: r.value, reverse=True)
+                elif self.history:
+                    min_name = min(self.history, key=lambda k: self.history[k].value)
+                    if proc.value > self.history[min_name].value:
+                        del self.history[min_name]
+                        self.history[proc.name] = HistoryRecord(
+                            name=proc.name,
+                            value=proc.value,
+                            timestamp=now,
+                            threads=proc.threads,
+                            count=proc.count,
+                            vms=proc.vms,
+                        )
 
     def get_history(self) -> list[HistoryRecord]:
-        """Get historical high-usage records."""
-        return self.history[:self.history_max_size]
+        """Get historical high-usage records sorted by value descending."""
+        return sorted(self.history.values(), key=lambda r: r.value, reverse=True)[:self.history_max_size]
 
     def format_value(self, value: float, unit: str = "MB") -> str:
         """
