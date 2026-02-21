@@ -56,14 +56,14 @@ _DEFAULT_VALUE_RANGES = [
 ]
 
 # Near-white for processes with no company information at all (text color in table)
-_DEFAULT_NO_COMPANY_COLOR = "#EDEDED"
+_DEFAULT_NO_COMPANY_COLOR = "#FFFFFF"
 
 # Warm tan for singleton companies (exactly 1 process name) — shared "Other" color
 _DEFAULT_OTHER_COLOR = "#c8aa80"
 
 # HSL parameters for named multi-company hues (vivid pastels, readable on dark background)
-_COMPANY_HUE_SATURATION = 0.75
-_COMPANY_HUE_LIGHTNESS = 0.80
+_COMPANY_HUE_SATURATION = 0.84
+_COMPANY_HUE_LIGHTNESS = 0.84
 
 
 # ---------------------------------------------------------------------------
