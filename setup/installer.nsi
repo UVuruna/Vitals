@@ -17,7 +17,7 @@ Unicode true
 !define APP_NAME "PMUsage"
 !define APP_PUBLISHER "UVuruna"
 !define APP_EXE "PMUsage.exe"
-!define APP_VERSION "1.1.130"
+!define APP_VERSION "1.1.300"
 !define APP_DESCRIPTION "Real-time CPU and Memory usage monitor"
 
 ; Registry key for uninstall info
