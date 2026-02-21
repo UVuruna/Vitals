@@ -536,6 +536,13 @@ class BaseMonitorWindow(QMainWindow):
 
         table.verticalHeader().setDefaultSectionSize(32)
 
+        # Left-align header text for all columns except # and Process (so narrow columns clip from right)
+        align_left = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        for col in range(2, cols):
+            table.horizontalHeader().model().setHeaderData(
+                col, Qt.Orientation.Horizontal, align_left, Qt.ItemDataRole.TextAlignmentRole
+            )
+
         # Set initial widths for interactive columns based on header text (one-time)
         table.resizeColumnToContents(2)
         col_idx = 3
