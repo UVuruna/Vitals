@@ -715,7 +715,7 @@ class CPUWindow(BaseMonitorWindow):
             value_item = QTableWidgetItem(value_str)
             if monitor:
                 pct = proc.value / (monitor.cpu_threads * 100) * 100
-                value_item.setForeground(color_mgr.get_value_color(pct))
+                value_item.setForeground(color_mgr.get_value_color(pct, "cpu"))
             self.current_table.setItem(row, 2, value_item)
 
             self.current_table.setItem(row, 3, QTableWidgetItem(str(proc.count)))
@@ -743,7 +743,7 @@ class CPUWindow(BaseMonitorWindow):
             value_item = QTableWidgetItem(value_str)
             if monitor:
                 pct = record.value / (monitor.cpu_threads * 100) * 100
-                value_item.setForeground(color_mgr.get_value_color(pct))
+                value_item.setForeground(color_mgr.get_value_color(pct, "cpu"))
             self.history_table.setItem(row, 2, value_item)
 
             self.history_table.setItem(row, 3, QTableWidgetItem(str(record.count)))
@@ -900,7 +900,7 @@ class MemoryWindow(BaseMonitorWindow):
             value_item = QTableWidgetItem(value_str)
             if monitor:
                 pct = proc.value / monitor.ram_bytes * 100
-                value_item.setForeground(color_mgr.get_value_color(pct))
+                value_item.setForeground(color_mgr.get_value_color(pct, "memory"))
             self.current_table.setItem(row, 2, value_item)
 
             commit_str = monitor.format_value(proc.vms, unit) if (monitor and proc.vms > 0) else ""
@@ -928,7 +928,7 @@ class MemoryWindow(BaseMonitorWindow):
             value_item = QTableWidgetItem(value_str)
             if monitor:
                 pct = record.value / monitor.ram_bytes * 100
-                value_item.setForeground(color_mgr.get_value_color(pct))
+                value_item.setForeground(color_mgr.get_value_color(pct, "memory"))
             self.history_table.setItem(row, 2, value_item)
 
             commit_str = monitor.format_value(record.vms, unit) if (monitor and record.vms > 0) else ""

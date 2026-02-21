@@ -281,6 +281,7 @@ def _build_color_section(
     layout: QVBoxLayout,
     make_label,
     show_legend: bool = True,
+    mode: str = "cpu",
 ) -> 'ColorScaleWidget':
     """
     Add Color Settings label, ColorScaleWidget, and optionally Legend button to layout.
@@ -288,11 +289,12 @@ def _build_color_section(
 
     Args:
         show_legend: If False, legend button is omitted (for login screen).
+        mode:        "cpu" or "memory" — determines which threshold set is shown/edited.
     """
     layout.addWidget(make_label("Color Settings", 12, bold=True))
 
     color_mgr = ProcessColorManager()
-    value_ranges = color_mgr.get_value_ranges()
+    value_ranges = color_mgr.get_value_ranges(mode)
     colors = [color for _, color in value_ranges]
     thresholds = [int(t) for t, _ in value_ranges[:-1]]  # first 4; last is always 100
 
@@ -563,8 +565,8 @@ class InitialSettingsDialog(QDialog):
 
         layout.addSpacing(8)
 
-        # Color Settings — no legend on login screen
-        self._color_scale = _build_color_section(layout, self._make_label, show_legend=False)
+        # Color Settings — no legend on login screen; "cpu" mode for display (applies to both)
+        self._color_scale = _build_color_section(layout, self._make_label, show_legend=False, mode="cpu")
 
         # System info
         cpu_threads = psutil.cpu_count() or 8
@@ -606,7 +608,10 @@ class InitialSettingsDialog(QDialog):
     def _on_start(self):
         if not self.cpu_btn.isChecked() and not self.mem_btn.isChecked():
             return
-        ProcessColorManager().update_value_thresholds(self._color_scale.thresholds)
+        thresholds = self._color_scale.thresholds
+        color_mgr = ProcessColorManager()
+        color_mgr.update_value_thresholds(thresholds, "cpu")
+        color_mgr.update_value_thresholds(thresholds, "memory")
         self.accept()
 
     def get_settings(self) -> InitialSettings:
@@ -774,8 +779,8 @@ class CPUSettingsDialog(QDialog):
 
         layout.addSpacing(8)
 
-        # Color Settings
-        self._color_scale = _build_color_section(layout, self._make_label)
+        # Color Settings (CPU-specific thresholds)
+        self._color_scale = _build_color_section(layout, self._make_label, mode="cpu")
         self._color_scale._legend_btn.clicked.connect(self._show_legend)
 
         layout.addStretch()
@@ -795,7 +800,7 @@ class CPUSettingsDialog(QDialog):
         CompanyLegendDialog(self).exec()
 
     def accept(self):
-        ProcessColorManager().update_value_thresholds(self._color_scale.thresholds)
+        ProcessColorManager().update_value_thresholds(self._color_scale.thresholds, "cpu")
         super().accept()
 
     def _load_settings(self):
@@ -953,8 +958,8 @@ class MemorySettingsDialog(QDialog):
 
         layout.addSpacing(8)
 
-        # Color Settings
-        self._color_scale = _build_color_section(layout, self._make_label)
+        # Color Settings (Memory-specific thresholds)
+        self._color_scale = _build_color_section(layout, self._make_label, mode="memory")
         self._color_scale._legend_btn.clicked.connect(self._show_legend)
 
         layout.addStretch()
@@ -974,7 +979,7 @@ class MemorySettingsDialog(QDialog):
         CompanyLegendDialog(self).exec()
 
     def accept(self):
-        ProcessColorManager().update_value_thresholds(self._color_scale.thresholds)
+        ProcessColorManager().update_value_thresholds(self._color_scale.thresholds, "memory")
         super().accept()
 
     def _load_settings(self):
