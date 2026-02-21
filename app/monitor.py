@@ -36,9 +36,9 @@ class HWiNFOData:
     cpu_edc: Optional[float] = None       # CPU EDC (Electrical Design Current %)
 
     # Memory mode sensors
-    ambient_temp: Optional[float] = None  # Motherboard/Ambient
-    dram_read: Optional[float] = None     # DRAM Read Bandwidth (MB/s)
-    dram_write: Optional[float] = None    # DRAM Write Bandwidth (MB/s)
+    virt_committed: Optional[float] = None  # Virtual Memory Committed (MB)
+    dram_read: Optional[float] = None       # DRAM Read Bandwidth (MB/s)
+    dram_write: Optional[float] = None      # DRAM Write Bandwidth (MB/s)
 
 
 # Windows API for shared memory access
@@ -106,7 +106,7 @@ class HWiNFOSharedMemory:
         ("cpu (tctl/tdie)", "cpu_tctl"),
         ("cpu edc", "cpu_edc"),
         ("cpu package power", "cpu_power"),
-        ("ambient temperature", "ambient_temp"),
+        ("virtual memory committed", "virt_committed"),
         ("dram read bandwidth", "dram_read"),
         ("dram write bandwidth", "dram_write"),
     ]
@@ -591,16 +591,15 @@ class ProcessMonitor:
         """Get formatted total usage string."""
         if self.mode == MonitorMode.CPU:
             total_pct = (self.stats.total_usage / (self.cpu_threads * 100)) * 100
-            return f"{self.stats.total_usage:.0f}% ({total_pct:.0f}% of {self.cpu_threads} threads)"
+            return f"{self.stats.total_usage:.0f}% ({total_pct:.0f}%)"
         else:
             divisor = MEMORY_UNITS.get(unit, MEMORY_UNITS["MB"])
             total = self.stats.total_usage / divisor
-            ram_total = self.ram_bytes / divisor
             pct = (self.stats.total_usage / self.ram_bytes) * 100
             if unit == "GB":
-                return f"{total:,.2f} / {ram_total:,.2f} {unit} ({pct:.0f}%)"
+                return f"{total:,.2f} {unit} ({pct:.0f}%)"
             else:
-                return f"{total:,.0f} / {ram_total:,.0f} {unit} ({pct:.0f}%)"
+                return f"{total:,.0f} {unit} ({pct:.0f}%)"
 
     def get_max_display(self, unit: str = "MB") -> str:
         """Get formatted maximum usage string."""
