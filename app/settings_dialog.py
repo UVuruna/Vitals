@@ -9,7 +9,7 @@ from typing import Optional
 
 import psutil
 from PySide6.QtCore import Qt, Signal, QPointF, QRectF
-from PySide6.QtGui import QBrush, QFont, QIcon, QPainter, QPalette, QColor
+from PySide6.QtGui import QBrush, QFont, QIcon, QPainter, QPalette, QPen, QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -35,47 +35,43 @@ def get_base_path() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# ColorScaleWidget — visual range slider for value color scale
+# ColorScaleWidget — 4 draggable threshold handles on 5-color gradient bar
 # ---------------------------------------------------------------------------
 
 class ColorScaleWidget(QWidget):
     """
-    Visual range slider showing the 5-color gradient with two draggable handles.
+    Visual widget showing the 5-color gradient with 4 draggable threshold handles.
 
-    Left handle (od / from): percentage below which everything is the first color (blue).
-    Right handle (do / to): percentage above which everything is the last color (red).
-    The gradient is proportionally mapped between the two handles.
+    Each diamond handle marks the boundary between adjacent color zones and is
+    colored with its zone's color. Dragging adjusts where that transition occurs.
     """
 
-    scale_changed = Signal(int, int)  # min_pct, max_pct
+    thresholds_changed = Signal(list)  # list of 4 int thresholds
 
-    _BAR_Y = 14
-    _BAR_H = 12
+    _BAR_Y = 10
+    _BAR_H = 14
     _HANDLE_R = 7
 
     def __init__(
         self,
-        value_ranges: list,
-        min_pct: int = 0,
-        max_pct: int = 100,
+        colors: list,       # 5 QColors for the 5 zones
+        thresholds: list,   # 4 int values in ascending order [t1, t2, t3, t4]
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
-        self._ranges = value_ranges  # [(threshold_pct, QColor), ...]
-        self._min = min_pct
-        self._max = max_pct
-        self._drag: Optional[str] = None
-        self.setMinimumHeight(52)
+        self._colors = list(colors)
+        self._thresholds = list(thresholds)
+        self._drag_idx: Optional[int] = None
+        self.setMinimumHeight(56)
         self.setMouseTracking(True)
-        self.setCursor(Qt.CursorShape.SizeHorCursor)
 
     # --- geometry helpers ---
 
     def _bar_x1(self) -> float:
-        return float(self._HANDLE_R + 4)
+        return float(self._HANDLE_R + 6)
 
     def _bar_x2(self) -> float:
-        return float(self.width() - self._HANDLE_R - 4)
+        return float(self.width() - self._HANDLE_R - 6)
 
     def _bar_w(self) -> float:
         return self._bar_x2() - self._bar_x1()
@@ -98,43 +94,25 @@ class ColorScaleWidget(QWidget):
         bar_h = float(self._BAR_H)
         bar_w = self._bar_w()
 
-        # Draw color segments proportionally
-        prev_pct = 0.0
-        for threshold_pct, color in self._ranges:
-            x1 = bar_x1 + prev_pct / 100.0 * bar_w
-            x2 = bar_x1 + threshold_pct / 100.0 * bar_w
+        # Draw 5 color segments
+        pcts = [0] + self._thresholds + [100]
+        for i, color in enumerate(self._colors):
+            x1 = bar_x1 + pcts[i] / 100.0 * bar_w
+            x2 = bar_x1 + pcts[i + 1] / 100.0 * bar_w
             painter.fillRect(QRectF(x1, bar_y, max(x2 - x1, 0), bar_h), color)
-            prev_pct = threshold_pct
 
-        # Dim overlay outside [min, max]
-        min_x = self._pct_to_x(self._min)
-        max_x = self._pct_to_x(self._max)
-        dim = QColor(30, 30, 46, 190)
-        if min_x > bar_x1:
-            painter.fillRect(QRectF(bar_x1, bar_y, min_x - bar_x1, bar_h), dim)
-        bar_x2 = self._bar_x2()
-        if max_x < bar_x2:
-            painter.fillRect(QRectF(max_x, bar_y, bar_x2 - max_x, bar_h), dim)
-
-        # Dividers between segments (subtle)
-        prev_pct = 0.0
-        painter.setPen(QColor(30, 30, 46, 80))
-        for threshold_pct, _ in self._ranges[:-1]:
-            x = bar_x1 + threshold_pct / 100.0 * bar_w
-            painter.drawLine(QPointF(x, bar_y), QPointF(x, bar_y + bar_h))
-            prev_pct = threshold_pct
-
-        # Handles (diamonds)
-        for pct in (self._min, self._max):
-            x = self._pct_to_x(pct)
+        # Draw 4 diamond handles (each colored with the zone it ends)
+        for i, t in enumerate(self._thresholds):
+            x = self._pct_to_x(t)
             cy = bar_y + bar_h / 2
             r = float(self._HANDLE_R)
-            painter.setBrush(QBrush(QColor("#e94560")))
-            painter.setPen(Qt.PenStyle.NoPen)
+            zone_color = self._colors[i].lighter(150)
+            painter.setBrush(QBrush(zone_color))
+            painter.setPen(QPen(QColor("#ffffff"), 1.0))
             painter.drawConvexPolygon([
-                QPointF(x, cy - r),
+                QPointF(x,     cy - r),
                 QPointF(x + r, cy),
-                QPointF(x, cy + r),
+                QPointF(x,     cy + r),
                 QPointF(x - r, cy),
             ])
 
@@ -142,10 +120,10 @@ class ColorScaleWidget(QWidget):
         painter.setPen(QColor("#aaaaaa"))
         painter.setFont(QFont("Segoe UI", 9))
         fm = painter.fontMetrics()
-        for pct in (self._min, self._max):
-            label = f"{pct}%"
+        for t in self._thresholds:
+            label = f"{t}%"
             lw = fm.horizontalAdvance(label)
-            lx = self._pct_to_x(pct) - lw / 2
+            lx = self._pct_to_x(t) - lw / 2
             lx = max(0.0, min(lx, float(self.width() - lw)))
             painter.drawText(QPointF(lx, bar_y + bar_h + 14), label)
 
@@ -155,35 +133,35 @@ class ColorScaleWidget(QWidget):
         if event.button() != Qt.MouseButton.LeftButton:
             return
         x = event.position().x()
-        min_x = self._pct_to_x(self._min)
-        max_x = self._pct_to_x(self._max)
-        dist_min = abs(x - min_x)
-        dist_max = abs(x - max_x)
-        threshold = self._HANDLE_R + 10
-        if dist_min <= threshold or dist_max <= threshold:
-            self._drag = 'min' if dist_min <= dist_max else 'max'
+        hit_radius = self._HANDLE_R + 10
+        best_idx = None
+        best_dist = float('inf')
+        for i, t in enumerate(self._thresholds):
+            dist = abs(x - self._pct_to_x(t))
+            if dist < hit_radius and dist < best_dist:
+                best_dist = dist
+                best_idx = i
+        self._drag_idx = best_idx
+        if best_idx is not None:
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
 
     def mouseMoveEvent(self, event):
-        if not self._drag:
+        if self._drag_idx is None:
             return
         pct = self._x_to_pct(event.position().x())
-        if self._drag == 'min':
-            self._min = max(0, min(pct, self._max - 5))
-        else:
-            self._max = min(100, max(pct, self._min + 5))
+        lo = (self._thresholds[self._drag_idx - 1] + 1) if self._drag_idx > 0 else 1
+        hi = (self._thresholds[self._drag_idx + 1] - 1) if self._drag_idx < len(self._thresholds) - 1 else 99
+        self._thresholds[self._drag_idx] = max(lo, min(hi, pct))
         self.update()
-        self.scale_changed.emit(self._min, self._max)
+        self.thresholds_changed.emit(list(self._thresholds))
 
     def mouseReleaseEvent(self, event):
-        self._drag = None
+        self._drag_idx = None
+        self.setCursor(Qt.CursorShape.ArrowCursor)
 
     @property
-    def min_pct(self) -> int:
-        return self._min
-
-    @property
-    def max_pct(self) -> int:
-        return self._max
+    def thresholds(self) -> list:
+        return list(self._thresholds)
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +174,7 @@ class CompanyLegendDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Company Color Legend")
-        self.setFixedSize(340, 440)
+        self.resize(340, 440)
 
         icon_path = get_base_path() / "assets" / "icon.ico"
         if icon_path.exists():
@@ -302,45 +280,50 @@ class CompanyLegendDialog(QDialog):
 def _build_color_section(
     layout: QVBoxLayout,
     make_label,
+    show_legend: bool = True,
 ) -> 'ColorScaleWidget':
     """
-    Add Color Settings label, ColorScaleWidget, and Legend button to layout.
-    Returns the ColorScaleWidget so the caller can read min/max on accept.
+    Add Color Settings label, ColorScaleWidget, and optionally Legend button to layout.
+    Returns the ColorScaleWidget so the caller can read thresholds on accept.
+
+    Args:
+        show_legend: If False, legend button is omitted (for login screen).
     """
     layout.addWidget(make_label("Color Settings", 12, bold=True))
 
     color_mgr = ProcessColorManager()
-    scale_min, scale_max = color_mgr.get_value_scale()
     value_ranges = color_mgr.get_value_ranges()
+    colors = [color for _, color in value_ranges]
+    thresholds = [int(t) for t, _ in value_ranges[:-1]]  # first 4; last is always 100
 
-    scale_widget = ColorScaleWidget(value_ranges, scale_min, scale_max)
+    scale_widget = ColorScaleWidget(colors, thresholds)
     layout.addWidget(scale_widget)
 
-    legend_row = QHBoxLayout()
-    legend_row.addStretch()
-    legend_btn = QPushButton("Company Legend")
-    legend_btn.setFont(QFont("Segoe UI", 10))
-    legend_btn.setFixedHeight(28)
-    legend_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    legend_btn.setStyleSheet("""
-        QPushButton {
-            background-color: #2a2a3e; color: #888888;
-            border: 1px solid #3a3a4e; border-radius: 4px; padding: 0 12px;
-        }
-        QPushButton:hover { background-color: #3a3a4e; color: #ffffff; }
-    """)
-
-    # We need the parent widget to open the dialog — store button reference so
-    # the caller can connect it after layout is built.
-    scale_widget._legend_btn = legend_btn  # type: ignore[attr-defined]
-    legend_row.addWidget(legend_btn)
-    layout.addLayout(legend_row)
+    if show_legend:
+        legend_row = QHBoxLayout()
+        legend_row.addStretch()
+        legend_btn = QPushButton("Company Legend")
+        legend_btn.setFont(QFont("Segoe UI", 10))
+        legend_btn.setFixedHeight(28)
+        legend_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        legend_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2a2a3e; color: #888888;
+                border: 1px solid #3a3a4e; border-radius: 4px; padding: 0 12px;
+            }
+            QPushButton:hover { background-color: #3a3a4e; color: #ffffff; }
+        """)
+        scale_widget._legend_btn = legend_btn  # type: ignore[attr-defined]
+        legend_row.addWidget(legend_btn)
+        layout.addLayout(legend_row)
+    else:
+        scale_widget._legend_btn = None  # type: ignore[attr-defined]
 
     return scale_widget
 
 
 # ---------------------------------------------------------------------------
-# Legacy SettingsDialog (unused in current flow, kept for compatibility)
+# MonitorSettings / InitialSettings dataclasses
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -392,7 +375,7 @@ class InitialSettingsDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Process Monitor - Setup")
-        self.setFixedSize(480, 690)
+        self.resize(480, 660)
 
         icon_path = get_base_path() / "assets" / "icon.ico"
         if icon_path.exists():
@@ -580,9 +563,8 @@ class InitialSettingsDialog(QDialog):
 
         layout.addSpacing(8)
 
-        # Color Settings
-        self._color_scale = _build_color_section(layout, self._make_label)
-        self._color_scale._legend_btn.clicked.connect(self._show_legend)
+        # Color Settings — no legend on login screen
+        self._color_scale = _build_color_section(layout, self._make_label, show_legend=False)
 
         # System info
         cpu_threads = psutil.cpu_count() or 8
@@ -621,15 +603,10 @@ class InitialSettingsDialog(QDialog):
         self.mem_btn.setStyleSheet(active_style if self.mem_btn.isChecked() else inactive_style)
         self.start_btn.setEnabled(self.cpu_btn.isChecked() or self.mem_btn.isChecked())
 
-    def _show_legend(self):
-        CompanyLegendDialog(self).exec()
-
     def _on_start(self):
         if not self.cpu_btn.isChecked() and not self.mem_btn.isChecked():
             return
-        ProcessColorManager().set_value_scale(
-            self._color_scale.min_pct, self._color_scale.max_pct
-        )
+        ProcessColorManager().update_value_thresholds(self._color_scale.thresholds)
         self.accept()
 
     def get_settings(self) -> InitialSettings:
@@ -678,7 +655,7 @@ class CPUSettingsDialog(QDialog):
         super().__init__(parent)
         self.settings = settings or CPUSettings()
         self.setWindowTitle("CPU Monitor - Settings")
-        self.setFixedSize(400, 500)
+        self.resize(400, 500)
 
         icon_path = get_base_path() / "assets" / "icon.ico"
         if icon_path.exists():
@@ -818,9 +795,7 @@ class CPUSettingsDialog(QDialog):
         CompanyLegendDialog(self).exec()
 
     def accept(self):
-        ProcessColorManager().set_value_scale(
-            self._color_scale.min_pct, self._color_scale.max_pct
-        )
+        ProcessColorManager().update_value_thresholds(self._color_scale.thresholds)
         super().accept()
 
     def _load_settings(self):
@@ -849,7 +824,7 @@ class MemorySettingsDialog(QDialog):
         super().__init__(parent)
         self.settings = settings or MemorySettings()
         self.setWindowTitle("Memory Monitor - Settings")
-        self.setFixedSize(400, 560)
+        self.resize(400, 560)
 
         icon_path = get_base_path() / "assets" / "icon.ico"
         if icon_path.exists():
@@ -999,9 +974,7 @@ class MemorySettingsDialog(QDialog):
         CompanyLegendDialog(self).exec()
 
     def accept(self):
-        ProcessColorManager().set_value_scale(
-            self._color_scale.min_pct, self._color_scale.max_pct
-        )
+        ProcessColorManager().update_value_thresholds(self._color_scale.thresholds)
         super().accept()
 
     def _load_settings(self):

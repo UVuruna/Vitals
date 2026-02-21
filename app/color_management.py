@@ -177,10 +177,6 @@ class ProcessColorManager:
         self._color_assignments: dict[str, QColor] = {}
         self._next_palette_idx = 0
 
-        # Value color scale: pct is normalized to [_scale_min, _scale_max] before range lookup
-        self._scale_min: int = 0
-        self._scale_max: int = 100
-
         # Loaded from config.json
         self._value_ranges: list[tuple[float, QColor]] = []
         self._company_palette: list[QColor] = []
@@ -277,16 +273,18 @@ class ProcessColorManager:
                 return None
             return self._color_assignments.get(company, self._other_color)
 
-    def set_value_scale(self, min_pct: int, max_pct: int):
-        """Set the normalization range for value coloring (shared across CPU and Memory)."""
-        with QMutexLocker(self._mutex):
-            self._scale_min = max(0, min(min_pct, max_pct - 5))
-            self._scale_max = min(100, max(max_pct, min_pct + 5))
+    def update_value_thresholds(self, thresholds: list):
+        """Update the 4 color zone thresholds in-memory (session only, resets on restart).
 
-    def get_value_scale(self) -> tuple[int, int]:
-        """Return current (min_pct, max_pct) scale."""
+        Args:
+            thresholds: 4 ascending int values [t1, t2, t3, t4] in range 1-99.
+        """
         with QMutexLocker(self._mutex):
-            return self._scale_min, self._scale_max
+            colors = [color for _, color in self._value_ranges]
+            self._value_ranges = [
+                (float(t), colors[i]) for i, t in enumerate(thresholds)
+            ]
+            self._value_ranges.append((100.0, colors[-1]))
 
     def get_value_ranges(self) -> list[tuple[float, QColor]]:
         """Return value color ranges for UI display (ColorScaleWidget)."""
@@ -306,7 +304,7 @@ class ProcessColorManager:
 
     def get_value_color(self, pct: float) -> QColor:
         """
-        Return a color for a usage percentage, normalized to the configured scale.
+        Return a color for a usage percentage mapped directly to the configured thresholds.
 
         Args:
             pct: Usage as 0-100 (e.g. 20.0 for 20%)
@@ -315,17 +313,9 @@ class ProcessColorManager:
             QColor from the configured value_colors ranges
         """
         with QMutexLocker(self._mutex):
-            scale_min = self._scale_min
-            scale_max = self._scale_max
             ranges = self._value_ranges
 
-        if pct <= scale_min:
-            return ranges[0][1]
-        if pct >= scale_max:
-            return ranges[-1][1]
-
-        normalized = (pct - scale_min) / (scale_max - scale_min) * 100
         for max_pct_val, color in ranges:
-            if normalized <= max_pct_val:
+            if pct <= max_pct_val:
                 return color
         return ranges[-1][1]
