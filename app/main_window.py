@@ -440,7 +440,7 @@ class BaseMonitorWindow(QMainWindow):
 
         Args:
             rows: Number of rows
-            mode_cols: "cpu" for Cores/Threads, "mem" for USS/VMS, "none" for no extra cols
+            mode_cols: "cpu" for Parallel+Threads, "mem" for Commit, "none" for no extra cols
             has_time: Add Time column
             bg_color: Background color
         """
@@ -451,8 +451,11 @@ class BaseMonitorWindow(QMainWindow):
         headers = ["#", "Process", "Usage"]
 
         if mode_cols == "cpu":
+            cols += 2
+            headers += ["Parallel", "Threads"]
+        elif mode_cols == "mem":
             cols += 1
-            headers.append("Threads")
+            headers.append("Commit")
         if has_time:
             cols += 1
             headers.append("Time")
@@ -475,11 +478,14 @@ class BaseMonitorWindow(QMainWindow):
 
         col_idx = 3
         if mode_cols == "cpu":
-            # Threads column - interactive (user-draggable), initially sized to content
-            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)  # Parallel
+            col_idx += 1
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)  # Threads
+            col_idx += 1
+        elif mode_cols == "mem":
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)  # Commit
             col_idx += 1
         if has_time:
-            # Time column - interactive (user-draggable), initially sized to content
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
 
         # Styling
@@ -509,7 +515,12 @@ class BaseMonitorWindow(QMainWindow):
         table.resizeColumnToContents(2)
         col_idx = 3
         if mode_cols == "cpu":
-            table.resizeColumnToContents(col_idx)
+            table.resizeColumnToContents(col_idx)  # Parallel
+            col_idx += 1
+            table.resizeColumnToContents(col_idx)  # Threads
+            col_idx += 1
+        elif mode_cols == "mem":
+            table.resizeColumnToContents(col_idx)  # Commit
             col_idx += 1
         if has_time:
             table.resizeColumnToContents(col_idx)
@@ -656,15 +667,12 @@ class CPUWindow(BaseMonitorWindow):
             if row >= self.current_table.rowCount():
                 break
 
-            # Row number
             self.current_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
             self.current_table.setItem(row, 1, QTableWidgetItem(proc.name))
             value_str = monitor.format_value(proc.value, "MB") if monitor else f"{proc.value:.0f}"
             self.current_table.setItem(row, 2, QTableWidgetItem(value_str))
-
-            # Threads column
-            threads_text = str(proc.threads) if proc.threads > 0 else ""
-            self.current_table.setItem(row, 3, QTableWidgetItem(threads_text))
+            self.current_table.setItem(row, 3, QTableWidgetItem(str(proc.count)))
+            self.current_table.setItem(row, 4, QTableWidgetItem(str(proc.threads) if proc.threads > 0 else ""))
 
         # Clear empty rows
         for row in range(len(data.processes), self.current_table.rowCount()):
@@ -676,17 +684,13 @@ class CPUWindow(BaseMonitorWindow):
             if row >= self.history_table.rowCount():
                 break
 
-            # Row number
             self.history_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
             self.history_table.setItem(row, 1, QTableWidgetItem(record.name))
             value_str = monitor.format_value(record.value, "MB") if monitor else f"{record.value:.0f}"
             self.history_table.setItem(row, 2, QTableWidgetItem(value_str))
-
-            # Threads column
-            threads_text = str(record.threads) if record.threads > 0 else ""
-            self.history_table.setItem(row, 3, QTableWidgetItem(threads_text))
-
-            self.history_table.setItem(row, 4, QTableWidgetItem(record.time_str))
+            self.history_table.setItem(row, 3, QTableWidgetItem(str(record.count)))
+            self.history_table.setItem(row, 4, QTableWidgetItem(str(record.threads) if record.threads > 0 else ""))
+            self.history_table.setItem(row, 5, QTableWidgetItem(record.time_str))
 
         # Clear empty rows
         for row in range(len(data.history), self.history_table.rowCount()):
@@ -730,7 +734,7 @@ class MemoryWindow(BaseMonitorWindow):
         return "Memory Monitor"
 
     def _get_mode_cols(self) -> str:
-        return "none"
+        return "mem"
 
     def _show_settings(self):
         """Show Memory settings dialog."""
@@ -770,16 +774,16 @@ class MemoryWindow(BaseMonitorWindow):
         self.current_table.deleteLater()
         self.history_table.deleteLater()
 
-        # Create new tables (no extra columns for memory)
+        # Create new tables
         self.current_table = self._create_table(
             self._memory_settings.current_rows,
-            mode_cols="none",
+            mode_cols="mem",
             has_time=False,
             bg_color=self.CURRENT_BG
         )
         self.history_table = self._create_table(
             self._memory_settings.history_rows,
-            mode_cols="none",
+            mode_cols="mem",
             has_time=True,
             bg_color=self.HISTORY_BG
         )
@@ -820,11 +824,12 @@ class MemoryWindow(BaseMonitorWindow):
             if row >= self.current_table.rowCount():
                 break
 
-            # Row number
             self.current_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
             self.current_table.setItem(row, 1, QTableWidgetItem(proc.name))
             value_str = monitor.format_value(proc.value, unit) if monitor else f"{proc.value:.0f}"
             self.current_table.setItem(row, 2, QTableWidgetItem(value_str))
+            commit_str = monitor.format_value(proc.vms, unit) if (monitor and proc.vms > 0) else ""
+            self.current_table.setItem(row, 3, QTableWidgetItem(commit_str))
 
         # Clear empty rows
         for row in range(len(data.processes), self.current_table.rowCount()):
@@ -836,13 +841,13 @@ class MemoryWindow(BaseMonitorWindow):
             if row >= self.history_table.rowCount():
                 break
 
-            # Row number
             self.history_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
             self.history_table.setItem(row, 1, QTableWidgetItem(record.name))
             value_str = monitor.format_value(record.value, unit) if monitor else f"{record.value:.0f}"
             self.history_table.setItem(row, 2, QTableWidgetItem(value_str))
-
-            self.history_table.setItem(row, 3, QTableWidgetItem(record.time_str))
+            commit_str = monitor.format_value(record.vms, unit) if (monitor and record.vms > 0) else ""
+            self.history_table.setItem(row, 3, QTableWidgetItem(commit_str))
+            self.history_table.setItem(row, 4, QTableWidgetItem(record.time_str))
 
         # Clear empty rows
         for row in range(len(data.history), self.history_table.rowCount()):

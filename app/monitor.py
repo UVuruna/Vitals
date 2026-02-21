@@ -194,12 +194,12 @@ _hwinfo_reader: Optional[HWiNFOSharedMemory] = None
 from .styles import MEMORY_UNITS, get_process_display_name
 
 
-# Indices into the aggregated per-process list [cpu_pct, threads, rss, vms, pf]
+# Indices into the aggregated per-process list [cpu_pct, threads, rss, vms, count]
 _CPU_IDX     = 0
 _THREADS_IDX = 1
 _RSS_IDX     = 2
 _VMS_IDX     = 3
-_PF_IDX      = 4
+_COUNT_IDX   = 4
 
 
 class MonitorMode(Enum):
@@ -217,9 +217,8 @@ class ProcessInfo:
     name: str
     value: float  # CPU % or Memory bytes
     threads: int = 0  # Number of threads (OS threads)
-    cores: int = 0    # Number of unique CPU cores used
-    page_faults: int = 0  # Page faults count (memory mode)
-    vms: int = 0          # Virtual Memory Size (commit size)
+    count: int = 0    # Number of processes in this group (parallel count)
+    vms: int = 0      # Virtual Memory Size (commit size)
     timestamp: float = field(default_factory=time.time)
 
     def __post_init__(self):
@@ -234,10 +233,9 @@ class HistoryRecord:
     name: str
     value: float
     timestamp: float
-    threads: int = 0       # Number of threads at peak
-    cores: int = 0         # Number of cores at peak
-    page_faults: int = 0   # Page faults at peak (memory mode)
-    vms: int = 0           # VMS at peak (memory mode)
+    threads: int = 0  # Number of threads at peak
+    count: int = 0    # Number of processes in group at peak
+    vms: int = 0      # Virtual Memory Size (commit size) at peak
 
     @property
     def time_str(self) -> str:
@@ -300,13 +298,11 @@ def _collect_processes(
 
             rss = 0
             vms = 0
-            pf = 0
             if need_mem:
                 mem_info = info.get('memory_info')
                 if mem_info:
                     rss = mem_info.rss
                     vms = mem_info.vms
-                    pf = getattr(mem_info, 'num_page_faults', 0) or 0
                     total_rss += rss
 
             display_name = get_process_display_name(name)
@@ -316,9 +312,9 @@ def _collect_processes(
                 entry[_THREADS_IDX] += threads
                 entry[_RSS_IDX]     += rss
                 entry[_VMS_IDX]     += vms
-                entry[_PF_IDX]      += pf
+                entry[_COUNT_IDX]   += 1
             else:
-                aggregated[display_name] = [cpu_pct, threads, rss, vms, pf]
+                aggregated[display_name] = [cpu_pct, threads, rss, vms, 1]
 
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
@@ -482,7 +478,7 @@ class ProcessMonitor:
 
         top = heapq.nlargest(limit, aggregated.items(), key=lambda x: x[1][_CPU_IDX])
         return [
-            ProcessInfo(name=name, value=entry[_CPU_IDX], threads=entry[_THREADS_IDX])
+            ProcessInfo(name=name, value=entry[_CPU_IDX], threads=entry[_THREADS_IDX], count=entry[_COUNT_IDX])
             for name, entry in top
         ]
 
@@ -497,7 +493,7 @@ class ProcessMonitor:
 
         top = heapq.nlargest(limit, aggregated.items(), key=lambda x: x[1][_RSS_IDX])
         return [
-            ProcessInfo(name=name, value=entry[_RSS_IDX], page_faults=entry[_PF_IDX], vms=entry[_VMS_IDX])
+            ProcessInfo(name=name, value=entry[_RSS_IDX], vms=entry[_VMS_IDX], count=entry[_COUNT_IDX])
             for name, entry in top
         ]
 
@@ -536,8 +532,7 @@ class ProcessMonitor:
                         value=proc.value,
                         timestamp=now,
                         threads=proc.threads,
-                        cores=proc.cores,
-                        page_faults=proc.page_faults,
+                        count=proc.count,
                         vms=proc.vms,
                     )
             else:
@@ -548,8 +543,7 @@ class ProcessMonitor:
                         value=proc.value,
                         timestamp=now,
                         threads=proc.threads,
-                        cores=proc.cores,
-                        page_faults=proc.page_faults,
+                        count=proc.count,
                         vms=proc.vms,
                     ))
                 elif self.history and proc.value > self.history[-1].value:
@@ -559,8 +553,7 @@ class ProcessMonitor:
                         value=proc.value,
                         timestamp=now,
                         threads=proc.threads,
-                        cores=proc.cores,
-                        page_faults=proc.page_faults,
+                        count=proc.count,
                         vms=proc.vms,
                     )
 
