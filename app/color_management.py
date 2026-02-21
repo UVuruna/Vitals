@@ -2,18 +2,18 @@
 Color Management
 
 Handles all color logic for the Process Monitor:
-- Company-based process name coloring (reads Windows CompanyName from exe, once per new process)
+- Company-based process name coloring — hues distributed evenly as 360°/N where N grows
+  as new companies are discovered; all named-company processes get a color, no-company gray.
 - Value-based usage coloring (per-monitor-mode thresholds: CPU and Memory are independent)
 - Application color palette (moved from styles.py)
 
-Config is read from config/config.json — edit that file to tune colors and thresholds.
+Config is read from config/config.json — edit that file to tune value color thresholds.
 """
 
 import ctypes
 import json
 import sys
 from dataclasses import dataclass
-from math import gcd
 from pathlib import Path
 from typing import Optional
 
@@ -53,14 +53,12 @@ _DEFAULT_VALUE_RANGES = [
     {"max_pct": 100, "color": "#C85555"},
 ]
 
-_DEFAULT_COMPANY_PALETTE = [
-    "#C99B9B", "#C9AE9B", "#C9C09B", "#C0C99B", "#AEC99C",
-    "#9CC99C", "#9CC9AE", "#9CC9C0", "#9CC0C9", "#9CAEC9",
-    "#9C9CC9", "#AE9CC9", "#C09CC9", "#C99CC0", "#C99CAE",
-]
-
-_DEFAULT_OTHER_COLOR = "#888888"
+# Gray for processes with no company information at all
 _DEFAULT_NO_COMPANY_COLOR = "#999999"
+
+# HSL parameters for named-company hues (pastel, readable on dark background)
+_COMPANY_HUE_SATURATION = 0.35
+_COMPANY_HUE_LIGHTNESS = 0.70
 
 
 # ---------------------------------------------------------------------------
@@ -138,27 +136,19 @@ def _read_company_name(exe_path: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# Palette spread order helper
-# ---------------------------------------------------------------------------
-
-def _spread_order(size: int) -> list:
-    """
-    Compute a spread-first index order for a palette of `size` colors.
-
-    Finds a stride coprime with size so that consecutive assignments land on
-    maximally distant hues across the palette.
-    """
-    if size <= 1:
-        return list(range(size))
-    for stride in range(max(size // 3, 2), size + 1):
-        if gcd(stride, size) == 1:
-            return [(i * stride) % size for i in range(size)]
-    return list(range(size))  # fallback (unreachable for size >= 2)
-
-
-# ---------------------------------------------------------------------------
 # ProcessColorManager — singleton, thread-safe
 # ---------------------------------------------------------------------------
+
+def _company_hue_color(index: int, total: int) -> QColor:
+    """
+    Return a pastel QColor for company at discovery index `index` out of `total`.
+
+    Hues are evenly distributed: hue = index / total * 360°.
+    Saturation and lightness are fixed for readability on dark backgrounds.
+    """
+    hue = (index / total) * 360.0
+    return QColor.fromHslF(hue / 360.0, _COMPANY_HUE_SATURATION, _COMPANY_HUE_LIGHTNESS)
+
 
 class ProcessColorManager:
     """
@@ -167,10 +157,9 @@ class ProcessColorManager:
     Company-based coloring:
       - lookup_company() is called from the background thread for each new process name.
       - get_process_color() is called from the main thread during table rendering.
-      - Companies with >1 distinct process names receive a unique palette color,
-        assigned with hue-spread ordering so few companies get visually distinct colors.
-      - Companies with only 1 process name get the "other" color (neutral gray).
-      - Processes with no company info at all get the "no company" color (light gray).
+      - Every named company gets a hue computed as index/N * 360° where N is the total
+        number of distinct named companies discovered so far. Colors shift as N grows.
+      - Processes with no company info get a fixed gray "no company" color.
 
     Value-based coloring:
       - get_value_color(pct, mode) maps 0-100% to a color using per-mode thresholds.
@@ -197,17 +186,17 @@ class ProcessColorManager:
         self._company_cache: dict[str, Optional[str]] = {}
         # {company_name -> count of distinct process names}
         self._company_counts: dict[str, int] = {}
-        # {company_name -> QColor} — only set when count goes above 1
-        self._color_assignments: dict[str, QColor] = {}
-        self._next_palette_idx = 0
+        # {company_name -> discovery index} — used for hue computation
+        self._company_idx: dict[str, int] = {}
+        # Total named companies discovered so far
+        self._company_count_named: int = 0
 
-        # Loaded from config.json
+        # Gray for processes with no company info
+        self._no_company_color = QColor(_DEFAULT_NO_COMPANY_COLOR)
+
+        # Value color ranges — CPU and Memory start from same config, tuned independently
         self._value_ranges_cpu: list[tuple[float, QColor]] = []
         self._value_ranges_memory: list[tuple[float, QColor]] = []
-        self._company_palette: list[QColor] = []
-        self._palette_spread: list[int] = []
-        self._other_color = QColor(_DEFAULT_OTHER_COLOR)
-        self._no_company_color = QColor(_DEFAULT_NO_COMPANY_COLOR)
 
         self._load_config()
 
@@ -216,8 +205,6 @@ class ProcessColorManager:
         config_path = _get_config_path()
 
         value_ranges_data = _DEFAULT_VALUE_RANGES
-        company_palette_data = _DEFAULT_COMPANY_PALETTE
-        other_color_str = _DEFAULT_OTHER_COLOR
 
         if config_path.exists():
             try:
@@ -226,13 +213,6 @@ class ProcessColorManager:
 
                 if "value_colors" in data and "ranges" in data["value_colors"]:
                     value_ranges_data = data["value_colors"]["ranges"]
-
-                if "company_colors" in data:
-                    cc = data["company_colors"]
-                    if "palette" in cc:
-                        company_palette_data = cc["palette"]
-                    if "other_color" in cc:
-                        other_color_str = cc["other_color"]
 
             except Exception:
                 pass
@@ -245,10 +225,6 @@ class ProcessColorManager:
         # CPU and Memory start from the same config; each can be tuned independently
         self._value_ranges_cpu = list(parsed_ranges)
         self._value_ranges_memory = list(parsed_ranges)
-
-        self._company_palette = [QColor(c) for c in company_palette_data]
-        self._palette_spread = _spread_order(len(self._company_palette))
-        self._other_color = QColor(other_color_str)
 
     def lookup_company(self, name: str, pid: int):
         """
@@ -282,23 +258,18 @@ class ProcessColorManager:
                 prev = self._company_counts.get(company, 0)
                 self._company_counts[company] = prev + 1
 
-                # Assign a palette color the moment a company reaches 2 distinct processes.
-                # Use spread-order indexing so few companies get maximally distant hues.
-                if prev == 1 and company not in self._color_assignments:
-                    if self._next_palette_idx < len(self._company_palette):
-                        actual_idx = self._palette_spread[self._next_palette_idx]
-                        self._color_assignments[company] = (
-                            self._company_palette[actual_idx]
-                        )
-                        self._next_palette_idx += 1
+                # Record discovery index on first encounter of this company.
+                # Hue = discovery_index / total_companies * 360° — recalculated dynamically.
+                if prev == 0:
+                    self._company_idx[company] = self._company_count_named
+                    self._company_count_named += 1
 
     def get_process_color(self, name: str) -> Optional[QColor]:
         """
         Return the color for a process name text (main thread).
 
         Returns None for unknown names (not yet looked up).
-        Returns the assigned company color for multi-process companies.
-        Returns other_color for singleton companies.
+        Returns a hue color (evenly distributed across 360°) for named-company processes.
         Returns no_company_color (gray) for processes with no company info.
         """
         with QMutexLocker(self._mutex):
@@ -307,7 +278,10 @@ class ProcessColorManager:
             company = self._company_cache[name]
             if not company:
                 return self._no_company_color
-            return self._color_assignments.get(company, self._other_color)
+            n = self._company_count_named
+            i = self._company_idx.get(company, 0)
+
+        return _company_hue_color(i, n)
 
     def update_value_thresholds(self, thresholds: list, mode: str):
         """Update the 4 color zone thresholds in-memory (session only, resets on restart).
@@ -339,14 +313,17 @@ class ProcessColorManager:
     def get_legend(self) -> list[tuple[str, QColor, int]]:
         """Return (label, color, count) sorted by count descending.
 
+        Hues are recomputed dynamically from current total company count.
         Includes an 'Unknown' entry at the end for processes with no company info.
         """
         with QMutexLocker(self._mutex):
+            n = self._company_count_named
             result = []
             for company, count in sorted(
                 self._company_counts.items(), key=lambda x: -x[1]
             ):
-                color = self._color_assignments.get(company, self._other_color)
+                i = self._company_idx.get(company, 0)
+                color = _company_hue_color(i, n) if n > 0 else self._no_company_color
                 result.append((company, color, count))
 
             no_company_count = sum(
