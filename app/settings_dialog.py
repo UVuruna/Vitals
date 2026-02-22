@@ -391,22 +391,48 @@ class CompanyLegendDialog(QDialog):
 # Helper: build color settings section into any layout
 # ---------------------------------------------------------------------------
 
+def _make_legend_btn() -> QPushButton:
+    """Create a styled Company Legend button (shared by CPU and Memory dialogs)."""
+    btn = QPushButton("Company Legend")
+    btn.setFont(QFont("Segoe UI", 10))
+    btn.setFixedHeight(28)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setStyleSheet("""
+        QPushButton {
+            background-color: #2a2a3e; color: #888888;
+            border: 1px solid #3a3a4e; border-radius: 4px; padding: 0 12px;
+        }
+        QPushButton:hover { background-color: #3a3a4e; color: #ffffff; }
+    """)
+    return btn
+
+
 def _build_color_section(
     layout: QVBoxLayout,
     make_label,
     show_legend: bool = True,
     mode: str = "cpu",
     title: str = "Color Settings",
+    max_info: str = "",
 ) -> 'ColorScaleWidget':
     """
     Add Color Settings label, ColorScaleWidget, and optionally Legend button to layout.
     Returns the ColorScaleWidget so the caller can read thresholds on accept.
 
     Args:
-        show_legend: If False, legend button is omitted (for login screen).
-        mode:        "cpu" or "memory" — determines which threshold set is shown/edited.
+        show_legend: If True, adds a Company Legend button below the scale.
+        mode:        "cpu", "memory", or "memory_total".
+        max_info:    If non-empty, shown right-aligned on the title row as "100% = <max_info>".
     """
-    layout.addWidget(make_label(title, 12, bold=True))
+    if max_info:
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.addWidget(make_label(title, 12, bold=True))
+        title_row.addStretch()
+        title_row.addWidget(make_label(f"100% = {max_info}", 9, color="#666666"))
+        layout.addLayout(title_row)
+    else:
+        layout.addWidget(make_label(title, 12, bold=True))
 
     color_mgr = ProcessColorManager()
     value_ranges = color_mgr.get_value_ranges(mode)
@@ -419,17 +445,7 @@ def _build_color_section(
     if show_legend:
         legend_row = QHBoxLayout()
         legend_row.addStretch()
-        legend_btn = QPushButton("Company Legend")
-        legend_btn.setFont(QFont("Segoe UI", 10))
-        legend_btn.setFixedHeight(28)
-        legend_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        legend_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2a2a3e; color: #888888;
-                border: 1px solid #3a3a4e; border-radius: 4px; padding: 0 12px;
-            }
-            QPushButton:hover { background-color: #3a3a4e; color: #ffffff; }
-        """)
+        legend_btn = _make_legend_btn()
         scale_widget._legend_btn = legend_btn  # type: ignore[attr-defined]
         legend_row.addWidget(legend_btn)
         layout.addLayout(legend_row)
@@ -928,7 +944,11 @@ class CPUSettingsDialog(QDialog):
         layout.addSpacing(8)
 
         # Color Settings (CPU-specific thresholds)
-        self._color_scale = _build_color_section(layout, self._make_label, mode="cpu")
+        cpu_threads = psutil.cpu_count() or 8
+        self._color_scale = _build_color_section(
+            layout, self._make_label, mode="cpu",
+            max_info=f"{cpu_threads * 100}%",
+        )
         self._color_scale._legend_btn.clicked.connect(self._show_legend)
 
         layout.addStretch()
@@ -1106,19 +1126,31 @@ class MemorySettingsDialog(QDialog):
 
         layout.addSpacing(8)
 
-        # Usage color scale (RSS vs RAM — same reference as before)
+        ram_gb = round(psutil.virtual_memory().total / 1024 ** 3)
+        from .monitor import get_commit_limit_bytes
+        commit_limit_gb = get_commit_limit_bytes() / 1024 ** 3
+
+        # Usage color scale (RSS vs RAM)
         self._color_scale_usage = _build_color_section(
-            layout, self._make_label, mode="memory", title="Usage Color Settings"
+            layout, self._make_label, mode="memory", show_legend=False,
+            title="Usage Color Settings", max_info=f"{ram_gb} GB",
         )
-        self._color_scale_usage._legend_btn.clicked.connect(self._show_legend)
 
         layout.addSpacing(4)
 
         # Total color scale (RSS+VMS vs CommitLimit)
         self._color_scale_total = _build_color_section(
-            layout, self._make_label, mode="memory_total",
-            show_legend=False, title="Total Color Settings"
+            layout, self._make_label, mode="memory_total", show_legend=False,
+            title="Total Color Settings", max_info=f"{commit_limit_gb:.1f} GB",
         )
+
+        # Company Legend button at the end (after both color scales)
+        legend_row = QHBoxLayout()
+        legend_row.addStretch()
+        legend_btn = _make_legend_btn()
+        legend_btn.clicked.connect(self._show_legend)
+        legend_row.addWidget(legend_btn)
+        layout.addLayout(legend_row)
 
         layout.addStretch()
 
