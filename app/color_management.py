@@ -211,9 +211,10 @@ class ProcessColorManager:
         self._hue_saturation: float = _COMPANY_HUE_SATURATION
         self._hue_lightness: float = _COMPANY_HUE_LIGHTNESS
 
-        # Value color ranges — CPU and Memory start from same config, tuned independently
+        # Value color ranges — CPU, Memory (Usage), and Memory Total start from same config
         self._value_ranges_cpu: list[tuple[float, QColor]] = []
         self._value_ranges_memory: list[tuple[float, QColor]] = []
+        self._value_ranges_memory_total: list[tuple[float, QColor]] = []
 
         self._load_config()
 
@@ -239,9 +240,10 @@ class ProcessColorManager:
             for entry in value_ranges_data
         ]
 
-        # CPU and Memory start from the same config; each can be tuned independently
+        # CPU, Memory, and Memory Total start from the same config; each tuned independently
         self._value_ranges_cpu = list(parsed_ranges)
         self._value_ranges_memory = list(parsed_ranges)
+        self._value_ranges_memory_total = list(parsed_ranges)
 
         # Load user-set hue params from last_setup.json (overrides defaults if present)
         setup_path = _get_last_setup_path()
@@ -358,12 +360,19 @@ class ProcessColorManager:
             mode:       "cpu" or "memory"
         """
         with QMutexLocker(self._mutex):
-            ranges = self._value_ranges_cpu if mode == "cpu" else self._value_ranges_memory
+            if mode == "cpu":
+                ranges = self._value_ranges_cpu
+            elif mode == "memory_total":
+                ranges = self._value_ranges_memory_total
+            else:
+                ranges = self._value_ranges_memory
             colors = [color for _, color in ranges]
             new_ranges = [(float(t), colors[i]) for i, t in enumerate(thresholds)]
             new_ranges.append((100.0, colors[-1]))
             if mode == "cpu":
                 self._value_ranges_cpu = new_ranges
+            elif mode == "memory_total":
+                self._value_ranges_memory_total = new_ranges
             else:
                 self._value_ranges_memory = new_ranges
 
@@ -374,7 +383,12 @@ class ProcessColorManager:
             mode: "cpu" or "memory"
         """
         with QMutexLocker(self._mutex):
-            ranges = self._value_ranges_cpu if mode == "cpu" else self._value_ranges_memory
+            if mode == "cpu":
+                ranges = self._value_ranges_cpu
+            elif mode == "memory_total":
+                ranges = self._value_ranges_memory_total
+            else:
+                ranges = self._value_ranges_memory
             return list(ranges)
 
     def get_legend(self) -> list[tuple[str, QColor, int]]:
@@ -427,7 +441,12 @@ class ProcessColorManager:
             QColor from the configured value_colors ranges for the given mode
         """
         with QMutexLocker(self._mutex):
-            ranges = self._value_ranges_cpu if mode == "cpu" else self._value_ranges_memory
+            if mode == "cpu":
+                ranges = self._value_ranges_cpu
+            elif mode == "memory_total":
+                ranges = self._value_ranges_memory_total
+            else:
+                ranges = self._value_ranges_memory
 
         for max_pct_val, color in ranges:
             if pct <= max_pct_val:

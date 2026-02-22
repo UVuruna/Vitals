@@ -57,6 +57,8 @@ def main():
 
     # Track windows
     windows = []
+    cpu_window = None
+    memory_window = None
 
     if settings.cpu_enabled:
         cpu_window = CPUWindow(settings, collector)
@@ -73,6 +75,11 @@ def main():
             )
         memory_window.show()
         windows.append(memory_window)
+
+    # Link refresh rates: changing one window's rate syncs to the other
+    if cpu_window is not None and memory_window is not None:
+        cpu_window._peer_window = memory_window
+        memory_window._peer_window = cpu_window
 
     # Start collector if not already running
     if not collector.isRunning():

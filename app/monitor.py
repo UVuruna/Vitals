@@ -9,6 +9,37 @@ Uses background thread for non-blocking UI.
 import ctypes
 from ctypes import wintypes
 import time
+
+
+class _PERFORMANCE_INFORMATION(ctypes.Structure):
+    """Windows PERFORMANCE_INFORMATION structure (psapi.h)."""
+    _fields_ = [
+        ('cb',                wintypes.DWORD),
+        ('CommitTotal',       ctypes.c_size_t),
+        ('CommitLimit',       ctypes.c_size_t),
+        ('CommitPeak',        ctypes.c_size_t),
+        ('PhysicalTotal',     ctypes.c_size_t),
+        ('PhysicalAvailable', ctypes.c_size_t),
+        ('SystemCache',       ctypes.c_size_t),
+        ('KernelTotal',       ctypes.c_size_t),
+        ('KernelPaged',       ctypes.c_size_t),
+        ('KernelNonpaged',    ctypes.c_size_t),
+        ('PageSize',          ctypes.c_size_t),
+        ('HandleCount',       wintypes.DWORD),
+        ('ProcessCount',      wintypes.DWORD),
+        ('ThreadCount',       wintypes.DWORD),
+    ]
+
+
+def get_commit_limit_bytes() -> int:
+    """Return system commit limit (RAM + all page files) in bytes via GetPerformanceInfo."""
+    try:
+        pi = _PERFORMANCE_INFORMATION()
+        pi.cb = ctypes.sizeof(pi)
+        ctypes.windll.psapi.GetPerformanceInfo(ctypes.byref(pi), pi.cb)
+        return pi.CommitLimit * pi.PageSize
+    except Exception:
+        return psutil.virtual_memory().total
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto

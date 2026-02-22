@@ -95,6 +95,7 @@ class BaseMonitorWindow(QMainWindow):
         self._saved_col_widths_current: list[int] | None = None
         self._saved_col_widths_history: list[int] | None = None
         self._layout_restored: bool = False
+        self._peer_window: 'BaseMonitorWindow | None' = None
 
         # Set window icon (Qt level)
         base = get_base_path()
@@ -557,7 +558,7 @@ class BaseMonitorWindow(QMainWindow):
             headers += ["Parallel", "Threads"]
         elif mode_cols == "mem":
             cols += 1
-            headers.append("Commit")
+            headers.append("Total")
         if has_time:
             cols += 1
             headers.append("Time")
@@ -697,11 +698,20 @@ class CPUWindow(BaseMonitorWindow):
         """Show CPU settings dialog."""
         dialog = CPUSettingsDialog(self, self._cpu_settings)
         if dialog.exec():
-            self._cpu_settings = dialog.get_settings()
-            self._apply_settings()
+            new_settings = dialog.get_settings()
+            if new_settings == self._cpu_settings:
+                return
+            prev = self._cpu_settings
+            self._cpu_settings = new_settings
+            self._apply_settings(prev)
+            if self._peer_window and new_settings.refresh_rate_ms != prev.refresh_rate_ms:
+                self._peer_window._sync_refresh_rate(new_settings.refresh_rate_ms)
 
-    def _apply_settings(self):
-        """Apply current settings to collector."""
+    def _sync_refresh_rate(self, refresh_rate_ms: int):
+        """Sync refresh rate from peer window without rebuilding tables."""
+        if self._cpu_settings.refresh_rate_ms == refresh_rate_ms:
+            return
+        self._cpu_settings.refresh_rate_ms = refresh_rate_ms
         self._collector.configure_cpu(
             cpu_threads=self._initial_settings.cpu_threads,
             ram_gb=self._initial_settings.ram_gb,
@@ -710,13 +720,24 @@ class CPUWindow(BaseMonitorWindow):
             retention_minutes=self._cpu_settings.retention_minutes,
             refresh_rate_ms=self._cpu_settings.refresh_rate_ms,
         )
-        self._rebuild_tables()
 
-        # Resize window based on row count
-        row_height = 32
-        total_rows = self._cpu_settings.current_rows + self._cpu_settings.history_rows
-        new_height = 200 + (total_rows + 2) * row_height + 100
-        self.resize(400, new_height)
+    def _apply_settings(self, prev_settings: 'CPUSettings | None' = None):
+        """Apply current settings to collector. Rebuilds tables only if row counts changed."""
+        self._collector.configure_cpu(
+            cpu_threads=self._initial_settings.cpu_threads,
+            ram_gb=self._initial_settings.ram_gb,
+            current_rows=self._cpu_settings.current_rows,
+            history_rows=self._cpu_settings.history_rows,
+            retention_minutes=self._cpu_settings.retention_minutes,
+            refresh_rate_ms=self._cpu_settings.refresh_rate_ms,
+        )
+        rows_changed = (
+            prev_settings is None
+            or prev_settings.current_rows != self._cpu_settings.current_rows
+            or prev_settings.history_rows != self._cpu_settings.history_rows
+        )
+        if rows_changed:
+            self._rebuild_tables()
 
     def _rebuild_tables(self):
         """Rebuild tables with current settings."""
@@ -861,6 +882,7 @@ class MemoryWindow(BaseMonitorWindow):
             retention_minutes=initial_settings.retention_minutes,
             memory_unit=initial_settings.memory_unit,
         )
+        self._commit_limit_bytes: int = initial_settings.commit_limit_bytes
         super().__init__(parent)
 
         # Connect to collector signal
@@ -887,11 +909,20 @@ class MemoryWindow(BaseMonitorWindow):
         """Show Memory settings dialog."""
         dialog = MemorySettingsDialog(self, self._memory_settings)
         if dialog.exec():
-            self._memory_settings = dialog.get_settings()
-            self._apply_settings()
+            new_settings = dialog.get_settings()
+            if new_settings == self._memory_settings:
+                return
+            prev = self._memory_settings
+            self._memory_settings = new_settings
+            self._apply_settings(prev)
+            if self._peer_window and new_settings.refresh_rate_ms != prev.refresh_rate_ms:
+                self._peer_window._sync_refresh_rate(new_settings.refresh_rate_ms)
 
-    def _apply_settings(self):
-        """Apply current settings to collector."""
+    def _sync_refresh_rate(self, refresh_rate_ms: int):
+        """Sync refresh rate from peer window without rebuilding tables."""
+        if self._memory_settings.refresh_rate_ms == refresh_rate_ms:
+            return
+        self._memory_settings.refresh_rate_ms = refresh_rate_ms
         self._collector.configure_memory(
             cpu_threads=self._initial_settings.cpu_threads,
             ram_gb=self._initial_settings.ram_gb,
@@ -901,13 +932,25 @@ class MemoryWindow(BaseMonitorWindow):
             refresh_rate_ms=self._memory_settings.refresh_rate_ms,
             memory_unit=self._memory_settings.memory_unit,
         )
-        self._rebuild_tables()
 
-        # Resize window based on row count
-        row_height = 32
-        total_rows = self._memory_settings.current_rows + self._memory_settings.history_rows
-        new_height = 200 + (total_rows + 2) * row_height + 100
-        self.resize(400, new_height)
+    def _apply_settings(self, prev_settings: 'MemorySettings | None' = None):
+        """Apply current settings to collector. Rebuilds tables only if row counts changed."""
+        self._collector.configure_memory(
+            cpu_threads=self._initial_settings.cpu_threads,
+            ram_gb=self._initial_settings.ram_gb,
+            current_rows=self._memory_settings.current_rows,
+            history_rows=self._memory_settings.history_rows,
+            retention_minutes=self._memory_settings.retention_minutes,
+            refresh_rate_ms=self._memory_settings.refresh_rate_ms,
+            memory_unit=self._memory_settings.memory_unit,
+        )
+        rows_changed = (
+            prev_settings is None
+            or prev_settings.current_rows != self._memory_settings.current_rows
+            or prev_settings.history_rows != self._memory_settings.history_rows
+        )
+        if rows_changed:
+            self._rebuild_tables()
 
     def _rebuild_tables(self):
         """Rebuild tables with current settings."""
@@ -998,8 +1041,13 @@ class MemoryWindow(BaseMonitorWindow):
                 value_item.setForeground(color_mgr.get_value_color(pct, "memory"))
             self.current_table.setItem(row, 2, value_item)
 
-            commit_str = monitor.format_value(proc.vms, unit) if (monitor and proc.vms > 0) else ""
-            self.current_table.setItem(row, 3, QTableWidgetItem(commit_str))
+            total_bytes = proc.value + proc.vms
+            total_str = monitor.format_value(total_bytes, unit) if monitor else ""
+            total_item = QTableWidgetItem(total_str)
+            if monitor and self._commit_limit_bytes > 0:
+                total_pct = total_bytes / self._commit_limit_bytes * 100
+                total_item.setForeground(color_mgr.get_value_color(total_pct, "memory_total"))
+            self.current_table.setItem(row, 3, total_item)
 
         # Clear empty rows
         for row in range(len(data.processes), self.current_table.rowCount()):
@@ -1026,8 +1074,13 @@ class MemoryWindow(BaseMonitorWindow):
                 value_item.setForeground(color_mgr.get_value_color(pct, "memory"))
             self.history_table.setItem(row, 2, value_item)
 
-            commit_str = monitor.format_value(record.vms, unit) if (monitor and record.vms > 0) else ""
-            self.history_table.setItem(row, 3, QTableWidgetItem(commit_str))
+            total_bytes = record.value + record.vms
+            total_str = monitor.format_value(total_bytes, unit) if monitor else ""
+            total_item = QTableWidgetItem(total_str)
+            if monitor and self._commit_limit_bytes > 0:
+                total_pct = total_bytes / self._commit_limit_bytes * 100
+                total_item.setForeground(color_mgr.get_value_color(total_pct, "memory_total"))
+            self.history_table.setItem(row, 3, total_item)
             self.history_table.setItem(row, 4, QTableWidgetItem(record.time_str))
 
         # Clear empty rows

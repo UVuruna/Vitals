@@ -396,6 +396,7 @@ def _build_color_section(
     make_label,
     show_legend: bool = True,
     mode: str = "cpu",
+    title: str = "Color Settings",
 ) -> 'ColorScaleWidget':
     """
     Add Color Settings label, ColorScaleWidget, and optionally Legend button to layout.
@@ -405,7 +406,7 @@ def _build_color_section(
         show_legend: If False, legend button is omitted (for login screen).
         mode:        "cpu" or "memory" — determines which threshold set is shown/edited.
     """
-    layout.addWidget(make_label("Color Settings", 12, bold=True))
+    layout.addWidget(make_label(title, 12, bold=True))
 
     color_mgr = ProcessColorManager()
     value_ranges = color_mgr.get_value_ranges(mode)
@@ -479,6 +480,11 @@ class InitialSettings:
     @property
     def ram_gb(self) -> int:
         return round(psutil.virtual_memory().total / (1024 ** 3))
+
+    @property
+    def commit_limit_bytes(self) -> int:
+        from .monitor import get_commit_limit_bytes
+        return get_commit_limit_bytes()
 
 
 # ---------------------------------------------------------------------------
@@ -729,6 +735,7 @@ class InitialSettingsDialog(QDialog):
         color_mgr = ProcessColorManager()
         color_mgr.update_value_thresholds(thresholds, "cpu")
         color_mgr.update_value_thresholds(thresholds, "memory")
+        color_mgr.update_value_thresholds(thresholds, "memory_total")
         _save_last_setup(self.get_settings(), thresholds)
         self.accept()
 
@@ -970,7 +977,7 @@ class MemorySettingsDialog(QDialog):
         super().__init__(parent)
         self.settings = settings or MemorySettings()
         self.setWindowTitle("Memory Monitor - Settings")
-        self.resize(400, 560)
+        self.resize(400, 700)
 
         icon_path = get_base_path() / "assets" / "icon.ico"
         if icon_path.exists():
@@ -1099,9 +1106,19 @@ class MemorySettingsDialog(QDialog):
 
         layout.addSpacing(8)
 
-        # Color Settings (Memory-specific thresholds)
-        self._color_scale = _build_color_section(layout, self._make_label, mode="memory")
-        self._color_scale._legend_btn.clicked.connect(self._show_legend)
+        # Usage color scale (RSS vs RAM — same reference as before)
+        self._color_scale_usage = _build_color_section(
+            layout, self._make_label, mode="memory", title="Usage Color Settings"
+        )
+        self._color_scale_usage._legend_btn.clicked.connect(self._show_legend)
+
+        layout.addSpacing(4)
+
+        # Total color scale (RSS+VMS vs CommitLimit)
+        self._color_scale_total = _build_color_section(
+            layout, self._make_label, mode="memory_total",
+            show_legend=False, title="Total Color Settings"
+        )
 
         layout.addStretch()
 
@@ -1120,7 +1137,8 @@ class MemorySettingsDialog(QDialog):
         CompanyLegendDialog(self).exec()
 
     def accept(self):
-        ProcessColorManager().update_value_thresholds(self._color_scale.thresholds, "memory")
+        ProcessColorManager().update_value_thresholds(self._color_scale_usage.thresholds, "memory")
+        ProcessColorManager().update_value_thresholds(self._color_scale_total.thresholds, "memory_total")
         super().accept()
 
     def _load_settings(self):
