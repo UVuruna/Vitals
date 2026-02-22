@@ -532,11 +532,12 @@ class ProcessMonitor:
 
     def _extract_mem_top(self, aggregated: dict[str, list], total_rss: int, limit: int) -> list[ProcessInfo]:
         """Extract top memory processes from aggregated data and update stats."""
-        self.stats.total_usage = total_rss
+        vm = psutil.virtual_memory()
+        self.stats.total_usage = vm.used
         self.stats.process_count = len(aggregated)
 
-        if total_rss > self.stats.max_usage:
-            self.stats.max_usage = total_rss
+        if vm.used > self.stats.max_usage:
+            self.stats.max_usage = vm.used
             self.stats.max_usage_time = datetime.now()
 
         top = heapq.nlargest(limit, aggregated.items(), key=lambda x: x[1][_RSS_IDX])
