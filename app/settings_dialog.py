@@ -44,7 +44,7 @@ def get_last_setup_path() -> Path:
     return base / "config" / "last_setup.json"
 
 
-def _save_last_setup(settings: 'InitialSettings', thresholds: list) -> None:
+def _save_last_setup(settings: 'InitialSettings') -> None:
     """Persist the last-used login settings to config/last_setup.json."""
     path = get_last_setup_path()
     try:
@@ -61,7 +61,6 @@ def _save_last_setup(settings: 'InitialSettings', thresholds: list) -> None:
             "refresh_rate_ms": settings.refresh_rate_ms,
             "retention_minutes": settings.retention_minutes,
             "memory_unit": settings.memory_unit,
-            "color_thresholds": thresholds,
         })
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -522,7 +521,7 @@ class InitialSettingsDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Process Monitor - Setup")
-        self.resize(480, 660)
+        self.resize(480, 560)
 
         icon_path = get_base_path() / "assets" / "icon.ico"
         if icon_path.exists():
@@ -708,11 +707,6 @@ class InitialSettingsDialog(QDialog):
         row5.addWidget(self.unit_combo)
         layout.addLayout(row5)
 
-        layout.addSpacing(8)
-
-        # Color Settings — no legend on login screen; "cpu" mode for display (applies to both)
-        self._color_scale = _build_color_section(layout, self._make_label, show_legend=False, mode="cpu")
-
         # System info
         cpu_threads = psutil.cpu_count()
         ram_gb = round(psutil.virtual_memory().total / (1024 ** 3))
@@ -756,12 +750,7 @@ class InitialSettingsDialog(QDialog):
     def _on_start(self):
         if not self.cpu_btn.isChecked() and not self.mem_btn.isChecked():
             return
-        thresholds = self._color_scale.thresholds
-        color_mgr = ProcessColorManager()
-        color_mgr.update_value_thresholds(thresholds, "cpu")
-        color_mgr.update_value_thresholds(thresholds, "memory")
-        color_mgr.update_value_thresholds(thresholds, "memory_total")
-        _save_last_setup(self.get_settings(), thresholds)
+        _save_last_setup(self.get_settings())
         self.accept()
 
     def _apply_last_setup(self, saved: dict) -> None:
@@ -783,9 +772,6 @@ class InitialSettingsDialog(QDialog):
             self.retention_slider.setValue(int(saved["retention_minutes"]))
         if "memory_unit" in saved:
             self.unit_combo.setCurrentText(saved["memory_unit"])
-        thresholds = saved.get("color_thresholds")
-        if isinstance(thresholds, list) and len(thresholds) == 4:
-            self._color_scale.set_thresholds(thresholds)
 
     def get_settings(self) -> InitialSettings:
         return InitialSettings(
