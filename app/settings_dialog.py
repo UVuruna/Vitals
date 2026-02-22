@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from .monitor import MonitorMode
-from .styles import Defaults
+from .styles import Defaults, MEMORY_UNITS
 from .color_management import ProcessColorManager
 
 
@@ -79,6 +79,15 @@ def _load_last_setup() -> dict:
         except Exception:
             pass
     return {}
+
+
+def _format_bytes_in_unit(total_bytes: int, unit: str) -> str:
+    """Format a byte count in the user's selected memory unit (KB/MB/GB)."""
+    divisor = MEMORY_UNITS[unit]
+    value = total_bytes / divisor
+    if unit == "GB":
+        return f"{value:.1f} GB"
+    return f"{round(value):,} {unit}"
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +480,7 @@ class MonitorSettings:
 
     @property
     def cpu_threads(self) -> int:
-        return psutil.cpu_count() or 8
+        return psutil.cpu_count()
 
     @property
     def ram_gb(self) -> int:
@@ -491,7 +500,7 @@ class InitialSettings:
 
     @property
     def cpu_threads(self) -> int:
-        return psutil.cpu_count() or 8
+        return psutil.cpu_count()
 
     @property
     def ram_gb(self) -> int:
@@ -705,7 +714,7 @@ class InitialSettingsDialog(QDialog):
         self._color_scale = _build_color_section(layout, self._make_label, show_legend=False, mode="cpu")
 
         # System info
-        cpu_threads = psutil.cpu_count() or 8
+        cpu_threads = psutil.cpu_count()
         ram_gb = round(psutil.virtual_memory().total / (1024 ** 3))
         info_label = self._make_label(
             f"Detected: {cpu_threads} CPU threads, {ram_gb} GB RAM", 10, color="#666666"
@@ -944,7 +953,7 @@ class CPUSettingsDialog(QDialog):
         layout.addSpacing(8)
 
         # Color Settings (CPU-specific thresholds)
-        cpu_threads = psutil.cpu_count() or 8
+        cpu_threads = psutil.cpu_count()
         self._color_scale = _build_color_section(
             layout, self._make_label, mode="cpu",
             max_info=f"{cpu_threads * 100}%",
@@ -1126,14 +1135,15 @@ class MemorySettingsDialog(QDialog):
 
         layout.addSpacing(8)
 
-        ram_gb = round(psutil.virtual_memory().total / 1024 ** 3)
+        unit = self.settings.memory_unit
+        ram_bytes = psutil.virtual_memory().total
         from .monitor import get_commit_limit_bytes
-        commit_limit_gb = get_commit_limit_bytes() / 1024 ** 3
+        commit_limit_bytes = get_commit_limit_bytes()
 
         # Usage color scale (RSS vs RAM)
         self._color_scale_usage = _build_color_section(
             layout, self._make_label, mode="memory", show_legend=False,
-            title="Usage Color Settings", max_info=f"{ram_gb} GB",
+            title="Usage Color Settings", max_info=_format_bytes_in_unit(ram_bytes, unit),
         )
 
         layout.addSpacing(4)
@@ -1141,7 +1151,7 @@ class MemorySettingsDialog(QDialog):
         # Total color scale (RSS+VMS vs CommitLimit)
         self._color_scale_total = _build_color_section(
             layout, self._make_label, mode="memory_total", show_legend=False,
-            title="Total Color Settings", max_info=f"{commit_limit_gb:.1f} GB",
+            title="Total Color Settings", max_info=_format_bytes_in_unit(commit_limit_bytes, unit),
         )
 
         # Company Legend button at the end (after both color scales)
