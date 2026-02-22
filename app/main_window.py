@@ -383,10 +383,6 @@ class BaseMonitorWindow(QMainWindow):
 
         header_layout.addLayout(title_row)
 
-        self.peak_label = QLabel("Peak: --")
-        self.peak_label.setFont(QFont("Segoe UI", 10))
-        self.peak_label.setStyleSheet(f"color: {self.TEXT_MUTED}; background: transparent;")
-        header_layout.addWidget(self.peak_label)
 
         # HWiNFO sensors row (spread across width)
         self.sensor_widget = QWidget()
@@ -458,10 +454,18 @@ class BaseMonitorWindow(QMainWindow):
         history_layout.setContentsMargins(0, 4, 0, 0)
         history_layout.setSpacing(4)
 
+        history_title_row = QHBoxLayout()
+        history_title_row.setContentsMargins(0, 0, 0, 0)
         self.history_title = QLabel("Historical Peak Usage")
         self.history_title.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
         self.history_title.setStyleSheet(f"color: {self.TEXT};")
-        history_layout.addWidget(self.history_title)
+        history_title_row.addWidget(self.history_title)
+        history_title_row.addStretch()
+        self.peak_label = QLabel("Peak: --")
+        self.peak_label.setFont(QFont("Segoe UI", 10))
+        self.peak_label.setStyleSheet(f"color: {self.TEXT_MUTED}; background: transparent;")
+        history_title_row.addWidget(self.peak_label)
+        history_layout.addLayout(history_title_row)
 
         self.history_table = self._create_table(4, mode_cols=self._get_mode_cols(), has_time=True, bg_color=self.HISTORY_BG)
         history_layout.addWidget(self.history_table)
@@ -789,19 +793,22 @@ class CPUWindow(BaseMonitorWindow):
         # Get HWiNFO sensor data
         hwinfo = data.hwinfo
 
-        # CPU mode: Temperature, Power, Current
-        sensor_names = ["Temperature", "Power", "Current"]
-        sensor_data = [
-            (f"{hwinfo.cpu_tctl:.1f}°C", hwinfo.cpu_tctl) if hwinfo.cpu_tctl else ("—", None),
-            (f"{hwinfo.cpu_power:.1f} W", None) if hwinfo.cpu_power else ("—", None),
-            (f"{hwinfo.cpu_edc:.1f} A", None) if hwinfo.cpu_edc else ("—", None),
-        ]
-        for i, (name, (value_text, temp_val)) in enumerate(zip(sensor_names, sensor_data)):
-            self.sensor_name_labels[i].setText(name)
-            self.sensor_value_labels[i].setText(value_text)
-            self.sensor_value_labels[i].setStyleSheet(
-                f"color: {self._get_temp_color(temp_val)}; background: transparent;"
-            )
+        # CPU mode: Temperature, Power, Electric
+        cpu_has_data = any([hwinfo.cpu_tctl, hwinfo.cpu_power, hwinfo.cpu_edc])
+        self.sensor_widget.setVisible(cpu_has_data)
+        if cpu_has_data:
+            sensor_names = ["Temperature", "Power", "Electric"]
+            sensor_data = [
+                (f"{hwinfo.cpu_tctl:.1f}°C", hwinfo.cpu_tctl) if hwinfo.cpu_tctl else ("—", None),
+                (f"{hwinfo.cpu_power:.1f} W", None) if hwinfo.cpu_power else ("—", None),
+                (f"{hwinfo.cpu_edc:.1f} A", None) if hwinfo.cpu_edc else ("—", None),
+            ]
+            for i, (name, (value_text, temp_val)) in enumerate(zip(sensor_names, sensor_data)):
+                self.sensor_name_labels[i].setText(name)
+                self.sensor_value_labels[i].setText(value_text)
+                self.sensor_value_labels[i].setStyleSheet(
+                    f"color: {self._get_temp_color(temp_val)}; background: transparent;"
+                )
 
         # Update current table
         color_mgr = ProcessColorManager()
@@ -1004,21 +1011,24 @@ class MemoryWindow(BaseMonitorWindow):
         hwinfo = data.hwinfo
 
         # Memory mode: Committed, Read, Write
-        committed_str = (
-            monitor.format_value(hwinfo.virt_committed, unit)
-            if (monitor and hwinfo.virt_committed)
-            else "—"
-        )
-        sensor_names = ["Committed", "Read", "Write"]
-        sensor_values = [
-            committed_str,
-            f"{hwinfo.dram_read:,.0f} MB/s" if hwinfo.dram_read else "—",
-            f"{hwinfo.dram_write:,.0f} MB/s" if hwinfo.dram_write else "—",
-        ]
-        for i, (name, value_text) in enumerate(zip(sensor_names, sensor_values)):
-            self.sensor_name_labels[i].setText(name)
-            self.sensor_value_labels[i].setText(value_text)
-            self.sensor_value_labels[i].setStyleSheet(f"color: {self.TEXT}; background: transparent;")
+        mem_has_data = any([hwinfo.virt_committed, hwinfo.dram_read, hwinfo.dram_write])
+        self.sensor_widget.setVisible(mem_has_data)
+        if mem_has_data:
+            committed_str = (
+                monitor.format_value(hwinfo.virt_committed, unit)
+                if (monitor and hwinfo.virt_committed)
+                else "—"
+            )
+            sensor_names = ["Committed", "Read", "Write"]
+            sensor_values = [
+                committed_str,
+                f"{hwinfo.dram_read:,.0f} MB/s" if hwinfo.dram_read else "—",
+                f"{hwinfo.dram_write:,.0f} MB/s" if hwinfo.dram_write else "—",
+            ]
+            for i, (name, value_text) in enumerate(zip(sensor_names, sensor_values)):
+                self.sensor_name_labels[i].setText(name)
+                self.sensor_value_labels[i].setText(value_text)
+                self.sensor_value_labels[i].setStyleSheet(f"color: {self.TEXT}; background: transparent;")
 
         # Update current table
         color_mgr = ProcessColorManager()
