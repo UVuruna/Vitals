@@ -4,6 +4,7 @@ Settings Dialog - Simple and Working
 
 import json
 import sys
+import winreg
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -42,6 +43,52 @@ def get_last_setup_path() -> Path:
     else:
         base = Path(__file__).parent.parent
     return base / "config" / "last_setup.json"
+
+
+_STARTUP_APP_NAME = "PMUsage"
+_STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def _get_startup_exe_path() -> str:
+    """Return the command to register in Windows startup."""
+    if getattr(sys, 'frozen', False):
+        return f'"{sys.executable}"'
+    # Dev mode: use pythonw.exe to avoid a console window
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    if not pythonw.exists():
+        pythonw = Path(sys.executable)
+    main_py = Path(__file__).parent.parent / "main.py"
+    return f'"{pythonw}" "{main_py}"'
+
+
+def is_startup_registered() -> bool:
+    """Return True if the app has a Windows startup entry."""
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_REG_KEY)
+        winreg.QueryValueEx(key, _STARTUP_APP_NAME)
+        winreg.CloseKey(key)
+        return True
+    except Exception:
+        return False
+
+
+def set_startup_registered(enabled: bool) -> None:
+    """Add or remove the Windows startup registry entry."""
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, _STARTUP_REG_KEY,
+            0, winreg.KEY_SET_VALUE,
+        )
+        if enabled:
+            winreg.SetValueEx(key, _STARTUP_APP_NAME, 0, winreg.REG_SZ, _get_startup_exe_path())
+        else:
+            try:
+                winreg.DeleteValue(key, _STARTUP_APP_NAME)
+            except FileNotFoundError:
+                pass
+        winreg.CloseKey(key)
+    except Exception:
+        pass
 
 
 def _save_last_setup(settings: 'InitialSettings') -> None:
@@ -710,6 +757,23 @@ class InitialSettingsDialog(QDialog):
         row5.addWidget(self.unit_combo)
         layout.addLayout(row5)
 
+        # Start with Windows toggle
+        startup_row = QHBoxLayout()
+        startup_row.addWidget(self._make_label("Start with Windows:", 11, color="#aaaaaa"))
+        startup_row.addStretch()
+        self.startup_toggle = QPushButton()
+        self.startup_toggle.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        self.startup_toggle.setFixedSize(52, 28)
+        self.startup_toggle.setCheckable(True)
+        self.startup_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.startup_toggle.clicked.connect(self._update_startup_toggle)
+        startup_row.addWidget(self.startup_toggle)
+        layout.addLayout(startup_row)
+
+        # Init toggle from actual registry state (not from saved settings)
+        self.startup_toggle.setChecked(is_startup_registered())
+        self._update_startup_toggle()
+
         # System info
         cpu_threads = psutil.cpu_count()
         ram_gb = round(psutil.virtual_memory().total / (1024 ** 3))
@@ -750,9 +814,24 @@ class InitialSettingsDialog(QDialog):
         self.mem_btn.setStyleSheet(active_style if self.mem_btn.isChecked() else inactive_style)
         self.start_btn.setEnabled(self.cpu_btn.isChecked() or self.mem_btn.isChecked())
 
+    def _update_startup_toggle(self):
+        """Refresh startup toggle button style to match its checked state."""
+        if self.startup_toggle.isChecked():
+            self.startup_toggle.setText("ON")
+            self.startup_toggle.setStyleSheet("""
+                QPushButton { background-color: #e94560; color: white; border: none; border-radius: 6px; }
+            """)
+        else:
+            self.startup_toggle.setText("OFF")
+            self.startup_toggle.setStyleSheet("""
+                QPushButton { background-color: #3a3a4e; color: #888888; border: none; border-radius: 6px; }
+                QPushButton:hover { background-color: #4a4a5e; }
+            """)
+
     def _on_start(self):
         if not self.cpu_btn.isChecked() and not self.mem_btn.isChecked():
             return
+        set_startup_registered(self.startup_toggle.isChecked())
         _save_last_setup(self.get_settings())
         self.accept()
 
