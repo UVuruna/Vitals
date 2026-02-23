@@ -5,6 +5,8 @@ config/last_setup.json
 exe/
 dist/
 build/
+*.spec
+setup/version_info.txt
 
 # Code signing certificate (never commit)
 setup/cert/
