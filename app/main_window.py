@@ -1075,13 +1075,12 @@ class MemoryWindow(BaseMonitorWindow):
                 value_item.setForeground(color_mgr.get_value_color(pct, "memory"))
             self.current_table.setItem(row, 2, value_item)
 
-            total_bytes = proc.value + proc.vms
-            total_str = monitor.format_value(total_bytes, unit) if monitor else ""
-            total_item = QTableWidgetItem(total_str)
+            commit_str = monitor.format_value(proc.vms, unit) if monitor else ""
+            commit_item = QTableWidgetItem(commit_str)
             if monitor and self._commit_limit_bytes > 0:
-                total_pct = total_bytes / self._commit_limit_bytes * 100
-                total_item.setForeground(color_mgr.get_value_color(total_pct, "memory_total"))
-            self.current_table.setItem(row, 3, total_item)
+                commit_pct = proc.vms / self._commit_limit_bytes * 100
+                commit_item.setForeground(color_mgr.get_value_color(commit_pct, "memory_total"))
+            self.current_table.setItem(row, 3, commit_item)
 
         # Clear empty rows (excluding Σ total row)
         for row in range(len(data.processes), total_row):
@@ -1098,13 +1097,12 @@ class MemoryWindow(BaseMonitorWindow):
             pct = totals.value / monitor.ram_bytes * 100
             usage_item.setForeground(color_mgr.get_value_color(pct, "memory_all"))
         self.current_table.setItem(total_row, 2, usage_item)
-        total_all_bytes = totals.value + totals.vms
-        total_all_str = monitor.format_value(total_all_bytes, unit) if monitor else ""
-        total_all_item = self._make_total_item(total_all_str)
+        total_commit_str = monitor.format_value(totals.vms, unit) if monitor else ""
+        total_commit_item = self._make_total_item(total_commit_str)
         if monitor and self._commit_limit_bytes > 0:
-            total_all_pct = total_all_bytes / self._commit_limit_bytes * 100
-            total_all_item.setForeground(color_mgr.get_value_color(total_all_pct, "memory_all_total"))
-        self.current_table.setItem(total_row, 3, total_all_item)
+            total_commit_pct = totals.vms / self._commit_limit_bytes * 100
+            total_commit_item.setForeground(color_mgr.get_value_color(total_commit_pct, "memory_all_total"))
+        self.current_table.setItem(total_row, 3, total_commit_item)
 
         # Update history table
         for row, record in enumerate(data.history):
@@ -1126,13 +1124,12 @@ class MemoryWindow(BaseMonitorWindow):
                 value_item.setForeground(color_mgr.get_value_color(pct, "memory"))
             self.history_table.setItem(row, 2, value_item)
 
-            total_bytes = record.value + record.vms
-            total_str = monitor.format_value(total_bytes, unit) if monitor else ""
-            total_item = QTableWidgetItem(total_str)
+            commit_str = monitor.format_value(record.vms, unit) if monitor else ""
+            commit_item = QTableWidgetItem(commit_str)
             if monitor and self._commit_limit_bytes > 0:
-                total_pct = total_bytes / self._commit_limit_bytes * 100
-                total_item.setForeground(color_mgr.get_value_color(total_pct, "memory_total"))
-            self.history_table.setItem(row, 3, total_item)
+                commit_pct = record.vms / self._commit_limit_bytes * 100
+                commit_item.setForeground(color_mgr.get_value_color(commit_pct, "memory_total"))
+            self.history_table.setItem(row, 3, commit_item)
             self.history_table.setItem(row, 4, QTableWidgetItem(record.time_str))
 
         # Clear empty rows
