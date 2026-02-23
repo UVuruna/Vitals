@@ -37,9 +37,15 @@ def get_base_path() -> Path:
 
 
 def get_last_setup_path() -> Path:
-    """Resolve config/last_setup.json for user-writable storage."""
+    """Resolve config/last_setup.json for user-writable storage.
+
+    Frozen exe: saves to %APPDATA%\PMUsage\ — always writable, no admin needed.
+    Dev mode:   saves to project root config\ folder.
+    """
     if getattr(sys, 'frozen', False):
-        base = Path(sys.executable).parent  # exe directory, writable
+        import os
+        appdata = os.environ.get('APPDATA') or os.environ.get('LOCALAPPDATA')
+        base = Path(appdata) / 'PMUsage' if appdata else Path(sys.executable).parent
     else:
         base = Path(__file__).parent.parent
     return base / "config" / "last_setup.json"

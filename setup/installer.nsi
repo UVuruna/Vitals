@@ -126,6 +126,9 @@ Section "Uninstall"
     ; Remove program files
     RMDir /r "$INSTDIR"
 
+    ; Remove user config data from AppData
+    RMDir /r "$APPDATA\${APP_NAME}"
+
     ; Remove registry keys
     DeleteRegKey HKLM "${UNINST_KEY}"
 SectionEnd
