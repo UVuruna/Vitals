@@ -19,6 +19,7 @@ def get_base_path() -> Path:
 
 from PySide6.QtGui import QAction, QFont, QIcon, QPalette, QColor
 from PySide6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -152,6 +153,10 @@ class BaseMonitorWindow(QMainWindow):
         self._load_config()
         self._apply_dark_theme()
         self._setup_ui()
+
+        app = QApplication.instance()
+        if app:
+            app.applicationStateChanged.connect(self._on_app_state_changed)
 
     def showEvent(self, event):
         """Set native Windows icon after window is shown for taskbar."""
@@ -739,6 +744,24 @@ class BaseMonitorWindow(QMainWindow):
                     table.clearSelection()
                     table._last_clicked_row = None
         return super().eventFilter(obj, event)
+
+    def _on_app_state_changed(self, state):
+        """Clear table selection when the application loses OS-level focus."""
+        if state != Qt.ApplicationState.ApplicationActive:
+            self.current_table.clearSelection()
+            self.current_table._last_clicked_row = None
+            self.history_table.clearSelection()
+            self.history_table._last_clicked_row = None
+
+    def closeEvent(self, event):
+        """Disconnect application state signal when window closes."""
+        app = QApplication.instance()
+        if app:
+            try:
+                app.applicationStateChanged.disconnect(self._on_app_state_changed)
+            except RuntimeError:
+                pass
+        super().closeEvent(event)
 
     def _toggle_pause(self):
         """Toggle pause. Must be implemented by subclasses for proper pause/resume."""

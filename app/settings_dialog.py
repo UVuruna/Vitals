@@ -303,7 +303,7 @@ class CompanyLegendDialog(QDialog):
         self.setPalette(palette)
         self.setAutoFillBackground(True)
 
-        self._other_expanded = False
+        self._expanded: set[str] = set()
 
         self._setup_ui()
 
@@ -399,7 +399,8 @@ class CompanyLegendDialog(QDialog):
         layout.addWidget(close_btn)
 
     def _rebuild_legend_content(self):
-        legend = ProcessColorManager().get_legend()
+        color_mgr = ProcessColorManager()
+        legend = color_mgr.get_legend()
         content = QWidget()
         content.setStyleSheet("background: transparent;")
         content_layout = QVBoxLayout(content)
@@ -413,8 +414,15 @@ class CompanyLegendDialog(QDialog):
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             content_layout.addWidget(empty)
         else:
+            toggle_style = """
+                QPushButton {
+                    background: transparent; color: #888888;
+                    border: none; padding: 0;
+                }
+                QPushButton:hover { color: #ffffff; }
+            """
             for company, color, proc_count in legend:
-                is_other = company == "Other"
+                is_expanded = company in self._expanded
 
                 row_w = QWidget()
                 row_w.setStyleSheet("background: transparent;")
@@ -440,32 +448,31 @@ class CompanyLegendDialog(QDialog):
                 count_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 row.addWidget(count_lbl)
 
-                if is_other:
-                    arrow = "▼" if self._other_expanded else "▶"
-                    toggle_btn = QPushButton(arrow)
-                    toggle_btn.setFixedSize(20, 20)
-                    toggle_btn.setFont(QFont("Segoe UI", 8))
-                    toggle_btn.setStyleSheet("""
-                        QPushButton {
-                            background: transparent; color: #888888;
-                            border: none; padding: 0;
-                        }
-                        QPushButton:hover { color: #ffffff; }
-                    """)
-                    toggle_btn.clicked.connect(self._toggle_other)
-                    row.addWidget(toggle_btn)
+                toggle_btn = QPushButton("▼" if is_expanded else "▶")
+                toggle_btn.setFixedSize(20, 20)
+                toggle_btn.setFont(QFont("Segoe UI", 8))
+                toggle_btn.setStyleSheet(toggle_style)
+                toggle_btn.clicked.connect(lambda checked, c=company: self._toggle_company(c))
+                row.addWidget(toggle_btn)
 
                 content_layout.addWidget(row_w)
 
-                if is_other and self._other_expanded:
-                    for singleton in ProcessColorManager().get_singleton_companies():
+                if is_expanded:
+                    if company == "Other":
+                        sub_items = color_mgr.get_singleton_companies()
+                    elif company == "Unknown":
+                        sub_items = color_mgr.get_company_processes(None)
+                    else:
+                        sub_items = color_mgr.get_company_processes(company)
+
+                    for item_name in sub_items:
                         sub_w = QWidget()
                         sub_w.setStyleSheet("background: transparent;")
                         sub_row = QHBoxLayout(sub_w)
                         sub_row.setContentsMargins(28, 0, 2, 0)
                         sub_row.setSpacing(10)
 
-                        sub_lbl = QLabel(singleton)
+                        sub_lbl = QLabel(item_name)
                         sub_lbl.setFont(QFont("Segoe UI", 9))
                         sub_lbl.setStyleSheet("color: #aaaaaa; background: transparent;")
                         sub_row.addWidget(sub_lbl, 1)
@@ -476,8 +483,11 @@ class CompanyLegendDialog(QDialog):
         self._scroll.setWidget(content)
         self._legend_data = legend
 
-    def _toggle_other(self):
-        self._other_expanded = not self._other_expanded
+    def _toggle_company(self, label: str):
+        if label in self._expanded:
+            self._expanded.discard(label)
+        else:
+            self._expanded.add(label)
         self._rebuild_legend_content()
 
     def _refresh_legend(self):

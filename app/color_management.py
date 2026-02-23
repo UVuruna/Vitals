@@ -552,6 +552,17 @@ class ProcessColorManager:
                 if count == 1
             )
 
+    def get_company_processes(self, company: Optional[str]) -> list[str]:
+        """Return sorted list of active process display names for the given company.
+
+        Pass None to get processes with no company info (Unknown category).
+        """
+        with QMutexLocker(self._mutex):
+            return sorted(
+                name for name, comp in self._company_cache.items()
+                if comp == company
+            )
+
     def get_value_color(self, pct: float, mode: str) -> QColor:
         """
         Return a color for a usage percentage mapped to the configured thresholds.
