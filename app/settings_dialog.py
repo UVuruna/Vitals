@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSlider,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -140,6 +141,29 @@ def _format_bytes_in_unit(total_bytes: int, unit: str) -> str:
     if unit == "GB":
         return f"{value:.1f} GB"
     return f"{round(value):,} {unit}"
+
+
+_SPINBOX_STYLE = """
+    QSpinBox {
+        background-color: #3a3a4e; color: #ffffff;
+        border: 1px solid #4a4a5e; border-radius: 4px;
+        padding: 4px 8px;
+    }
+    QSpinBox::up-button, QSpinBox::down-button { width: 0px; }
+"""
+
+
+def _make_spinbox(default: int = 1) -> QSpinBox:
+    """Create a styled numeric input (1–100) for row count settings."""
+    sb = QSpinBox()
+    sb.setRange(1, 100)
+    sb.setValue(max(1, min(100, default)))
+    sb.setFont(QFont("Segoe UI", 11))
+    sb.setFixedHeight(32)
+    sb.setFixedWidth(70)
+    sb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    sb.setStyleSheet(_SPINBOX_STYLE)
+    return sb
 
 
 # ---------------------------------------------------------------------------
@@ -752,27 +776,23 @@ class InitialSettingsDialog(QDialog):
         row1 = QHBoxLayout()
         row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
         row1.addStretch()
-        self.current_combo = self._make_combo(
-            [str(i) for i in range(1, Defaults.MAX_ROWS + 1)], str(Defaults.CURRENT_ROWS)
-        )
-        row1.addWidget(self.current_combo)
+        self.current_spin = _make_spinbox(Defaults.CURRENT_ROWS)
+        row1.addWidget(self.current_spin)
         layout.addLayout(row1)
 
         row2 = QHBoxLayout()
         row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
         row2.addStretch()
-        self.history_combo = self._make_combo(
-            [str(i) for i in range(1, Defaults.MAX_ROWS + 1)], str(Defaults.HISTORY_ROWS)
-        )
-        row2.addWidget(self.history_combo)
+        self.history_spin = _make_spinbox(Defaults.HISTORY_ROWS)
+        row2.addWidget(self.history_spin)
         layout.addLayout(row2)
 
         row3 = QHBoxLayout()
         row3.addWidget(self._make_label("Refresh rate:", 11, color="#aaaaaa"))
         row3.addStretch()
         self.refresh_slider = QSlider(Qt.Orientation.Horizontal)
-        self.refresh_slider.setRange(5, 50)
-        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 100)
+        self.refresh_slider.setRange(1, 10)
+        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 500)
         self.refresh_slider.setFixedWidth(140)
         self.refresh_slider.setStyleSheet("""
             QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
@@ -783,7 +803,7 @@ class InitialSettingsDialog(QDialog):
         self.refresh_label = self._make_label(f"{Defaults.REFRESH_RATE_MS} ms", 11)
         self.refresh_label.setFixedWidth(65)
         self.refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 100} ms"))
+        self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 500} ms"))
         row3.addWidget(self.refresh_label)
         layout.addLayout(row3)
 
@@ -791,8 +811,8 @@ class InitialSettingsDialog(QDialog):
         row4.addWidget(self._make_label("History retention:", 11, color="#aaaaaa"))
         row4.addStretch()
         self.retention_slider = QSlider(Qt.Orientation.Horizontal)
-        self.retention_slider.setRange(10, 360)
-        self.retention_slider.setValue(Defaults.RETENTION_MINUTES)
+        self.retention_slider.setRange(1, 36)
+        self.retention_slider.setValue(Defaults.RETENTION_MINUTES // 10)
         self.retention_slider.setFixedWidth(140)
         self.retention_slider.setStyleSheet("""
             QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
@@ -803,7 +823,7 @@ class InitialSettingsDialog(QDialog):
         self.retention_label = self._make_label(f"{Defaults.RETENTION_MINUTES} min", 11)
         self.retention_label.setFixedWidth(65)
         self.retention_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.retention_slider.valueChanged.connect(lambda v: self.retention_label.setText(f"{v} min"))
+        self.retention_slider.valueChanged.connect(lambda v: self.retention_label.setText(f"{v * 10} min"))
         row4.addWidget(self.retention_label)
         layout.addLayout(row4)
 
@@ -907,13 +927,13 @@ class InitialSettingsDialog(QDialog):
             self.mem_btn.setChecked(bool(saved["memory_enabled"]))
         self._update_mode_buttons()
         if "current_rows" in saved:
-            self.current_combo.setCurrentText(str(saved["current_rows"]))
+            self.current_spin.setValue(int(saved["current_rows"]))
         if "history_rows" in saved:
-            self.history_combo.setCurrentText(str(saved["history_rows"]))
+            self.history_spin.setValue(int(saved["history_rows"]))
         if "refresh_rate_ms" in saved:
-            self.refresh_slider.setValue(int(saved["refresh_rate_ms"]) // 100)
+            self.refresh_slider.setValue(int(saved["refresh_rate_ms"]) // 500)
         if "retention_minutes" in saved:
-            self.retention_slider.setValue(int(saved["retention_minutes"]))
+            self.retention_slider.setValue(int(saved["retention_minutes"]) // 10)
         if "memory_unit" in saved:
             self.unit_combo.setCurrentText(saved["memory_unit"])
 
@@ -921,10 +941,10 @@ class InitialSettingsDialog(QDialog):
         return InitialSettings(
             cpu_enabled=self.cpu_btn.isChecked(),
             memory_enabled=self.mem_btn.isChecked(),
-            current_rows=int(self.current_combo.currentText()),
-            history_rows=int(self.history_combo.currentText()),
-            refresh_rate_ms=self.refresh_slider.value() * 100,
-            retention_minutes=self.retention_slider.value(),
+            current_rows=self.current_spin.value(),
+            history_rows=self.history_spin.value(),
+            refresh_rate_ms=self.refresh_slider.value() * 500,
+            retention_minutes=self.retention_slider.value() * 10,
             memory_unit=self.unit_combo.currentText(),
         )
 
@@ -1029,23 +1049,23 @@ class CPUSettingsDialog(QDialog):
         row1 = QHBoxLayout()
         row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
         row1.addStretch()
-        self.current_combo = self._make_combo([str(i) for i in range(1, Defaults.MAX_ROWS + 1)], "7")
-        row1.addWidget(self.current_combo)
+        self.current_spin = _make_spinbox(Defaults.CURRENT_ROWS)
+        row1.addWidget(self.current_spin)
         layout.addLayout(row1)
 
         row2 = QHBoxLayout()
         row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
         row2.addStretch()
-        self.history_combo = self._make_combo([str(i) for i in range(1, Defaults.MAX_ROWS + 1)], "4")
-        row2.addWidget(self.history_combo)
+        self.history_spin = _make_spinbox(Defaults.HISTORY_ROWS)
+        row2.addWidget(self.history_spin)
         layout.addLayout(row2)
 
         row3 = QHBoxLayout()
         row3.addWidget(self._make_label("Refresh rate:", 11, color="#aaaaaa"))
         row3.addStretch()
         self.refresh_slider = QSlider(Qt.Orientation.Horizontal)
-        self.refresh_slider.setRange(5, 50)
-        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 100)
+        self.refresh_slider.setRange(1, 10)
+        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 500)
         self.refresh_slider.setFixedWidth(140)
         self.refresh_slider.setStyleSheet("""
             QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
@@ -1056,7 +1076,7 @@ class CPUSettingsDialog(QDialog):
         self.refresh_label = self._make_label(f"{Defaults.REFRESH_RATE_MS} ms", 11)
         self.refresh_label.setFixedWidth(65)
         self.refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 100} ms"))
+        self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 500} ms"))
         row3.addWidget(self.refresh_label)
         layout.addLayout(row3)
 
@@ -1064,8 +1084,8 @@ class CPUSettingsDialog(QDialog):
         row4.addWidget(self._make_label("History retention:", 11, color="#aaaaaa"))
         row4.addStretch()
         self.retention_slider = QSlider(Qt.Orientation.Horizontal)
-        self.retention_slider.setRange(10, 360)
-        self.retention_slider.setValue(120)
+        self.retention_slider.setRange(1, 36)
+        self.retention_slider.setValue(Defaults.RETENTION_MINUTES // 10)
         self.retention_slider.setFixedWidth(140)
         self.retention_slider.setStyleSheet("""
             QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
@@ -1073,14 +1093,12 @@ class CPUSettingsDialog(QDialog):
             QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
         """)
         row4.addWidget(self.retention_slider)
-        self.retention_label = self._make_label("120 min", 11)
+        self.retention_label = self._make_label(f"{Defaults.RETENTION_MINUTES} min", 11)
         self.retention_label.setFixedWidth(65)
         self.retention_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.retention_slider.valueChanged.connect(lambda v: self.retention_label.setText(f"{v} min"))
+        self.retention_slider.valueChanged.connect(lambda v: self.retention_label.setText(f"{v * 10} min"))
         row4.addWidget(self.retention_label)
         layout.addLayout(row4)
-
-        layout.addSpacing(8)
 
         # Color Settings (CPU-specific thresholds)
         cpu_threads = psutil.cpu_count()
@@ -1090,8 +1108,6 @@ class CPUSettingsDialog(QDialog):
             show_legend=False,
             scale_max=50,
         )
-
-        layout.addSpacing(4)
 
         # Color Settings for Σ total row (all processes combined)
         self._color_scale_all = _build_color_section(
@@ -1123,17 +1139,17 @@ class CPUSettingsDialog(QDialog):
         super().accept()
 
     def _load_settings(self):
-        self.current_combo.setCurrentText(str(self.settings.current_rows))
-        self.history_combo.setCurrentText(str(self.settings.history_rows))
-        self.refresh_slider.setValue(self.settings.refresh_rate_ms // 100)
-        self.retention_slider.setValue(self.settings.retention_minutes)
+        self.current_spin.setValue(self.settings.current_rows)
+        self.history_spin.setValue(self.settings.history_rows)
+        self.refresh_slider.setValue(self.settings.refresh_rate_ms // 500)
+        self.retention_slider.setValue(self.settings.retention_minutes // 10)
 
     def get_settings(self) -> CPUSettings:
         return CPUSettings(
-            current_rows=int(self.current_combo.currentText()),
-            history_rows=int(self.history_combo.currentText()),
-            refresh_rate_ms=self.refresh_slider.value() * 100,
-            retention_minutes=self.retention_slider.value(),
+            current_rows=self.current_spin.value(),
+            history_rows=self.history_spin.value(),
+            refresh_rate_ms=self.refresh_slider.value() * 500,
+            retention_minutes=self.retention_slider.value() * 10,
         )
 
 
@@ -1214,23 +1230,23 @@ class MemorySettingsDialog(QDialog):
         row1 = QHBoxLayout()
         row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
         row1.addStretch()
-        self.current_combo = self._make_combo([str(i) for i in range(1, Defaults.MAX_ROWS + 1)], "7")
-        row1.addWidget(self.current_combo)
+        self.current_spin = _make_spinbox(Defaults.CURRENT_ROWS)
+        row1.addWidget(self.current_spin)
         layout.addLayout(row1)
 
         row2 = QHBoxLayout()
         row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
         row2.addStretch()
-        self.history_combo = self._make_combo([str(i) for i in range(1, Defaults.MAX_ROWS + 1)], "4")
-        row2.addWidget(self.history_combo)
+        self.history_spin = _make_spinbox(Defaults.HISTORY_ROWS)
+        row2.addWidget(self.history_spin)
         layout.addLayout(row2)
 
         row3 = QHBoxLayout()
         row3.addWidget(self._make_label("Refresh rate:", 11, color="#aaaaaa"))
         row3.addStretch()
         self.refresh_slider = QSlider(Qt.Orientation.Horizontal)
-        self.refresh_slider.setRange(5, 50)
-        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 100)
+        self.refresh_slider.setRange(1, 10)
+        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 500)
         self.refresh_slider.setFixedWidth(140)
         self.refresh_slider.setStyleSheet("""
             QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
@@ -1241,7 +1257,7 @@ class MemorySettingsDialog(QDialog):
         self.refresh_label = self._make_label(f"{Defaults.REFRESH_RATE_MS} ms", 11)
         self.refresh_label.setFixedWidth(65)
         self.refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 100} ms"))
+        self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 500} ms"))
         row3.addWidget(self.refresh_label)
         layout.addLayout(row3)
 
@@ -1249,8 +1265,8 @@ class MemorySettingsDialog(QDialog):
         row4.addWidget(self._make_label("History retention:", 11, color="#aaaaaa"))
         row4.addStretch()
         self.retention_slider = QSlider(Qt.Orientation.Horizontal)
-        self.retention_slider.setRange(10, 360)
-        self.retention_slider.setValue(120)
+        self.retention_slider.setRange(1, 36)
+        self.retention_slider.setValue(Defaults.RETENTION_MINUTES // 10)
         self.retention_slider.setFixedWidth(140)
         self.retention_slider.setStyleSheet("""
             QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
@@ -1258,14 +1274,12 @@ class MemorySettingsDialog(QDialog):
             QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
         """)
         row4.addWidget(self.retention_slider)
-        self.retention_label = self._make_label("120 min", 11)
+        self.retention_label = self._make_label(f"{Defaults.RETENTION_MINUTES} min", 11)
         self.retention_label.setFixedWidth(65)
         self.retention_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.retention_slider.valueChanged.connect(lambda v: self.retention_label.setText(f"{v} min"))
+        self.retention_slider.valueChanged.connect(lambda v: self.retention_label.setText(f"{v * 10} min"))
         row4.addWidget(self.retention_label)
         layout.addLayout(row4)
-
-        layout.addSpacing(8)
 
         layout.addWidget(self._make_label("Memory Settings", 12, bold=True))
         row5 = QHBoxLayout()
@@ -1274,8 +1288,6 @@ class MemorySettingsDialog(QDialog):
         self.unit_combo = self._make_combo(["KB", "MB", "GB"], "MB")
         row5.addWidget(self.unit_combo)
         layout.addLayout(row5)
-
-        layout.addSpacing(8)
 
         unit = self.settings.memory_unit
         ram_bytes = psutil.virtual_memory().total
@@ -1289,8 +1301,6 @@ class MemorySettingsDialog(QDialog):
             scale_max=50,
         )
 
-        layout.addSpacing(4)
-
         # Total color scale (Commit Size vs CommitLimit)
         self._color_scale_total = _build_color_section(
             layout, self._make_label, mode="memory_total", show_legend=False,
@@ -1298,15 +1308,11 @@ class MemorySettingsDialog(QDialog):
             scale_max=50,
         )
 
-        layout.addSpacing(4)
-
         # Color scales for Σ total row (all processes combined)
         self._color_scale_all_usage = _build_color_section(
             layout, self._make_label, mode="memory_all", show_legend=False,
             title="All Usage Color Settings", max_info=_format_bytes_in_unit(ram_bytes, unit),
         )
-
-        layout.addSpacing(4)
 
         self._color_scale_all_total = _build_color_section(
             layout, self._make_label, mode="memory_all_total", show_legend=False,
@@ -1345,17 +1351,17 @@ class MemorySettingsDialog(QDialog):
         super().accept()
 
     def _load_settings(self):
-        self.current_combo.setCurrentText(str(self.settings.current_rows))
-        self.history_combo.setCurrentText(str(self.settings.history_rows))
-        self.refresh_slider.setValue(self.settings.refresh_rate_ms // 100)
-        self.retention_slider.setValue(self.settings.retention_minutes)
+        self.current_spin.setValue(self.settings.current_rows)
+        self.history_spin.setValue(self.settings.history_rows)
+        self.refresh_slider.setValue(self.settings.refresh_rate_ms // 500)
+        self.retention_slider.setValue(self.settings.retention_minutes // 10)
         self.unit_combo.setCurrentText(self.settings.memory_unit)
 
     def get_settings(self) -> MemorySettings:
         return MemorySettings(
-            current_rows=int(self.current_combo.currentText()),
-            history_rows=int(self.history_combo.currentText()),
-            refresh_rate_ms=self.refresh_slider.value() * 100,
-            retention_minutes=self.retention_slider.value(),
+            current_rows=self.current_spin.value(),
+            history_rows=self.history_spin.value(),
+            refresh_rate_ms=self.refresh_slider.value() * 500,
+            retention_minutes=self.retention_slider.value() * 10,
             memory_unit=self.unit_combo.currentText(),
         )
