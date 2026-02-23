@@ -668,6 +668,7 @@ class MonitorData:
     max_display: str
     hwinfo: HWiNFOData
     stats: MonitorStats
+    process_totals: ProcessInfo  # Aggregated totals from ALL processes (for Σ row)
 
 
 class SharedDataCollector(QThread):
@@ -821,6 +822,12 @@ class SharedDataCollector(QThread):
                 if need_cpu:
                     processes = cpu_monitor._extract_cpu_top(aggregated, total_cpu, cpu_settings['current_rows'])
                     cpu_monitor.update_history(processes)
+                    cpu_totals = ProcessInfo(
+                        name="Total",
+                        value=cpu_monitor.stats.total_usage,
+                        threads=sum(e[_THREADS_IDX] for e in aggregated.values()),
+                        count=sum(e[_COUNT_IDX] for e in aggregated.values()),
+                    )
                     self.cpu_data_ready.emit(MonitorData(
                         processes=processes,
                         history=cpu_monitor.get_history(),
@@ -828,12 +835,19 @@ class SharedDataCollector(QThread):
                         max_display=cpu_monitor.get_max_display("MB"),
                         hwinfo=hwinfo,
                         stats=cpu_monitor.stats,
+                        process_totals=cpu_totals,
                     ))
 
                 if need_mem:
                     unit = mem_settings.get('memory_unit', 'MB')
                     processes = mem_monitor._extract_mem_top(aggregated, total_rss, mem_settings['current_rows'])
                     mem_monitor.update_history(processes)
+                    mem_totals = ProcessInfo(
+                        name="Total",
+                        value=total_rss,
+                        vms=sum(e[_VMS_IDX] for e in aggregated.values()),
+                        count=sum(e[_COUNT_IDX] for e in aggregated.values()),
+                    )
                     self.memory_data_ready.emit(MonitorData(
                         processes=processes,
                         history=mem_monitor.get_history(),
@@ -841,6 +855,7 @@ class SharedDataCollector(QThread):
                         max_display=mem_monitor.get_max_display(unit),
                         hwinfo=hwinfo,
                         stats=mem_monitor.stats,
+                        process_totals=mem_totals,
                     ))
 
             self.msleep(interval)

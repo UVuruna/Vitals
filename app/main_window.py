@@ -542,7 +542,14 @@ class BaseMonitorWindow(QMainWindow):
         pause_action.triggered.connect(self._toggle_pause)
         view_menu.addAction(pause_action)
 
-    def _create_table(self, rows: int, mode_cols: str = "none", has_time: bool = False, bg_color: str = None) -> QTableWidget:
+    def _make_total_item(self, text: str) -> QTableWidgetItem:
+        """Create a styled QTableWidgetItem for the Σ total row."""
+        item = QTableWidgetItem(text)
+        item.setBackground(QColor(self.HEADER_COLOR))
+        item.setForeground(QColor(self.TEXT_MUTED))
+        return item
+
+    def _create_table(self, rows: int, mode_cols: str = "none", has_time: bool = False, bg_color: str = None, has_total_row: bool = False) -> QTableWidget:
         """Create a styled table.
 
         Args:
@@ -567,7 +574,7 @@ class BaseMonitorWindow(QMainWindow):
             cols += 1
             headers.append("Time")
 
-        table = QTableWidget(rows, cols)
+        table = QTableWidget(rows + 1 if has_total_row else rows, cols)
         table.setHorizontalHeaderLabels(headers)
         table.verticalHeader().setVisible(False)
         table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
@@ -760,7 +767,8 @@ class CPUWindow(BaseMonitorWindow):
             self._cpu_settings.current_rows,
             mode_cols="cpu",
             has_time=False,
-            bg_color=self.CURRENT_BG
+            bg_color=self.CURRENT_BG,
+            has_total_row=True,
         )
         self.history_table = self._create_table(
             self._cpu_settings.history_rows,
@@ -812,8 +820,9 @@ class CPUWindow(BaseMonitorWindow):
 
         # Update current table
         color_mgr = ProcessColorManager()
+        total_row = self.current_table.rowCount() - 1
         for row, proc in enumerate(data.processes):
-            if row >= self.current_table.rowCount():
+            if row >= total_row:
                 break
 
             self.current_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
@@ -834,10 +843,23 @@ class CPUWindow(BaseMonitorWindow):
             self.current_table.setItem(row, 3, QTableWidgetItem(str(proc.count)))
             self.current_table.setItem(row, 4, QTableWidgetItem(str(proc.threads) if proc.threads > 0 else ""))
 
-        # Clear empty rows
-        for row in range(len(data.processes), self.current_table.rowCount()):
+        # Clear empty rows (excluding Σ total row)
+        for row in range(len(data.processes), total_row):
             for col in range(self.current_table.columnCount()):
                 self.current_table.setItem(row, col, QTableWidgetItem(""))
+
+        # Fill Σ total row
+        totals = data.process_totals
+        self.current_table.setItem(total_row, 0, self._make_total_item("Σ"))
+        self.current_table.setItem(total_row, 1, self._make_total_item("Total"))
+        usage_str = monitor.format_value(totals.value, "MB") if monitor else f"{totals.value:.0f}"
+        usage_item = self._make_total_item(usage_str)
+        if monitor:
+            pct = totals.value / (monitor.cpu_threads * 100) * 100
+            usage_item.setForeground(color_mgr.get_value_color(pct, "cpu_all"))
+        self.current_table.setItem(total_row, 2, usage_item)
+        self.current_table.setItem(total_row, 3, self._make_total_item(str(totals.count)))
+        self.current_table.setItem(total_row, 4, self._make_total_item(str(totals.threads) if totals.threads > 0 else ""))
 
         # Update history table
         for row, record in enumerate(data.history):
@@ -976,7 +998,8 @@ class MemoryWindow(BaseMonitorWindow):
             self._memory_settings.current_rows,
             mode_cols="mem",
             has_time=False,
-            bg_color=self.CURRENT_BG
+            bg_color=self.CURRENT_BG,
+            has_total_row=True,
         )
         self.history_table = self._create_table(
             self._memory_settings.history_rows,
@@ -1032,8 +1055,9 @@ class MemoryWindow(BaseMonitorWindow):
 
         # Update current table
         color_mgr = ProcessColorManager()
+        total_row = self.current_table.rowCount() - 1
         for row, proc in enumerate(data.processes):
-            if row >= self.current_table.rowCount():
+            if row >= total_row:
                 break
 
             self.current_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
@@ -1059,10 +1083,28 @@ class MemoryWindow(BaseMonitorWindow):
                 total_item.setForeground(color_mgr.get_value_color(total_pct, "memory_total"))
             self.current_table.setItem(row, 3, total_item)
 
-        # Clear empty rows
-        for row in range(len(data.processes), self.current_table.rowCount()):
+        # Clear empty rows (excluding Σ total row)
+        for row in range(len(data.processes), total_row):
             for col in range(self.current_table.columnCount()):
                 self.current_table.setItem(row, col, QTableWidgetItem(""))
+
+        # Fill Σ total row
+        totals = data.process_totals
+        self.current_table.setItem(total_row, 0, self._make_total_item("Σ"))
+        self.current_table.setItem(total_row, 1, self._make_total_item("Total"))
+        usage_str = monitor.format_value(totals.value, unit) if monitor else f"{totals.value:.0f}"
+        usage_item = self._make_total_item(usage_str)
+        if monitor:
+            pct = totals.value / monitor.ram_bytes * 100
+            usage_item.setForeground(color_mgr.get_value_color(pct, "memory_all"))
+        self.current_table.setItem(total_row, 2, usage_item)
+        total_all_bytes = totals.value + totals.vms
+        total_all_str = monitor.format_value(total_all_bytes, unit) if monitor else ""
+        total_all_item = self._make_total_item(total_all_str)
+        if monitor and self._commit_limit_bytes > 0:
+            total_all_pct = total_all_bytes / self._commit_limit_bytes * 100
+            total_all_item.setForeground(color_mgr.get_value_color(total_all_pct, "memory_all_total"))
+        self.current_table.setItem(total_row, 3, total_all_item)
 
         # Update history table
         for row, record in enumerate(data.history):

@@ -55,6 +55,15 @@ _DEFAULT_VALUE_RANGES = [
     {"max_pct": 100, "color": "#C85555"},
 ]
 
+# Default thresholds for "all processes" total row (higher thresholds since it's a sum)
+_DEFAULT_VALUE_RANGES_ALL = [
+    {"max_pct": 20,  "color": "#5B9BD5"},
+    {"max_pct": 35,  "color": "#6AAF6A"},
+    {"max_pct": 50,  "color": "#C8B040"},
+    {"max_pct": 75,  "color": "#D4803A"},
+    {"max_pct": 100, "color": "#C85555"},
+]
+
 # Near-white for processes with no company information at all (text color in table)
 _DEFAULT_NO_COMPANY_COLOR = "#FFFFFF"
 
@@ -216,6 +225,11 @@ class ProcessColorManager:
         self._value_ranges_memory: list[tuple[float, QColor]] = []
         self._value_ranges_memory_total: list[tuple[float, QColor]] = []
 
+        # Value color ranges for the Σ (all processes) total row
+        self._value_ranges_cpu_all: list[tuple[float, QColor]] = []
+        self._value_ranges_memory_all: list[tuple[float, QColor]] = []
+        self._value_ranges_memory_all_total: list[tuple[float, QColor]] = []
+
         self._load_config()
 
     def _load_config(self):
@@ -244,6 +258,15 @@ class ProcessColorManager:
         self._value_ranges_cpu = list(parsed_ranges)
         self._value_ranges_memory = list(parsed_ranges)
         self._value_ranges_memory_total = list(parsed_ranges)
+
+        # All-processes total row ranges use higher default thresholds
+        parsed_ranges_all = [
+            (float(entry["max_pct"]), QColor(entry["color"]))
+            for entry in _DEFAULT_VALUE_RANGES_ALL
+        ]
+        self._value_ranges_cpu_all = list(parsed_ranges_all)
+        self._value_ranges_memory_all = list(parsed_ranges_all)
+        self._value_ranges_memory_all_total = list(parsed_ranges_all)
 
         # Load user-set hue params from last_setup.json (overrides defaults if present)
         setup_path = _get_last_setup_path()
@@ -362,8 +385,14 @@ class ProcessColorManager:
         with QMutexLocker(self._mutex):
             if mode == "cpu":
                 ranges = self._value_ranges_cpu
+            elif mode == "cpu_all":
+                ranges = self._value_ranges_cpu_all
             elif mode == "memory_total":
                 ranges = self._value_ranges_memory_total
+            elif mode == "memory_all":
+                ranges = self._value_ranges_memory_all
+            elif mode == "memory_all_total":
+                ranges = self._value_ranges_memory_all_total
             else:
                 ranges = self._value_ranges_memory
             colors = [color for _, color in ranges]
@@ -371,8 +400,14 @@ class ProcessColorManager:
             new_ranges.append((100.0, colors[-1]))
             if mode == "cpu":
                 self._value_ranges_cpu = new_ranges
+            elif mode == "cpu_all":
+                self._value_ranges_cpu_all = new_ranges
             elif mode == "memory_total":
                 self._value_ranges_memory_total = new_ranges
+            elif mode == "memory_all":
+                self._value_ranges_memory_all = new_ranges
+            elif mode == "memory_all_total":
+                self._value_ranges_memory_all_total = new_ranges
             else:
                 self._value_ranges_memory = new_ranges
 
@@ -385,8 +420,14 @@ class ProcessColorManager:
         with QMutexLocker(self._mutex):
             if mode == "cpu":
                 ranges = self._value_ranges_cpu
+            elif mode == "cpu_all":
+                ranges = self._value_ranges_cpu_all
             elif mode == "memory_total":
                 ranges = self._value_ranges_memory_total
+            elif mode == "memory_all":
+                ranges = self._value_ranges_memory_all
+            elif mode == "memory_all_total":
+                ranges = self._value_ranges_memory_all_total
             else:
                 ranges = self._value_ranges_memory
             return list(ranges)
@@ -443,8 +484,14 @@ class ProcessColorManager:
         with QMutexLocker(self._mutex):
             if mode == "cpu":
                 ranges = self._value_ranges_cpu
+            elif mode == "cpu_all":
+                ranges = self._value_ranges_cpu_all
             elif mode == "memory_total":
                 ranges = self._value_ranges_memory_total
+            elif mode == "memory_all":
+                ranges = self._value_ranges_memory_all
+            elif mode == "memory_all_total":
+                ranges = self._value_ranges_memory_all_total
             else:
                 ranges = self._value_ranges_memory
 

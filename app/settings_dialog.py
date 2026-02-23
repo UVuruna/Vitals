@@ -819,7 +819,7 @@ class CPUSettingsDialog(QDialog):
         super().__init__(parent)
         self.settings = settings or CPUSettings()
         self.setWindowTitle("CPU Monitor - Settings")
-        self.resize(400, 500)
+        self.resize(400, 600)
 
         icon_path = get_base_path() / "assets" / "icon.ico"
         if icon_path.exists():
@@ -943,8 +943,18 @@ class CPUSettingsDialog(QDialog):
         self._color_scale = _build_color_section(
             layout, self._make_label, mode="cpu",
             max_info=f"{cpu_threads * 100}%",
+            show_legend=False,
         )
-        self._color_scale._legend_btn.clicked.connect(self._show_legend)
+
+        layout.addSpacing(4)
+
+        # Color Settings for Σ total row (all processes combined)
+        self._color_scale_all = _build_color_section(
+            layout, self._make_label, mode="cpu_all",
+            title="All Usage Color Settings",
+            max_info=f"{cpu_threads * 100}%",
+        )
+        self._color_scale_all._legend_btn.clicked.connect(self._show_legend)
 
         layout.addStretch()
 
@@ -964,6 +974,7 @@ class CPUSettingsDialog(QDialog):
 
     def accept(self):
         ProcessColorManager().update_value_thresholds(self._color_scale.thresholds, "cpu")
+        ProcessColorManager().update_value_thresholds(self._color_scale_all.thresholds, "cpu_all")
         super().accept()
 
     def _load_settings(self):
@@ -992,7 +1003,7 @@ class MemorySettingsDialog(QDialog):
         super().__init__(parent)
         self.settings = settings or MemorySettings()
         self.setWindowTitle("Memory Monitor - Settings")
-        self.resize(400, 700)
+        self.resize(400, 900)
 
         icon_path = get_base_path() / "assets" / "icon.ico"
         if icon_path.exists():
@@ -1140,7 +1151,22 @@ class MemorySettingsDialog(QDialog):
             title="Total Color Settings", max_info=_format_bytes_in_unit(commit_limit_bytes, unit),
         )
 
-        # Company Legend button at the end (after both color scales)
+        layout.addSpacing(4)
+
+        # Color scales for Σ total row (all processes combined)
+        self._color_scale_all_usage = _build_color_section(
+            layout, self._make_label, mode="memory_all", show_legend=False,
+            title="All Usage Color Settings", max_info=_format_bytes_in_unit(ram_bytes, unit),
+        )
+
+        layout.addSpacing(4)
+
+        self._color_scale_all_total = _build_color_section(
+            layout, self._make_label, mode="memory_all_total", show_legend=False,
+            title="All Total Color Settings", max_info=_format_bytes_in_unit(commit_limit_bytes, unit),
+        )
+
+        # Company Legend button at the end (after all color scales)
         legend_row = QHBoxLayout()
         legend_row.addStretch()
         legend_btn = _make_legend_btn()
@@ -1167,6 +1193,8 @@ class MemorySettingsDialog(QDialog):
     def accept(self):
         ProcessColorManager().update_value_thresholds(self._color_scale_usage.thresholds, "memory")
         ProcessColorManager().update_value_thresholds(self._color_scale_total.thresholds, "memory_total")
+        ProcessColorManager().update_value_thresholds(self._color_scale_all_usage.thresholds, "memory_all")
+        ProcessColorManager().update_value_thresholds(self._color_scale_all_total.thresholds, "memory_all_total")
         super().accept()
 
     def _load_settings(self):
