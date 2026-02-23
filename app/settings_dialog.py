@@ -1148,7 +1148,7 @@ class MemorySettingsDialog(QDialog):
         # Total color scale (RSS+VMS vs CommitLimit)
         self._color_scale_total = _build_color_section(
             layout, self._make_label, mode="memory_total", show_legend=False,
-            title="Total Color Settings", max_info=_format_bytes_in_unit(commit_limit_bytes, unit),
+            title="Commit Color Settings", max_info=_format_bytes_in_unit(commit_limit_bytes, unit),
         )
 
         layout.addSpacing(4)
@@ -1163,7 +1163,7 @@ class MemorySettingsDialog(QDialog):
 
         self._color_scale_all_total = _build_color_section(
             layout, self._make_label, mode="memory_all_total", show_legend=False,
-            title="All Total Color Settings", max_info=_format_bytes_in_unit(commit_limit_bytes, unit),
+            title="All Commit Color Settings", max_info=_format_bytes_in_unit(commit_limit_bytes, unit),
         )
 
         # Company Legend button at the end (after all color scales)

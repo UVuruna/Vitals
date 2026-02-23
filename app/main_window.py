@@ -545,8 +545,9 @@ class BaseMonitorWindow(QMainWindow):
     def _make_total_item(self, text: str) -> QTableWidgetItem:
         """Create a styled QTableWidgetItem for the Σ total row."""
         item = QTableWidgetItem(text)
-        item.setBackground(QColor(self.HEADER_COLOR))
-        item.setForeground(QColor(self.TEXT_MUTED))
+        item.setBackground(QColor(self.BG_COLOR))
+        item.setForeground(QColor(self.TEXT))
+        item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         return item
 
     def _create_table(self, rows: int, mode_cols: str = "none", has_time: bool = False, bg_color: str = None, has_total_row: bool = False) -> QTableWidget:
@@ -569,7 +570,7 @@ class BaseMonitorWindow(QMainWindow):
             headers += ["Parallel", "Threads"]
         elif mode_cols == "mem":
             cols += 1
-            headers.append("Total")
+            headers.append("Commit")
         if has_time:
             cols += 1
             headers.append("Time")
