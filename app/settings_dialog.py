@@ -112,10 +112,12 @@ class ColorScaleWidget(QWidget):
         colors: list,       # 5 QColors for the 5 zones
         thresholds: list,   # 4 int values in ascending order [t1, t2, t3, t4]
         parent: Optional[QWidget] = None,
+        scale_max: int = 100,
     ):
         super().__init__(parent)
         self._colors = list(colors)
         self._thresholds = list(thresholds)
+        self._scale_max = scale_max
         self._drag_idx: Optional[int] = None
         self.setMinimumHeight(56)
         self.setMouseTracking(True)
@@ -132,11 +134,11 @@ class ColorScaleWidget(QWidget):
         return self._bar_x2() - self._bar_x1()
 
     def _pct_to_x(self, pct: int) -> float:
-        return self._bar_x1() + pct / 100.0 * self._bar_w()
+        return self._bar_x1() + pct / self._scale_max * self._bar_w()
 
     def _x_to_pct(self, x: float) -> int:
-        raw = (x - self._bar_x1()) / self._bar_w() * 100
-        return max(0, min(100, round(raw)))
+        raw = (x - self._bar_x1()) / self._bar_w() * self._scale_max
+        return max(0, min(self._scale_max, round(raw)))
 
     # --- painting ---
 
@@ -150,10 +152,10 @@ class ColorScaleWidget(QWidget):
         bar_w = self._bar_w()
 
         # Draw 5 color segments
-        pcts = [0] + self._thresholds + [100]
+        pcts = [0] + self._thresholds + [self._scale_max]
         for i, color in enumerate(self._colors):
-            x1 = bar_x1 + pcts[i] / 100.0 * bar_w
-            x2 = bar_x1 + pcts[i + 1] / 100.0 * bar_w
+            x1 = bar_x1 + pcts[i] / self._scale_max * bar_w
+            x2 = bar_x1 + pcts[i + 1] / self._scale_max * bar_w
             painter.fillRect(QRectF(x1, bar_y, max(x2 - x1, 0), bar_h), color)
 
         # Draw 4 diamond handles (each colored with the zone it ends)
@@ -205,7 +207,7 @@ class ColorScaleWidget(QWidget):
             return
         pct = self._x_to_pct(event.position().x())
         lo = (self._thresholds[self._drag_idx - 1] + 1) if self._drag_idx > 0 else 1
-        hi = (self._thresholds[self._drag_idx + 1] - 1) if self._drag_idx < len(self._thresholds) - 1 else 99
+        hi = (self._thresholds[self._drag_idx + 1] - 1) if self._drag_idx < len(self._thresholds) - 1 else self._scale_max - 1
         self._thresholds[self._drag_idx] = max(lo, min(hi, pct))
         self.update()
         self.thresholds_changed.emit(list(self._thresholds))
@@ -422,6 +424,7 @@ def _build_color_section(
     mode: str = "cpu",
     title: str = "Color Settings",
     max_info: str = "",
+    scale_max: int = 100,
 ) -> 'ColorScaleWidget':
     """
     Add Color Settings label, ColorScaleWidget, and optionally Legend button to layout.
@@ -447,7 +450,7 @@ def _build_color_section(
     colors = [color for _, color in value_ranges]
     thresholds = [int(t) for t, _ in value_ranges[:-1]]  # first 4; last is always 100
 
-    scale_widget = ColorScaleWidget(colors, thresholds)
+    scale_widget = ColorScaleWidget(colors, thresholds, scale_max=scale_max)
     layout.addWidget(scale_widget)
 
     if show_legend:
@@ -944,6 +947,7 @@ class CPUSettingsDialog(QDialog):
             layout, self._make_label, mode="cpu",
             max_info=f"{cpu_threads * 100}%",
             show_legend=False,
+            scale_max=50,
         )
 
         layout.addSpacing(4)
@@ -1141,14 +1145,16 @@ class MemorySettingsDialog(QDialog):
         self._color_scale_usage = _build_color_section(
             layout, self._make_label, mode="memory", show_legend=False,
             title="Usage Color Settings", max_info=_format_bytes_in_unit(ram_bytes, unit),
+            scale_max=50,
         )
 
         layout.addSpacing(4)
 
-        # Total color scale (RSS+VMS vs CommitLimit)
+        # Total color scale (Commit Size vs CommitLimit)
         self._color_scale_total = _build_color_section(
             layout, self._make_label, mode="memory_total", show_legend=False,
             title="Commit Color Settings", max_info=_format_bytes_in_unit(commit_limit_bytes, unit),
+            scale_max=50,
         )
 
         layout.addSpacing(4)

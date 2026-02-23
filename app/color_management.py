@@ -51,7 +51,7 @@ _DEFAULT_VALUE_RANGES = [
     {"max_pct": 3,   "color": "#5B9BD5"},
     {"max_pct": 8,   "color": "#6AAF6A"},
     {"max_pct": 20,  "color": "#C8B040"},
-    {"max_pct": 50,  "color": "#D4803A"},
+    {"max_pct": 40,  "color": "#D4803A"},
     {"max_pct": 100, "color": "#C85555"},
 ]
 
