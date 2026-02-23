@@ -17,7 +17,7 @@ Unicode true
 !define APP_NAME "PMUsage"
 !define APP_PUBLISHER "UVuruna"
 !define APP_EXE "PMUsage.exe"
-!define APP_VERSION "1.1.640"
+; APP_VERSION is passed from build.py via /DAPP_VERSION flag (reads setup/app_info.json)
 !define APP_DESCRIPTION "Real-time CPU and Memory usage monitor"
 
 ; Registry key for uninstall info

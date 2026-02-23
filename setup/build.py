@@ -16,6 +16,7 @@ Usage:
     python setup/build.py
 """
 
+import json
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,8 @@ ICON_PATH = PROJECT_DIR / "assets" / "icon.ico"
 CERT_PATH = SETUP_DIR / "cert" / "PMUsage.pfx"
 PASSWORD_PATH = SETUP_DIR / "cert" / "password.txt"
 NSI_PATH = SETUP_DIR / "installer.nsi"
+APP_INFO_PATH = SETUP_DIR / "app_info.json"
+VERSION_INFO_PATH = SETUP_DIR / "version_info.txt"
 
 
 def _load_password() -> str:
@@ -43,9 +46,62 @@ def _load_password() -> str:
     return PASSWORD_PATH.read_text(encoding="utf-8").strip()
 
 
+def _load_app_info() -> dict:
+    return json.loads(APP_INFO_PATH.read_text(encoding="utf-8"))
+
+
 CERT_PASSWORD = _load_password()
-APP_NAME = "PMUsage"
+APP_INFO = _load_app_info()
+APP_NAME = APP_INFO["app_name"]
 ENTRY_POINT = PROJECT_DIR / "main.py"
+
+
+def _version_tuple(version: str) -> tuple[int, int, int, int]:
+    parts = version.split(".")
+    nums = [int(p) for p in parts]
+    while len(nums) < 4:
+        nums.append(0)
+    return tuple(nums[:4])
+
+
+def generate_version_info():
+    step("0/4  Generating version_info.txt from app_info.json")
+
+    v = APP_INFO["version"]
+    vt = _version_tuple(v)
+
+    content = f"""\
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={vt},
+    prodvers={vt},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        u'040904B0',
+        [StringStruct(u'CompanyName', u'{APP_INFO["company"]}'),
+         StringStruct(u'FileDescription', u'{APP_INFO["description"]}'),
+         StringStruct(u'FileVersion', u'{v}'),
+         StringStruct(u'InternalName', u'{APP_INFO["app_name"]}'),
+         StringStruct(u'LegalCopyright', u'{APP_INFO["copyright"]}'),
+         StringStruct(u'OriginalFilename', u'{APP_INFO["app_name"]}.exe'),
+         StringStruct(u'ProductName', u'{APP_INFO["product_name"]}'),
+         StringStruct(u'ProductVersion', u'{v}')])
+      ]),
+    VarFileInfo([VarStruct(u'Translation', [0x0409, 1200])])
+  ]
+)
+"""
+    VERSION_INFO_PATH.write_text(content, encoding="utf-8")
+    print(f"  Written: {VERSION_INFO_PATH}")
+    print(f"  Version: {v}  Company: {APP_INFO['company']}")
 
 
 def step(msg: str):
@@ -112,6 +168,7 @@ def build_pyinstaller():
         "--name", APP_NAME,
         "--icon", str(ICON_PATH),
         "--windowed",
+        "--version-file", str(VERSION_INFO_PATH),
         # Bundle assets and config
         "--add-data", f"{PROJECT_DIR / 'assets'};assets",
         "--add-data", f"{PROJECT_DIR / 'config'};config",
@@ -215,6 +272,7 @@ def build_installer():
         f"/DPROJECT_DIR={PROJECT_DIR}",
         f"/DDIST_DIR={DIST_DIR}",
         f"/DSETUP_DIR={SETUP_DIR}",
+        f"/DAPP_VERSION={APP_INFO['version']}",
         str(NSI_PATH),
     ]
 
@@ -242,6 +300,7 @@ def main():
         print(f"ERROR: SVG icon not found: {svg_path}")
         sys.exit(1)
 
+    generate_version_info()
     generate_ico()
     exe_path = build_pyinstaller()
     sign_exe(exe_path)
