@@ -303,9 +303,9 @@ class CompanyLegendDialog(QDialog):
         self.setPalette(palette)
         self.setAutoFillBackground(True)
 
-        self._setup_ui()
-
         self._other_expanded = False
+
+        self._setup_ui()
 
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(1000)

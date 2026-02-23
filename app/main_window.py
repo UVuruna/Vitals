@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QSplitterHandle,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -42,6 +43,48 @@ from .settings_dialog import (
     MemorySettingsDialog,
     get_last_setup_path,
 )
+
+
+class TotalRowDelegate(QStyledItemDelegate):
+    """Draws the Σ total row with a distinct header background color.
+
+    QSS-styled tables ignore QTableWidgetItem.setBackground(); this delegate
+    bypasses the style engine and paints the background directly.
+    """
+
+    ROLE = Qt.ItemDataRole.UserRole + 100
+
+    def __init__(self, bg_color: str, text_color: str, parent=None):
+        super().__init__(parent)
+        self._bg = QColor(bg_color)
+        self._text = QColor(text_color)
+
+    def paint(self, painter, option, index):
+        if not index.data(self.ROLE):
+            super().paint(painter, option, index)
+            return
+
+        painter.save()
+        painter.fillRect(option.rect, self._bg)
+
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        fg_brush = index.data(Qt.ItemDataRole.ForegroundRole)
+        if fg_brush is not None:
+            painter.setPen(fg_brush.color() if hasattr(fg_brush, 'color') else QColor(fg_brush))
+        else:
+            painter.setPen(self._text)
+
+        font = index.data(Qt.ItemDataRole.FontRole)
+        if font is not None:
+            painter.setFont(font)
+
+        rect = option.rect.adjusted(8, 0, -8, 0)
+        align_data = index.data(Qt.ItemDataRole.TextAlignmentRole)
+        align = int(align_data) if align_data is not None else int(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        painter.drawText(rect, align, text)
+        painter.restore()
 
 
 class DoubleClickSplitterHandle(QSplitterHandle):
@@ -545,7 +588,7 @@ class BaseMonitorWindow(QMainWindow):
     def _make_total_item(self, text: str) -> QTableWidgetItem:
         """Create a styled QTableWidgetItem for the Σ total row."""
         item = QTableWidgetItem(text)
-        item.setBackground(QColor(self.HEADER_COLOR))
+        item.setData(TotalRowDelegate.ROLE, True)
         item.setForeground(QColor(self.TEXT))
         item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         return item
@@ -652,6 +695,10 @@ class BaseMonitorWindow(QMainWindow):
             col_idx += 1
         if has_time:
             table.resizeColumnToContents(col_idx)
+
+        # Enable hover events for tooltips and install delegate for total row background
+        table.viewport().setMouseTracking(True)
+        table.setItemDelegate(TotalRowDelegate(self.HEADER_COLOR, self.TEXT, table))
 
         return table
 
