@@ -51,16 +51,25 @@ _DEFAULT_VALUE_RANGES = [
     {"max_pct": 3,   "color": "#5B9BD5"},
     {"max_pct": 8,   "color": "#6AAF6A"},
     {"max_pct": 20,  "color": "#C8B040"},
-    {"max_pct": 40,  "color": "#D4803A"},
+    {"max_pct": 50,  "color": "#D4803A"},
     {"max_pct": 100, "color": "#C85555"},
 ]
 
-# Default thresholds for "all processes" total row (higher thresholds since it's a sum)
-_DEFAULT_VALUE_RANGES_ALL = [
+# Default thresholds for CPU Σ total row
+_DEFAULT_VALUE_RANGES_CPU_ALL = [
     {"max_pct": 20,  "color": "#5B9BD5"},
-    {"max_pct": 35,  "color": "#6AAF6A"},
-    {"max_pct": 50,  "color": "#C8B040"},
-    {"max_pct": 75,  "color": "#D4803A"},
+    {"max_pct": 40,  "color": "#6AAF6A"},
+    {"max_pct": 60,  "color": "#C8B040"},
+    {"max_pct": 80,  "color": "#D4803A"},
+    {"max_pct": 100, "color": "#C85555"},
+]
+
+# Default thresholds for Memory Σ total row (Usage and Commit)
+_DEFAULT_VALUE_RANGES_MEM_ALL = [
+    {"max_pct": 35,  "color": "#5B9BD5"},
+    {"max_pct": 50,  "color": "#6AAF6A"},
+    {"max_pct": 65,  "color": "#C8B040"},
+    {"max_pct": 80,  "color": "#D4803A"},
     {"max_pct": 100, "color": "#C85555"},
 ]
 
@@ -259,14 +268,18 @@ class ProcessColorManager:
         self._value_ranges_memory = list(parsed_ranges)
         self._value_ranges_memory_total = list(parsed_ranges)
 
-        # All-processes total row ranges use higher default thresholds
-        parsed_ranges_all = [
+        # All-processes total row ranges use separate defaults per mode
+        parsed_ranges_cpu_all = [
             (float(entry["max_pct"]), QColor(entry["color"]))
-            for entry in _DEFAULT_VALUE_RANGES_ALL
+            for entry in _DEFAULT_VALUE_RANGES_CPU_ALL
         ]
-        self._value_ranges_cpu_all = list(parsed_ranges_all)
-        self._value_ranges_memory_all = list(parsed_ranges_all)
-        self._value_ranges_memory_all_total = list(parsed_ranges_all)
+        parsed_ranges_mem_all = [
+            (float(entry["max_pct"]), QColor(entry["color"]))
+            for entry in _DEFAULT_VALUE_RANGES_MEM_ALL
+        ]
+        self._value_ranges_cpu_all = list(parsed_ranges_cpu_all)
+        self._value_ranges_memory_all = list(parsed_ranges_mem_all)
+        self._value_ranges_memory_all_total = list(parsed_ranges_mem_all)
 
         # Load user-set hue params and color thresholds from last_setup.json
         setup_path = _get_last_setup_path()
