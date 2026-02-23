@@ -95,9 +95,15 @@ def _get_config_path() -> Path:
 
 
 def _get_last_setup_path() -> Path:
-    """Resolve config/last_setup.json for user-writable storage."""
+    """Resolve config/last_setup.json for user-writable storage.
+
+    Frozen exe: saves to %APPDATA%\PMUsage\ — always writable, no admin needed.
+    Dev mode:   saves to project root config\ folder.
+    """
     if getattr(sys, 'frozen', False):
-        base = Path(sys.executable).parent  # exe directory, writable
+        import os
+        appdata = os.environ.get('APPDATA') or os.environ.get('LOCALAPPDATA')
+        base = Path(appdata) / 'PMUsage' if appdata else Path(sys.executable).parent
     else:
         base = Path(__file__).parent.parent
     return base / "config" / "last_setup.json"
@@ -387,6 +393,11 @@ class ProcessColorManager:
 
         return _company_hue_color(i, total, sat, light)
 
+    def get_company_name(self, name: str) -> Optional[str]:
+        """Return the resolved company name for a process display name, or None if unknown."""
+        with QMutexLocker(self._mutex):
+            return self._company_cache.get(name)
+
     def get_hue_params(self) -> tuple[float, float]:
         """Return current (saturation, lightness) for multi-company hue colors."""
         with QMutexLocker(self._mutex):
@@ -532,6 +543,14 @@ class ProcessColorManager:
                 result.append(("Unknown", QColor("#ffffff"), no_company_count))
 
             return result
+
+    def get_singleton_companies(self) -> list[str]:
+        """Return sorted list of company names that appear with exactly 1 active process name."""
+        with QMutexLocker(self._mutex):
+            return sorted(
+                company for company, count in self._company_counts.items()
+                if count == 1
+            )
 
     def get_value_color(self, pct: float, mode: str) -> QColor:
         """

@@ -305,6 +305,8 @@ class CompanyLegendDialog(QDialog):
 
         self._setup_ui()
 
+        self._other_expanded = False
+
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(1000)
         self._refresh_timer.timeout.connect(self._refresh_legend)
@@ -412,6 +414,8 @@ class CompanyLegendDialog(QDialog):
             content_layout.addWidget(empty)
         else:
             for company, color, proc_count in legend:
+                is_other = company == "Other"
+
                 row_w = QWidget()
                 row_w.setStyleSheet("background: transparent;")
                 row = QHBoxLayout(row_w)
@@ -436,11 +440,45 @@ class CompanyLegendDialog(QDialog):
                 count_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 row.addWidget(count_lbl)
 
+                if is_other:
+                    arrow = "▼" if self._other_expanded else "▶"
+                    toggle_btn = QPushButton(arrow)
+                    toggle_btn.setFixedSize(20, 20)
+                    toggle_btn.setFont(QFont("Segoe UI", 8))
+                    toggle_btn.setStyleSheet("""
+                        QPushButton {
+                            background: transparent; color: #888888;
+                            border: none; padding: 0;
+                        }
+                        QPushButton:hover { color: #ffffff; }
+                    """)
+                    toggle_btn.clicked.connect(self._toggle_other)
+                    row.addWidget(toggle_btn)
+
                 content_layout.addWidget(row_w)
+
+                if is_other and self._other_expanded:
+                    for singleton in ProcessColorManager().get_singleton_companies():
+                        sub_w = QWidget()
+                        sub_w.setStyleSheet("background: transparent;")
+                        sub_row = QHBoxLayout(sub_w)
+                        sub_row.setContentsMargins(28, 0, 2, 0)
+                        sub_row.setSpacing(10)
+
+                        sub_lbl = QLabel(singleton)
+                        sub_lbl.setFont(QFont("Segoe UI", 9))
+                        sub_lbl.setStyleSheet("color: #aaaaaa; background: transparent;")
+                        sub_row.addWidget(sub_lbl, 1)
+
+                        content_layout.addWidget(sub_w)
 
         content_layout.addStretch()
         self._scroll.setWidget(content)
         self._legend_data = legend
+
+    def _toggle_other(self):
+        self._other_expanded = not self._other_expanded
+        self._rebuild_legend_content()
 
     def _refresh_legend(self):
         legend = ProcessColorManager().get_legend()

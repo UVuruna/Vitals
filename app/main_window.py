@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QEvent
 
 
 def get_base_path() -> Path:
@@ -545,7 +545,7 @@ class BaseMonitorWindow(QMainWindow):
     def _make_total_item(self, text: str) -> QTableWidgetItem:
         """Create a styled QTableWidgetItem for the Σ total row."""
         item = QTableWidgetItem(text)
-        item.setBackground(QColor(self.BG_COLOR))
+        item.setBackground(QColor(self.HEADER_COLOR))
         item.setForeground(QColor(self.TEXT))
         item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         return item
@@ -578,7 +578,8 @@ class BaseMonitorWindow(QMainWindow):
         table = QTableWidget(rows + 1 if has_total_row else rows, cols)
         table.setHorizontalHeaderLabels(headers)
         table.verticalHeader().setVisible(False)
-        table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setShowGrid(False)
 
@@ -610,10 +611,15 @@ class BaseMonitorWindow(QMainWindow):
                 color: {self.TEXT};
                 border: none;
                 border-radius: 6px;
+                outline: none;
             }}
             QTableWidget::item {{
                 padding: 4px 8px;
                 border-bottom: 1px solid {self.HEADER_COLOR};
+            }}
+            QTableWidget::item:selected {{
+                background-color: {self.HEADER_COLOR};
+                color: {self.TEXT};
             }}
             QHeaderView::section {{
                 background-color: {self.HEADER_COLOR};
@@ -652,6 +658,40 @@ class BaseMonitorWindow(QMainWindow):
     def _rebuild_tables(self):
         """Rebuild tables based on current settings."""
         raise NotImplementedError("Subclasses must implement _rebuild_tables()")
+
+    def _connect_table_selection(self):
+        """Connect row-selection signals after table creation or rebuild."""
+        cur = self.current_table
+        hist = self.history_table
+        cur.cellClicked.connect(
+            lambda r, c, t=cur: self._on_cell_clicked(t, r, has_total_row=True)
+        )
+        hist.cellClicked.connect(
+            lambda r, c, t=hist: self._on_cell_clicked(t, r, has_total_row=False)
+        )
+        cur.viewport().installEventFilter(self)
+        hist.viewport().installEventFilter(self)
+
+    def _on_cell_clicked(self, table: QTableWidget, row: int, has_total_row: bool):
+        """Toggle row highlight; Σ total row is never selectable."""
+        if has_total_row and row == table.rowCount() - 1:
+            table.clearSelection()
+            return
+        prev = getattr(table, '_last_clicked_row', None)
+        if prev == row:
+            table.clearSelection()
+            table._last_clicked_row = None
+        else:
+            table._last_clicked_row = row
+
+    def eventFilter(self, obj, event):
+        """Clear row selection when clicking empty space inside a table viewport."""
+        if event.type() == QEvent.Type.MouseButtonPress:
+            for table in (self.current_table, self.history_table):
+                if obj is table.viewport() and not table.indexAt(event.pos()).isValid():
+                    table.clearSelection()
+                    table._last_clicked_row = None
+        return super().eventFilter(obj, event)
 
     def _toggle_pause(self):
         """Toggle pause. Must be implemented by subclasses for proper pause/resume."""
@@ -788,6 +828,8 @@ class CPUWindow(BaseMonitorWindow):
         if self._saved_col_widths_history:
             self._apply_col_widths(self.history_table, self._saved_col_widths_history)
 
+        self._connect_table_selection()
+
     def _on_data_ready(self, data: MonitorData):
         """Handle data from collector."""
         if self.is_paused:
@@ -832,6 +874,9 @@ class CPUWindow(BaseMonitorWindow):
             proc_color = color_mgr.get_process_color(proc.name)
             if proc_color:
                 name_item.setForeground(proc_color)
+            company = color_mgr.get_company_name(proc.name)
+            if company:
+                name_item.setToolTip(company)
             self.current_table.setItem(row, 1, name_item)
 
             value_str = monitor.format_value(proc.value, "MB") if monitor else f"{proc.value:.0f}"
@@ -873,6 +918,9 @@ class CPUWindow(BaseMonitorWindow):
             proc_color = color_mgr.get_process_color(record.name)
             if proc_color:
                 name_item.setForeground(proc_color)
+            company = color_mgr.get_company_name(record.name)
+            if company:
+                name_item.setToolTip(company)
             self.history_table.setItem(row, 1, name_item)
 
             value_str = monitor.format_value(record.value, "MB") if monitor else f"{record.value:.0f}"
@@ -1019,6 +1067,8 @@ class MemoryWindow(BaseMonitorWindow):
         if self._saved_col_widths_history:
             self._apply_col_widths(self.history_table, self._saved_col_widths_history)
 
+        self._connect_table_selection()
+
     def _on_data_ready(self, data: MonitorData):
         """Handle data from collector."""
         if self.is_paused:
@@ -1067,6 +1117,9 @@ class MemoryWindow(BaseMonitorWindow):
             proc_color = color_mgr.get_process_color(proc.name)
             if proc_color:
                 name_item.setForeground(proc_color)
+            company = color_mgr.get_company_name(proc.name)
+            if company:
+                name_item.setToolTip(company)
             self.current_table.setItem(row, 1, name_item)
 
             value_str = monitor.format_value(proc.value, unit) if monitor else f"{proc.value:.0f}"
@@ -1116,6 +1169,9 @@ class MemoryWindow(BaseMonitorWindow):
             proc_color = color_mgr.get_process_color(record.name)
             if proc_color:
                 name_item.setForeground(proc_color)
+            company = color_mgr.get_company_name(record.name)
+            if company:
+                name_item.setToolTip(company)
             self.history_table.setItem(row, 1, name_item)
 
             value_str = monitor.format_value(record.value, unit) if monitor else f"{record.value:.0f}"
