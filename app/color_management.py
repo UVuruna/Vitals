@@ -74,7 +74,7 @@ _DEFAULT_VALUE_RANGES_MEM_ALL = [
 ]
 
 # Near-white for processes with no company information at all (text color in table)
-_DEFAULT_NO_COMPANY_COLOR = "#FFFFFF"
+_DEFAULT_NO_COMPANY_COLOR = "#D2D2D2"
 
 # HSL parameters for named multi-company hues (vivid pastels, readable on dark background)
 _COMPANY_HUE_SATURATION = 0.84
@@ -338,6 +338,28 @@ class ProcessColorManager:
                 # Promote to multi-company when count goes from 1 → 2.
                 # Hue = multi_idx / multi_count * 360° — recalculated dynamically.
                 if prev == 1:
+                    self._company_multi_idx[company] = self._company_multi_count
+                    self._company_multi_count += 1
+
+    def refresh_active_counts(self, active_names):
+        """Recalculate company counts from the set of currently active process names.
+
+        Called every monitor refresh cycle so counts always reflect running processes.
+        Only names already resolved in _company_cache are counted — new names are
+        handled by lookup_company and will be included on the next cycle.
+
+        Hue assignments (_company_multi_idx) are never removed once granted, keeping
+        colors stable even if a company temporarily drops to a single active process.
+        """
+        counts: dict[str, int] = {}
+        with QMutexLocker(self._mutex):
+            for name in active_names:
+                company = self._company_cache.get(name)
+                if company:
+                    counts[company] = counts.get(company, 0) + 1
+            self._company_counts = counts
+            for company, count in counts.items():
+                if count > 1 and company not in self._company_multi_idx:
                     self._company_multi_idx[company] = self._company_multi_count
                     self._company_multi_count += 1
 

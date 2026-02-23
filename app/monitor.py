@@ -816,6 +816,7 @@ class SharedDataCollector(QThread):
                 color_mgr = ProcessColorManager()
                 for proc_name, entry in aggregated.items():
                     color_mgr.lookup_company(proc_name, entry[_PID_IDX])
+                color_mgr.refresh_active_counts(aggregated.keys())
 
                 hwinfo = cpu_monitor.get_hwinfo_data() if cpu_monitor else HWiNFOData()
 

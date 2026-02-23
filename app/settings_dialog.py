@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 import psutil
-from PySide6.QtCore import Qt, Signal, QPointF, QRectF
+from PySide6.QtCore import Qt, Signal, QPointF, QRectF, QTimer
 from PySide6.QtGui import QBrush, QFont, QIcon, QPainter, QPalette, QPen, QColor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -299,6 +299,11 @@ class CompanyLegendDialog(QDialog):
 
         self._setup_ui()
 
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(1000)
+        self._refresh_timer.timeout.connect(self._refresh_legend)
+        self._refresh_timer.start()
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
@@ -310,61 +315,15 @@ class CompanyLegendDialog(QDialog):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
-        legend = ProcessColorManager().get_legend()
-        self._swatches: list[QLabel] = []
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("""
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setStyleSheet("""
             QScrollArea { border: none; background: transparent; }
             QScrollBar:vertical { background: #2a2a3e; width: 8px; border-radius: 4px; }
             QScrollBar::handle:vertical { background: #4a4a5e; border-radius: 4px; }
         """)
-
-        content = QWidget()
-        content.setStyleSheet("background: transparent;")
-        content_layout = QVBoxLayout(content)
-        content_layout.setSpacing(4)
-        content_layout.setContentsMargins(0, 0, 4, 0)
-
-        if not legend:
-            empty = QLabel("No companies detected yet.\nStart monitoring to populate.")
-            empty.setFont(QFont("Segoe UI", 10))
-            empty.setStyleSheet("color: #888888; background: transparent;")
-            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            content_layout.addWidget(empty)
-        else:
-            for company, color, proc_count in legend:
-                row_w = QWidget()
-                row_w.setStyleSheet("background: transparent;")
-                row = QHBoxLayout(row_w)
-                row.setContentsMargins(2, 1, 2, 1)
-                row.setSpacing(10)
-
-                swatch = QLabel()
-                swatch.setFixedSize(14, 14)
-                swatch.setStyleSheet(
-                    f"background-color: {color.name()}; border-radius: 3px;"
-                )
-                row.addWidget(swatch)
-                self._swatches.append(swatch)
-
-                name_lbl = QLabel(company)
-                name_lbl.setFont(QFont("Segoe UI", 10))
-                name_lbl.setStyleSheet("color: #ffffff; background: transparent;")
-                row.addWidget(name_lbl, 1)
-
-                count_lbl = QLabel(str(proc_count))
-                count_lbl.setFont(QFont("Segoe UI", 10))
-                count_lbl.setStyleSheet("color: #666666; background: transparent;")
-                count_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                row.addWidget(count_lbl)
-
-                content_layout.addWidget(row_w)
-
-        content_layout.addStretch()
-        scroll.setWidget(content)
-        layout.addWidget(scroll)
+        self._rebuild_legend_content()
+        layout.addWidget(self._scroll)
 
         note = QLabel("Colored = named company  ·  White = no company info")
         note.setFont(QFont("Segoe UI", 8))
@@ -431,17 +390,66 @@ class CompanyLegendDialog(QDialog):
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
 
+    def _rebuild_legend_content(self):
+        legend = ProcessColorManager().get_legend()
+        content = QWidget()
+        content.setStyleSheet("background: transparent;")
+        content_layout = QVBoxLayout(content)
+        content_layout.setSpacing(4)
+        content_layout.setContentsMargins(0, 0, 4, 0)
+
+        if not legend:
+            empty = QLabel("No companies detected yet.\nStart monitoring to populate.")
+            empty.setFont(QFont("Segoe UI", 10))
+            empty.setStyleSheet("color: #888888; background: transparent;")
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            content_layout.addWidget(empty)
+        else:
+            for company, color, proc_count in legend:
+                row_w = QWidget()
+                row_w.setStyleSheet("background: transparent;")
+                row = QHBoxLayout(row_w)
+                row.setContentsMargins(2, 1, 2, 1)
+                row.setSpacing(10)
+
+                swatch = QLabel()
+                swatch.setFixedSize(14, 14)
+                swatch.setStyleSheet(
+                    f"background-color: {color.name()}; border-radius: 3px;"
+                )
+                row.addWidget(swatch)
+
+                name_lbl = QLabel(company)
+                name_lbl.setFont(QFont("Segoe UI", 10))
+                name_lbl.setStyleSheet("color: #ffffff; background: transparent;")
+                row.addWidget(name_lbl, 1)
+
+                count_lbl = QLabel(str(proc_count))
+                count_lbl.setFont(QFont("Segoe UI", 10))
+                count_lbl.setStyleSheet("color: #666666; background: transparent;")
+                count_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                row.addWidget(count_lbl)
+
+                content_layout.addWidget(row_w)
+
+        content_layout.addStretch()
+        self._scroll.setWidget(content)
+        self._legend_data = legend
+
+    def _refresh_legend(self):
+        legend = ProcessColorManager().get_legend()
+        current_key = [(c, n) for c, _, n in legend]
+        cached_key = [(c, n) for c, _, n in self._legend_data] if self._legend_data else []
+        if current_key != cached_key:
+            self._rebuild_legend_content()
+
     def _on_hue_params_changed(self):
         sat = self._sat_slider.value() / 100.0
         light = self._light_slider.value() / 100.0
         self._sat_val.setText(f"{self._sat_slider.value()}%")
         self._light_val.setText(f"{self._light_slider.value()}%")
         ProcessColorManager().update_hue_params(sat, light)
-        legend = ProcessColorManager().get_legend()
-        for i, swatch in enumerate(self._swatches):
-            if i < len(legend):
-                _, color, _ = legend[i]
-                swatch.setStyleSheet(f"background-color: {color.name()}; border-radius: 3px;")
+        self._rebuild_legend_content()
 
 
 # ---------------------------------------------------------------------------
