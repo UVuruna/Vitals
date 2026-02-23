@@ -268,7 +268,7 @@ class ProcessColorManager:
         self._value_ranges_memory_all = list(parsed_ranges_all)
         self._value_ranges_memory_all_total = list(parsed_ranges_all)
 
-        # Load user-set hue params from last_setup.json (overrides defaults if present)
+        # Load user-set hue params and color thresholds from last_setup.json
         setup_path = _get_last_setup_path()
         if setup_path.exists():
             try:
@@ -279,6 +279,12 @@ class ProcessColorManager:
                     self._hue_saturation = float(hue["saturation"])
                 if "lightness" in hue:
                     self._hue_lightness = float(hue["lightness"])
+                # Restore saved color thresholds (overrides defaults)
+                saved_thresholds = setup_data.get("color_thresholds", {})
+                for mode_key in ("cpu", "cpu_all", "memory", "memory_total", "memory_all", "memory_all_total"):
+                    saved = saved_thresholds.get(mode_key)
+                    if isinstance(saved, list) and len(saved) == 4:
+                        self._apply_threshold_values(mode_key, saved)
             except Exception:
                 pass
 
@@ -375,41 +381,63 @@ class ProcessColorManager:
         except Exception:
             pass
 
+    def _apply_threshold_values(self, mode: str, thresholds: list):
+        """Apply threshold values to the correct range list (in-memory only, no save).
+
+        Must be called while holding self._mutex, or during single-threaded init.
+        """
+        if mode == "cpu":
+            ranges = self._value_ranges_cpu
+        elif mode == "cpu_all":
+            ranges = self._value_ranges_cpu_all
+        elif mode == "memory_total":
+            ranges = self._value_ranges_memory_total
+        elif mode == "memory_all":
+            ranges = self._value_ranges_memory_all
+        elif mode == "memory_all_total":
+            ranges = self._value_ranges_memory_all_total
+        else:
+            ranges = self._value_ranges_memory
+        colors = [color for _, color in ranges]
+        new_ranges = [(float(t), colors[i]) for i, t in enumerate(thresholds)]
+        new_ranges.append((100.0, colors[-1]))
+        if mode == "cpu":
+            self._value_ranges_cpu = new_ranges
+        elif mode == "cpu_all":
+            self._value_ranges_cpu_all = new_ranges
+        elif mode == "memory_total":
+            self._value_ranges_memory_total = new_ranges
+        elif mode == "memory_all":
+            self._value_ranges_memory_all = new_ranges
+        elif mode == "memory_all_total":
+            self._value_ranges_memory_all_total = new_ranges
+        else:
+            self._value_ranges_memory = new_ranges
+
     def update_value_thresholds(self, thresholds: list, mode: str):
-        """Update the 4 color zone thresholds in-memory (session only, resets on restart).
+        """Update the 4 color zone thresholds in-memory and persist to last_setup.json.
 
         Args:
             thresholds: 4 ascending int values [t1, t2, t3, t4] in range 1-99.
-            mode:       "cpu" or "memory"
+            mode:       "cpu", "cpu_all", "memory", "memory_total", "memory_all", or "memory_all_total"
         """
         with QMutexLocker(self._mutex):
-            if mode == "cpu":
-                ranges = self._value_ranges_cpu
-            elif mode == "cpu_all":
-                ranges = self._value_ranges_cpu_all
-            elif mode == "memory_total":
-                ranges = self._value_ranges_memory_total
-            elif mode == "memory_all":
-                ranges = self._value_ranges_memory_all
-            elif mode == "memory_all_total":
-                ranges = self._value_ranges_memory_all_total
-            else:
-                ranges = self._value_ranges_memory
-            colors = [color for _, color in ranges]
-            new_ranges = [(float(t), colors[i]) for i, t in enumerate(thresholds)]
-            new_ranges.append((100.0, colors[-1]))
-            if mode == "cpu":
-                self._value_ranges_cpu = new_ranges
-            elif mode == "cpu_all":
-                self._value_ranges_cpu_all = new_ranges
-            elif mode == "memory_total":
-                self._value_ranges_memory_total = new_ranges
-            elif mode == "memory_all":
-                self._value_ranges_memory_all = new_ranges
-            elif mode == "memory_all_total":
-                self._value_ranges_memory_all_total = new_ranges
-            else:
-                self._value_ranges_memory = new_ranges
+            self._apply_threshold_values(mode, thresholds)
+
+        path = _get_last_setup_path()
+        try:
+            data: dict = {}
+            if path.exists():
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+            if "color_thresholds" not in data:
+                data["color_thresholds"] = {}
+            data["color_thresholds"][mode] = thresholds
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception:
+            pass
 
     def get_value_ranges(self, mode: str) -> list[tuple[float, QColor]]:
         """Return value color ranges for UI display (ColorScaleWidget).
