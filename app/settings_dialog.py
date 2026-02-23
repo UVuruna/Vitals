@@ -1100,22 +1100,27 @@ class CPUSettingsDialog(QDialog):
         row4.addWidget(self.retention_label)
         layout.addLayout(row4)
 
-        # Color Settings (CPU-specific thresholds)
+        # Color Settings — all sections in one compact container (4px spacing)
+        color_container = QWidget()
+        color_container.setStyleSheet("background: transparent;")
+        cc_layout = QVBoxLayout(color_container)
+        cc_layout.setContentsMargins(0, 0, 0, 0)
+        cc_layout.setSpacing(4)
+
         cpu_threads = psutil.cpu_count()
         self._color_scale = _build_color_section(
-            layout, self._make_label, mode="cpu",
+            cc_layout, self._make_label, mode="cpu",
             max_info=f"{cpu_threads * 100}%",
             show_legend=False,
             scale_max=50,
         )
-
-        # Color Settings for Σ total row (all processes combined)
         self._color_scale_all = _build_color_section(
-            layout, self._make_label, mode="cpu_all",
+            cc_layout, self._make_label, mode="cpu_all",
             title="All Usage Color Settings",
             max_info=f"{cpu_threads * 100}%",
         )
         self._color_scale_all._legend_btn.clicked.connect(self._show_legend)
+        layout.addWidget(color_container)
 
         layout.addStretch()
 
@@ -1289,43 +1294,44 @@ class MemorySettingsDialog(QDialog):
         row5.addWidget(self.unit_combo)
         layout.addLayout(row5)
 
+        # Color Settings — all sections in one compact container (4px spacing)
+        color_container = QWidget()
+        color_container.setStyleSheet("background: transparent;")
+        cc_layout = QVBoxLayout(color_container)
+        cc_layout.setContentsMargins(0, 0, 0, 0)
+        cc_layout.setSpacing(4)
+
         unit = self.settings.memory_unit
         ram_bytes = psutil.virtual_memory().total
         from .monitor import get_commit_limit_bytes
         commit_limit_bytes = get_commit_limit_bytes()
 
-        # Usage color scale (RSS vs RAM)
         self._color_scale_usage = _build_color_section(
-            layout, self._make_label, mode="memory", show_legend=False,
+            cc_layout, self._make_label, mode="memory", show_legend=False,
             title="Usage Color Settings", max_info=_format_bytes_in_unit(ram_bytes, unit),
             scale_max=50,
         )
-
-        # Total color scale (Commit Size vs CommitLimit)
         self._color_scale_total = _build_color_section(
-            layout, self._make_label, mode="memory_total", show_legend=False,
+            cc_layout, self._make_label, mode="memory_total", show_legend=False,
             title="Commit Color Settings", max_info=_format_bytes_in_unit(commit_limit_bytes, unit),
             scale_max=50,
         )
-
-        # Color scales for Σ total row (all processes combined)
         self._color_scale_all_usage = _build_color_section(
-            layout, self._make_label, mode="memory_all", show_legend=False,
+            cc_layout, self._make_label, mode="memory_all", show_legend=False,
             title="All Usage Color Settings", max_info=_format_bytes_in_unit(ram_bytes, unit),
         )
-
         self._color_scale_all_total = _build_color_section(
-            layout, self._make_label, mode="memory_all_total", show_legend=False,
+            cc_layout, self._make_label, mode="memory_all_total", show_legend=False,
             title="All Commit Color Settings", max_info=_format_bytes_in_unit(commit_limit_bytes, unit),
         )
 
-        # Company Legend button at the end (after all color scales)
         legend_row = QHBoxLayout()
         legend_row.addStretch()
         legend_btn = _make_legend_btn()
         legend_btn.clicked.connect(self._show_legend)
         legend_row.addWidget(legend_btn)
-        layout.addLayout(legend_row)
+        cc_layout.addLayout(legend_row)
+        layout.addWidget(color_container)
 
         layout.addStretch()
 
