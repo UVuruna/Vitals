@@ -798,8 +798,30 @@ class BaseMonitorWindow(QMainWindow):
 
         process_name = name_item.text()
 
+        # Gather live process info for the info section
+        procs = find_processes(process_name)
+        pids = [p.pid for p in procs]
+        pid_str = ", ".join(str(p) for p in pids)
+        exe_path = get_exe_path(procs) if procs else None
+
         menu = QMenu(self)
         menu.setStyleSheet(CONTEXT_MENU_STYLE)
+
+        # Info section — click to copy to clipboard
+        pid_action = None
+        exe_action = None
+
+        if pids:
+            label = "PIDs" if len(pids) > 1 else "PID"
+            pid_action = menu.addAction(f"{label}: {pid_str}")
+            pid_action.setToolTip("Click to copy to clipboard")
+
+        if exe_path:
+            exe_action = menu.addAction(f"EXE: {Path(exe_path).name}")
+            exe_action.setToolTip(f"{exe_path}\nClick to copy to clipboard")
+
+        if pid_action or exe_action:
+            menu.addSeparator()
 
         kill_action = menu.addAction("Kill Process...")
         menu.addSeparator()
@@ -809,7 +831,13 @@ class BaseMonitorWindow(QMainWindow):
 
         action = menu.exec(table.viewport().mapToGlobal(pos))
 
-        if action == kill_action:
+        if action is None:
+            return
+        if action == pid_action:
+            QApplication.clipboard().setText(pid_str)
+        elif action == exe_action:
+            QApplication.clipboard().setText(exe_path)
+        elif action == kill_action:
             self._do_kill(process_name)
         elif action == open_action:
             self._do_open_location(process_name)
