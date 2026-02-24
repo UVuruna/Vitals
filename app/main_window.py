@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMainWindow,
+    QMenu,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QSplitterHandle,
@@ -44,6 +46,16 @@ from .settings_dialog import (
     MemorySettingsDialog,
     get_last_setup_path,
 )
+from .process_actions import (
+    find_processes,
+    kill_processes,
+    get_exe_path,
+    open_file_location,
+    get_current_priority,
+    set_priority,
+)
+from .process_dialog import KillConfirmDialog, PriorityDialog
+from .styles import CONTEXT_MENU_STYLE
 
 
 class TotalRowDelegate(QStyledItemDelegate):
@@ -723,6 +735,9 @@ class BaseMonitorWindow(QMainWindow):
         )
         cur.viewport().installEventFilter(self)
         hist.viewport().installEventFilter(self)
+        # Context menu for process actions (current table only)
+        cur.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        cur.customContextMenuRequested.connect(self._on_context_menu)
 
     def _on_cell_clicked(self, table: QTableWidget, row: int, has_total_row: bool):
         """Toggle row highlight; Σ total row is never selectable."""
@@ -762,6 +777,93 @@ class BaseMonitorWindow(QMainWindow):
             except RuntimeError:
                 pass
         super().closeEvent(event)
+
+    # -------------------------------------------------------------------------
+    # Context menu — process actions
+    # -------------------------------------------------------------------------
+
+    def _on_context_menu(self, pos):
+        """Show process action menu on right-click in the current processes table."""
+        table = self.current_table
+        index = table.indexAt(pos)
+        if not index.isValid():
+            return
+        row = index.row()
+        # Block Σ total row (always the last row)
+        if row == table.rowCount() - 1:
+            return
+        name_item = table.item(row, 1)
+        if not name_item or not name_item.text():
+            return
+
+        process_name = name_item.text()
+
+        menu = QMenu(self)
+        menu.setStyleSheet(CONTEXT_MENU_STYLE)
+
+        kill_action = menu.addAction("Kill Process...")
+        menu.addSeparator()
+        open_action = menu.addAction("Open File Location")
+        menu.addSeparator()
+        priority_action = menu.addAction("Set Priority...")
+
+        action = menu.exec(table.viewport().mapToGlobal(pos))
+
+        if action == kill_action:
+            self._do_kill(process_name)
+        elif action == open_action:
+            self._do_open_location(process_name)
+        elif action == priority_action:
+            self._do_set_priority(process_name)
+
+    def _do_kill(self, process_name: str):
+        """Kill all instances of the process after confirmation."""
+        procs = find_processes(process_name)
+        if not procs:
+            QMessageBox.information(self, "Kill Process", f"No running instances of '{process_name}' found.")
+            return
+        color_mgr = ProcessColorManager()
+        proc_color = color_mgr.get_process_color(process_name)
+        dialog = KillConfirmDialog(self, process_name, len(procs), proc_color)
+        if dialog.exec():
+            killed, errors = kill_processes(procs)
+            if errors:
+                QMessageBox.warning(
+                    self, "Kill Process",
+                    f"Killed {killed} instance(s).\n\nErrors:\n" + "\n".join(errors),
+                )
+
+    def _do_open_location(self, process_name: str):
+        """Open Explorer with the process exe file selected."""
+        procs = find_processes(process_name)
+        if not procs:
+            QMessageBox.information(self, "Open File Location", f"No running instances of '{process_name}' found.")
+            return
+        path = get_exe_path(procs)
+        if not path:
+            QMessageBox.warning(self, "Open File Location", "Could not get file path. Access denied.")
+            return
+        open_file_location(path)
+
+    def _do_set_priority(self, process_name: str):
+        """Set Windows priority class for all instances of the process."""
+        procs = find_processes(process_name)
+        if not procs:
+            QMessageBox.information(self, "Set Priority", f"No running instances of '{process_name}' found.")
+            return
+        color_mgr = ProcessColorManager()
+        proc_color = color_mgr.get_process_color(process_name)
+        current_prio = get_current_priority(procs)
+        dialog = PriorityDialog(self, process_name, current_prio, proc_color)
+        if dialog.exec():
+            new_prio = dialog.get_selected_priority()
+            if new_prio is not None:
+                changed, errors = set_priority(procs, new_prio)
+                if errors:
+                    QMessageBox.warning(
+                        self, "Set Priority",
+                        f"Updated {changed} instance(s).\n\nErrors:\n" + "\n".join(errors),
+                    )
 
     def _toggle_pause(self):
         """Toggle pause. Must be implemented by subclasses for proper pause/resume."""

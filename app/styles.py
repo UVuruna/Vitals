@@ -77,6 +77,31 @@ PROCESS_ALIASES = {
 }
 
 
+CONTEXT_MENU_STYLE = """
+    QMenu {
+        background-color: #2a2a3e;
+        color: #ffffff;
+        border: 1px solid #3a3a4e;
+        padding: 4px;
+    }
+    QMenu::item {
+        padding: 6px 24px;
+        border-radius: 3px;
+    }
+    QMenu::item:selected {
+        background-color: #3a3a4e;
+    }
+    QMenu::item:disabled {
+        color: #666666;
+    }
+    QMenu::separator {
+        height: 1px;
+        background-color: #3a3a4e;
+        margin: 4px 0;
+    }
+"""
+
+
 def format_pct(value: float) -> str:
     """
     Format a percentage value with adaptive decimal precision.
