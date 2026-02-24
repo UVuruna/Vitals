@@ -71,7 +71,7 @@ def get_exe_path(procs: list[psutil.Process]) -> Optional[str]:
 
 def open_file_location(exe_path: str):
     """Open Windows Explorer with the exe file selected."""
-    subprocess.Popen(['explorer.exe', f'/select,{exe_path}'])
+    subprocess.Popen(f'explorer /select,"{exe_path}"', shell=True)
 
 
 def get_current_priority(procs: list[psutil.Process]) -> Optional[int]:
