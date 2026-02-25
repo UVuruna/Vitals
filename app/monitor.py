@@ -825,8 +825,11 @@ class ProcessMonitor:
         while self._rolling_snapshots and self._rolling_snapshots[0][0] < cutoff:
             self._rolling_snapshots.popleft()
 
-    def get_rolling_average(self) -> list[ProcessInfo]:
+    def get_rolling_average(self, limit: int = 0) -> list[ProcessInfo]:
         """Calculate per-process averages across the rolling window, sorted by average value descending.
+
+        Args:
+            limit: Maximum number of processes to return (0 = no limit).
 
         Each process that appeared in at least one snapshot is included.
         Threads and count are rounded to the nearest integer.
@@ -868,7 +871,8 @@ class ProcessMonitor:
                 uptime_seconds=uptime_seconds,
             ))
 
-        return sorted(result, key=lambda p: p.value, reverse=True)
+        sorted_result = sorted(result, key=lambda p: p.value, reverse=True)
+        return sorted_result[:limit] if limit > 0 else sorted_result
 
     def format_value(self, value: float, unit: str = "MB") -> str:
         """
@@ -1106,7 +1110,7 @@ class SharedDataCollector(QThread):
                         hwinfo=hwinfo,
                         stats=cpu_monitor.stats,
                         process_totals=cpu_totals,
-                        rolling_average=cpu_monitor.get_rolling_average(),
+                        rolling_average=cpu_monitor.get_rolling_average(cpu_settings['history_rows']),
                     ))
 
                 if need_mem:
@@ -1128,7 +1132,7 @@ class SharedDataCollector(QThread):
                         hwinfo=hwinfo,
                         stats=mem_monitor.stats,
                         process_totals=mem_totals,
-                        rolling_average=mem_monitor.get_rolling_average(),
+                        rolling_average=mem_monitor.get_rolling_average(mem_settings['history_rows']),
                     ))
 
             self.msleep(interval)
