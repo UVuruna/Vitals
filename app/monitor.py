@@ -43,6 +43,7 @@ def get_commit_limit_bytes() -> int:
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
+from collections import deque
 from typing import Optional
 
 import heapq
@@ -587,6 +588,9 @@ class ProcessMonitor:
         self.history_max_size = 10
         self.retention_seconds = 120 * 60  # 2 hours default
 
+        # Rolling average buffer: (timestamp, {name: (value, threads, count, vms)}) snapshots
+        self._rolling_snapshots: deque = deque()
+
         # Initialize CPU percent (first call returns 0)
         if mode == MonitorMode.CPU:
             self._init_cpu_percent()
@@ -789,6 +793,68 @@ class ProcessMonitor:
         """Get historical high-usage records sorted by value descending."""
         return sorted(self.history.values(), key=lambda r: r.value, reverse=True)[:self.history_max_size]
 
+    def update_rolling_average(self, aggregated: dict) -> None:
+        """Add current process snapshot to rolling average buffer and purge old entries.
+
+        Stores a lightweight snapshot of all process values from the aggregated dict.
+        CPU mode captures (cpu_pct, threads, count, 0); Memory mode captures (rss, 0, count, vms).
+        Old snapshots outside the retention window are purged immediately.
+        """
+        now = time.time()
+
+        if self.mode == MonitorMode.CPU:
+            snapshot = {
+                name: (entry[_CPU_IDX], entry[_THREADS_IDX], entry[_COUNT_IDX], 0)
+                for name, entry in aggregated.items()
+            }
+        else:
+            snapshot = {
+                name: (entry[_RSS_IDX], 0, entry[_COUNT_IDX], entry[_VMS_IDX])
+                for name, entry in aggregated.items()
+            }
+
+        self._rolling_snapshots.append((now, snapshot))
+
+        cutoff = now - self.retention_seconds
+        while self._rolling_snapshots and self._rolling_snapshots[0][0] < cutoff:
+            self._rolling_snapshots.popleft()
+
+    def get_rolling_average(self) -> list[ProcessInfo]:
+        """Calculate per-process averages across the rolling window, sorted by average value descending.
+
+        Each process that appeared in at least one snapshot is included.
+        Threads and count are rounded to the nearest integer.
+        Processes with zero average value are excluded.
+        """
+        # acc: {name: [total_value, total_threads, total_count, total_vms, sample_count]}
+        acc: dict[str, list] = {}
+        for _, snapshot in self._rolling_snapshots:
+            for name, (value, threads, count, vms) in snapshot.items():
+                if name not in acc:
+                    acc[name] = [0.0, 0, 0, 0, 0]
+                acc[name][0] += value
+                acc[name][1] += threads
+                acc[name][2] += count
+                acc[name][3] += vms
+                acc[name][4] += 1
+
+        result = []
+        for name, (total_val, total_threads, total_count, total_vms, samples) in acc.items():
+            if samples == 0:
+                continue
+            avg_value = total_val / samples
+            if avg_value <= 0:
+                continue
+            result.append(ProcessInfo(
+                name=name,
+                value=avg_value,
+                threads=round(total_threads / samples),
+                count=round(total_count / samples),
+                vms=round(total_vms / samples),
+            ))
+
+        return sorted(result, key=lambda p: p.value, reverse=True)
+
     def format_value(self, value: float, unit: str = "MB") -> str:
         """
         Format a value for display.
@@ -853,6 +919,7 @@ class MonitorData:
     hwinfo: HWiNFOData
     stats: MonitorStats
     process_totals: ProcessInfo  # Aggregated totals from ALL processes (for Σ row)
+    rolling_average: list[ProcessInfo] = field(default_factory=list)  # Per-process rolling averages
 
 
 class SharedDataCollector(QThread):
@@ -1007,6 +1074,7 @@ class SharedDataCollector(QThread):
                 if need_cpu:
                     processes = cpu_monitor._extract_cpu_top(aggregated, total_cpu, cpu_settings['current_rows'])
                     cpu_monitor.update_history(processes)
+                    cpu_monitor.update_rolling_average(aggregated)
                     cpu_totals = ProcessInfo(
                         name="Total",
                         value=cpu_monitor.stats.total_usage,
@@ -1021,12 +1089,14 @@ class SharedDataCollector(QThread):
                         hwinfo=hwinfo,
                         stats=cpu_monitor.stats,
                         process_totals=cpu_totals,
+                        rolling_average=cpu_monitor.get_rolling_average(),
                     ))
 
                 if need_mem:
                     unit = mem_settings.get('memory_unit', 'MB')
                     processes = mem_monitor._extract_mem_top(aggregated, total_rss, mem_settings['current_rows'])
                     mem_monitor.update_history(processes)
+                    mem_monitor.update_rolling_average(aggregated)
                     mem_totals = ProcessInfo(
                         name="Total",
                         value=total_rss,
@@ -1041,6 +1111,7 @@ class SharedDataCollector(QThread):
                         hwinfo=hwinfo,
                         stats=mem_monitor.stats,
                         process_totals=mem_totals,
+                        rolling_average=mem_monitor.get_rolling_average(),
                     ))
 
             self.msleep(interval)

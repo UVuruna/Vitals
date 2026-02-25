@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QSplitterHandle,
+    QStackedWidget,
     QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
@@ -132,9 +133,10 @@ class BaseMonitorWindow(QMainWindow):
     TEXT = "#ffffff"
     TEXT_MUTED = "#aaaaaa"
 
-    # Different colors for current vs history
+    # Different colors for current vs history vs rolling average
     CURRENT_BG = "#2d2d42"  # Slightly purple tint
     HISTORY_BG = "#2a3a3e"  # Slightly teal tint
+    ROLLING_BG = "#2a382e"  # Slightly green tint
 
     # Default temperature thresholds
     DEFAULT_TEMP_CONFIG = {
@@ -150,8 +152,10 @@ class BaseMonitorWindow(QMainWindow):
         self.is_paused = False
         self._saved_col_widths_current: list[int] | None = None
         self._saved_col_widths_history: list[int] | None = None
+        self._saved_col_widths_rolling: list[int] | None = None
         self._layout_restored: bool = False
         self._peer_window: 'BaseMonitorWindow | None' = None
+        self._bottom_page: int = 0  # 0 = Peak Usage, 1 = Rolling Average
 
         # Set window icon (Qt level)
         base = get_base_path()
@@ -322,6 +326,7 @@ class BaseMonitorWindow(QMainWindow):
                 "x": geo.x(), "y": geo.y(),
                 "width": geo.width(), "height": geo.height(),
                 "splitter": self.splitter.sizes(),
+                "bottom_page": self._bottom_page,
                 "current_cols": [
                     self.current_table.columnWidth(c)
                     for c in range(2, self.current_table.columnCount())
@@ -329,6 +334,10 @@ class BaseMonitorWindow(QMainWindow):
                 "history_cols": [
                     self.history_table.columnWidth(c)
                     for c in range(2, self.history_table.columnCount())
+                ],
+                "rolling_cols": [
+                    self.rolling_table.columnWidth(c)
+                    for c in range(2, self.rolling_table.columnCount())
                 ],
             }
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -356,6 +365,16 @@ class BaseMonitorWindow(QMainWindow):
         splitter_sizes = layout.get("splitter")
         if isinstance(splitter_sizes, list) and len(splitter_sizes) == 2:
             self.splitter.setSizes(splitter_sizes)
+        bottom_page = layout.get("bottom_page", 0)
+        if bottom_page in (0, 1):
+            self._bottom_page = bottom_page
+            self.bottom_stack.setCurrentIndex(bottom_page)
+            if bottom_page == 0:
+                self.bottom_toggle_btn.setText("◀ Peak Usage ▶")
+                self.peak_label.setVisible(True)
+            else:
+                self.bottom_toggle_btn.setText("◀ Rolling Average ▶")
+                self.peak_label.setVisible(False)
         current_cols = layout.get("current_cols")
         if isinstance(current_cols, list):
             self._saved_col_widths_current = current_cols
@@ -364,6 +383,10 @@ class BaseMonitorWindow(QMainWindow):
         if isinstance(history_cols, list):
             self._saved_col_widths_history = history_cols
             self._apply_col_widths(self.history_table, history_cols)
+        rolling_cols = layout.get("rolling_cols")
+        if isinstance(rolling_cols, list):
+            self._saved_col_widths_rolling = rolling_cols
+            self._apply_col_widths(self.rolling_table, rolling_cols)
 
     def _load_config(self):
         """Load temperature color config from JSON."""
@@ -508,27 +531,45 @@ class BaseMonitorWindow(QMainWindow):
 
         self.splitter.addWidget(self.current_section)
 
-        # History section
+        # History / Rolling Average section (toggle between two views)
         self.history_section = QWidget()
         history_layout = QVBoxLayout(self.history_section)
         history_layout.setContentsMargins(0, 4, 0, 0)
         history_layout.setSpacing(4)
 
-        history_title_row = QHBoxLayout()
-        history_title_row.setContentsMargins(0, 0, 0, 0)
-        self.history_title = QLabel("Historical Peak Usage")
-        self.history_title.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
-        self.history_title.setStyleSheet(f"color: {self.TEXT};")
-        history_title_row.addWidget(self.history_title)
-        history_title_row.addStretch()
+        bottom_header_row = QHBoxLayout()
+        bottom_header_row.setContentsMargins(0, 0, 0, 0)
+
+        self.bottom_toggle_btn = QPushButton("◀ Peak Usage ▶")
+        self.bottom_toggle_btn.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        self.bottom_toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {self.TEXT};
+                border: none;
+                padding: 0;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                color: {self.ACCENT};
+            }}
+        """)
+        self.bottom_toggle_btn.clicked.connect(self._toggle_bottom_table)
+        bottom_header_row.addWidget(self.bottom_toggle_btn)
+        bottom_header_row.addStretch()
+
         self.peak_label = QLabel("Peak: --")
         self.peak_label.setFont(QFont("Segoe UI", 10))
         self.peak_label.setStyleSheet(f"color: {self.TEXT_MUTED}; background: transparent;")
-        history_title_row.addWidget(self.peak_label)
-        history_layout.addLayout(history_title_row)
+        bottom_header_row.addWidget(self.peak_label)
+        history_layout.addLayout(bottom_header_row)
 
+        self.bottom_stack = QStackedWidget()
         self.history_table = self._create_table(4, mode_cols=self._get_mode_cols(), has_time=True, bg_color=self.HISTORY_BG)
-        history_layout.addWidget(self.history_table)
+        self.rolling_table = self._create_table(0, mode_cols=self._get_mode_cols(), has_time=False, bg_color=self.ROLLING_BG)
+        self.bottom_stack.addWidget(self.history_table)   # index 0 = Peak Usage
+        self.bottom_stack.addWidget(self.rolling_table)   # index 1 = Rolling Average
+        history_layout.addWidget(self.bottom_stack)
 
         self.splitter.addWidget(self.history_section)
 
@@ -601,6 +642,17 @@ class BaseMonitorWindow(QMainWindow):
         pause_action = QAction("Pause/Resume", self)
         pause_action.triggered.connect(self._toggle_pause)
         view_menu.addAction(pause_action)
+
+    def _toggle_bottom_table(self):
+        """Switch between Peak Usage (index 0) and Rolling Average (index 1)."""
+        self._bottom_page = 1 - self._bottom_page
+        self.bottom_stack.setCurrentIndex(self._bottom_page)
+        if self._bottom_page == 0:
+            self.bottom_toggle_btn.setText("◀ Peak Usage ▶")
+            self.peak_label.setVisible(True)
+        else:
+            self.bottom_toggle_btn.setText("◀ Rolling Average ▶")
+            self.peak_label.setVisible(False)
 
     def _make_total_item(self, text: str) -> QTableWidgetItem:
         """Create a styled QTableWidgetItem for the Σ total row."""
@@ -727,17 +779,32 @@ class BaseMonitorWindow(QMainWindow):
         """Connect row-selection signals after table creation or rebuild."""
         cur = self.current_table
         hist = self.history_table
+        roll = self.rolling_table
         cur.cellClicked.connect(
             lambda r, c, t=cur: self._on_cell_clicked(t, r, has_total_row=True)
         )
         hist.cellClicked.connect(
             lambda r, c, t=hist: self._on_cell_clicked(t, r, has_total_row=False)
         )
+        roll.cellClicked.connect(
+            lambda r, c, t=roll: self._on_cell_clicked(t, r, has_total_row=False)
+        )
         cur.viewport().installEventFilter(self)
         hist.viewport().installEventFilter(self)
-        # Context menu for process actions (current table only)
+        roll.viewport().installEventFilter(self)
+        # Context menu for process actions (all three tables)
         cur.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        cur.customContextMenuRequested.connect(self._on_context_menu)
+        cur.customContextMenuRequested.connect(
+            lambda pos, t=cur: self._on_context_menu(pos, t, has_total_row=True)
+        )
+        hist.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        hist.customContextMenuRequested.connect(
+            lambda pos, t=hist: self._on_context_menu(pos, t, has_total_row=False)
+        )
+        roll.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        roll.customContextMenuRequested.connect(
+            lambda pos, t=roll: self._on_context_menu(pos, t, has_total_row=False)
+        )
 
     def _on_cell_clicked(self, table: QTableWidget, row: int, has_total_row: bool):
         """Toggle row highlight; Σ total row is never selectable."""
@@ -754,7 +821,7 @@ class BaseMonitorWindow(QMainWindow):
     def eventFilter(self, obj, event):
         """Clear row selection when clicking empty space inside a table viewport."""
         if event.type() == QEvent.Type.MouseButtonPress:
-            for table in (self.current_table, self.history_table):
+            for table in (self.current_table, self.history_table, self.rolling_table):
                 if obj is table.viewport() and not table.indexAt(event.pos()).isValid():
                     table.clearSelection()
                     table._last_clicked_row = None
@@ -763,10 +830,9 @@ class BaseMonitorWindow(QMainWindow):
     def _on_app_state_changed(self, state):
         """Clear table selection when the application loses OS-level focus."""
         if state != Qt.ApplicationState.ApplicationActive:
-            self.current_table.clearSelection()
-            self.current_table._last_clicked_row = None
-            self.history_table.clearSelection()
-            self.history_table._last_clicked_row = None
+            for table in (self.current_table, self.history_table, self.rolling_table):
+                table.clearSelection()
+                table._last_clicked_row = None
 
     def closeEvent(self, event):
         """Disconnect application state signal when window closes."""
@@ -782,15 +848,14 @@ class BaseMonitorWindow(QMainWindow):
     # Context menu — process actions
     # -------------------------------------------------------------------------
 
-    def _on_context_menu(self, pos):
-        """Show process action menu on right-click in the current processes table."""
-        table = self.current_table
+    def _on_context_menu(self, pos, table: QTableWidget, has_total_row: bool = False):
+        """Show process action menu on right-click in any process table."""
         index = table.indexAt(pos)
         if not index.isValid():
             return
         row = index.row()
-        # Block Σ total row (always the last row)
-        if row == table.rowCount() - 1:
+        # Block Σ total row (always the last row in current processes table)
+        if has_total_row and row == table.rowCount() - 1:
             return
         name_item = table.item(row, 1)
         if not name_item or not name_item.text():
@@ -801,26 +866,32 @@ class BaseMonitorWindow(QMainWindow):
         # Gather live process info for the info section
         procs = find_processes(process_name)
         pids = [p.pid for p in procs]
-        pid_str = ", ".join(str(p) for p in pids)
         exe_path = get_exe_path(procs) if procs else None
+
+        # Full PID string for clipboard copy
+        pid_clipboard = ", ".join(str(p) for p in pids)
 
         menu = QMenu(self)
         menu.setStyleSheet(CONTEXT_MENU_STYLE)
 
-        # Info section — click to copy to clipboard
-        pid_action = None
-        exe_action = None
-
+        # Info section — PIDs split 10 per row, click any line to copy all
+        pid_actions: list = []
         if pids:
             label = "PIDs" if len(pids) > 1 else "PID"
-            pid_action = menu.addAction(f"{label}: {pid_str}")
-            pid_action.setToolTip("Click to copy to clipboard")
+            chunks = [pids[i:i + 10] for i in range(0, len(pids), 10)]
+            for i, chunk in enumerate(chunks):
+                chunk_str = ", ".join(str(p) for p in chunk)
+                prefix = f"{label}: " if i == 0 else "  "
+                act = menu.addAction(f"{prefix}{chunk_str}")
+                act.setToolTip("Click to copy all PIDs to clipboard")
+                pid_actions.append(act)
 
+        exe_action = None
         if exe_path:
             exe_action = menu.addAction(f"EXE: {Path(exe_path).name}")
             exe_action.setToolTip(f"{exe_path}\nClick to copy to clipboard")
 
-        if pid_action or exe_action:
+        if pid_actions or exe_action:
             menu.addSeparator()
 
         kill_action = menu.addAction("Kill Process...")
@@ -833,8 +904,8 @@ class BaseMonitorWindow(QMainWindow):
 
         if action is None:
             return
-        if action == pid_action:
-            QApplication.clipboard().setText(pid_str)
+        if action in pid_actions:
+            QApplication.clipboard().setText(pid_clipboard)
         elif action == exe_action:
             QApplication.clipboard().setText(exe_path)
         elif action == kill_action:
@@ -993,15 +1064,16 @@ class CPUWindow(BaseMonitorWindow):
 
     def _rebuild_tables(self):
         """Rebuild tables with current settings."""
-        # Get section layouts
         current_layout = self.current_section.layout()
-        history_layout = self.history_section.layout()
 
         # Remove old tables
         current_layout.removeWidget(self.current_table)
-        history_layout.removeWidget(self.history_table)
         self.current_table.deleteLater()
+
+        self.bottom_stack.removeWidget(self.history_table)
         self.history_table.deleteLater()
+        self.bottom_stack.removeWidget(self.rolling_table)
+        self.rolling_table.deleteLater()
 
         # Create new tables
         self.current_table = self._create_table(
@@ -1015,18 +1087,28 @@ class CPUWindow(BaseMonitorWindow):
             self._cpu_settings.history_rows,
             mode_cols="cpu",
             has_time=True,
-            bg_color=self.HISTORY_BG
+            bg_color=self.HISTORY_BG,
+        )
+        self.rolling_table = self._create_table(
+            0,
+            mode_cols="cpu",
+            has_time=False,
+            bg_color=self.ROLLING_BG,
         )
 
-        # Add to section layouts (after title labels)
+        # Add to layouts
         current_layout.addWidget(self.current_table)
-        history_layout.addWidget(self.history_table)
+        self.bottom_stack.insertWidget(0, self.history_table)
+        self.bottom_stack.insertWidget(1, self.rolling_table)
+        self.bottom_stack.setCurrentIndex(self._bottom_page)
 
         # Re-apply saved column widths after rebuild
         if self._saved_col_widths_current:
             self._apply_col_widths(self.current_table, self._saved_col_widths_current)
         if self._saved_col_widths_history:
             self._apply_col_widths(self.history_table, self._saved_col_widths_history)
+        if self._saved_col_widths_rolling:
+            self._apply_col_widths(self.rolling_table, self._saved_col_widths_rolling)
 
         self._connect_table_selection()
 
@@ -1139,6 +1221,31 @@ class CPUWindow(BaseMonitorWindow):
             for col in range(self.history_table.columnCount()):
                 self.history_table.setItem(row, col, QTableWidgetItem(""))
 
+        # Update rolling average table (dynamic row count)
+        rolling_data = data.rolling_average
+        self.rolling_table.setRowCount(len(rolling_data))
+        for row, proc in enumerate(rolling_data):
+            self.rolling_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+
+            name_item = QTableWidgetItem(proc.name)
+            proc_color = color_mgr.get_process_color(proc.name)
+            if proc_color:
+                name_item.setForeground(proc_color)
+            company = color_mgr.get_company_name(proc.name)
+            if company:
+                name_item.setToolTip(company)
+            self.rolling_table.setItem(row, 1, name_item)
+
+            value_str = monitor.format_value(proc.value, "MB") if monitor else f"{proc.value:.0f}"
+            value_item = QTableWidgetItem(value_str)
+            if monitor:
+                pct = proc.value / (monitor.cpu_threads * 100) * 100
+                value_item.setForeground(color_mgr.get_value_color(pct, "cpu"))
+            self.rolling_table.setItem(row, 2, value_item)
+
+            self.rolling_table.setItem(row, 3, QTableWidgetItem(str(proc.count)))
+            self.rolling_table.setItem(row, 4, QTableWidgetItem(str(proc.threads) if proc.threads > 0 else ""))
+
     def closeEvent(self, event):
         """Handle close - disable CPU monitoring."""
         self._save_window_layout()
@@ -1232,15 +1339,16 @@ class MemoryWindow(BaseMonitorWindow):
 
     def _rebuild_tables(self):
         """Rebuild tables with current settings."""
-        # Get section layouts
         current_layout = self.current_section.layout()
-        history_layout = self.history_section.layout()
 
         # Remove old tables
         current_layout.removeWidget(self.current_table)
-        history_layout.removeWidget(self.history_table)
         self.current_table.deleteLater()
+
+        self.bottom_stack.removeWidget(self.history_table)
         self.history_table.deleteLater()
+        self.bottom_stack.removeWidget(self.rolling_table)
+        self.rolling_table.deleteLater()
 
         # Create new tables
         self.current_table = self._create_table(
@@ -1254,18 +1362,28 @@ class MemoryWindow(BaseMonitorWindow):
             self._memory_settings.history_rows,
             mode_cols="mem",
             has_time=True,
-            bg_color=self.HISTORY_BG
+            bg_color=self.HISTORY_BG,
+        )
+        self.rolling_table = self._create_table(
+            0,
+            mode_cols="mem",
+            has_time=False,
+            bg_color=self.ROLLING_BG,
         )
 
-        # Add to section layouts (after title labels)
+        # Add to layouts
         current_layout.addWidget(self.current_table)
-        history_layout.addWidget(self.history_table)
+        self.bottom_stack.insertWidget(0, self.history_table)
+        self.bottom_stack.insertWidget(1, self.rolling_table)
+        self.bottom_stack.setCurrentIndex(self._bottom_page)
 
         # Re-apply saved column widths after rebuild
         if self._saved_col_widths_current:
             self._apply_col_widths(self.current_table, self._saved_col_widths_current)
         if self._saved_col_widths_history:
             self._apply_col_widths(self.history_table, self._saved_col_widths_history)
+        if self._saved_col_widths_rolling:
+            self._apply_col_widths(self.rolling_table, self._saved_col_widths_rolling)
 
         self._connect_table_selection()
 
@@ -1393,6 +1511,35 @@ class MemoryWindow(BaseMonitorWindow):
         for row in range(len(data.history), self.history_table.rowCount()):
             for col in range(self.history_table.columnCount()):
                 self.history_table.setItem(row, col, QTableWidgetItem(""))
+
+        # Update rolling average table (dynamic row count)
+        rolling_data = data.rolling_average
+        self.rolling_table.setRowCount(len(rolling_data))
+        for row, proc in enumerate(rolling_data):
+            self.rolling_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+
+            name_item = QTableWidgetItem(proc.name)
+            proc_color = color_mgr.get_process_color(proc.name)
+            if proc_color:
+                name_item.setForeground(proc_color)
+            company = color_mgr.get_company_name(proc.name)
+            if company:
+                name_item.setToolTip(company)
+            self.rolling_table.setItem(row, 1, name_item)
+
+            value_str = monitor.format_value(proc.value, unit) if monitor else f"{proc.value:.0f}"
+            value_item = QTableWidgetItem(value_str)
+            if monitor:
+                pct = proc.value / monitor.ram_bytes * 100
+                value_item.setForeground(color_mgr.get_value_color(pct, "memory"))
+            self.rolling_table.setItem(row, 2, value_item)
+
+            commit_str = monitor.format_value(proc.vms, unit) if monitor else ""
+            commit_item = QTableWidgetItem(commit_str)
+            if monitor and self._commit_limit_bytes > 0:
+                commit_pct = proc.vms / self._commit_limit_bytes * 100
+                commit_item.setForeground(color_mgr.get_value_color(commit_pct, "memory_total"))
+            self.rolling_table.setItem(row, 3, commit_item)
 
     def closeEvent(self, event):
         """Handle close - disable Memory monitoring."""
