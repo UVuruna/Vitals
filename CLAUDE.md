@@ -128,15 +128,16 @@ class MemoryMonitor(BaseMonitor): ...
 **Commit message format:** `MAJOR.MINOR.PATCH description`
 
 - Follow the existing version sequence — check `git log --oneline -5` for the latest version number
-- Increment the patch number by 10 for each commit (e.g., `1.1.180` → `1.1.190`)
+- **Single independent commit** → +1 (e.g., `1.1.180 → 1.1.181`)
+- **Group of related commits (same task)** → +10 per commit (e.g., `1.1.180 → 1.1.190 → 1.1.200`)
 - Description is short, English, starts with a noun or verb
 - Use em dash `—` to separate additional details when needed
 
 **Splitting into multiple commits:**
 - Group related changes into logical units
 - Each commit should represent one cohesive change
-- Complex work = multiple commits, each with its own version increment
-- Simple work = single commit
+- Complex work = multiple commits, each with its own +10 increment
+- Simple work = single commit with +1 increment
 
 **Procedure:**
 1. Check the latest version with `git log --oneline -3`
