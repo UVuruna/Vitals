@@ -832,7 +832,12 @@ class ProcessMonitor:
         Threads and count are rounded to the nearest integer.
         Processes with zero average value are excluded.
         """
+        total_snapshots = len(self._rolling_snapshots)
+        if total_snapshots == 0:
+            return []
+
         # acc: {name: [total_value, total_threads, total_count, total_vms, sample_count]}
+        # sample_count = snapshots where this process was present (for uptime calculation only)
         acc: dict[str, list] = {}
         for _, snapshot in self._rolling_snapshots:
             for name, (value, threads, count, vms) in snapshot.items():
@@ -848,7 +853,9 @@ class ProcessMonitor:
         for name, (total_val, total_threads, total_count, total_vms, samples) in acc.items():
             if samples == 0:
                 continue
-            avg_value = total_val / samples
+            # Denominator is always total_snapshots — same for all processes.
+            # A process active for only part of the window gets a proportionally lower average.
+            avg_value = total_val / total_snapshots
             if avg_value <= 0:
                 continue
             uptime_seconds = round(samples * self._refresh_rate_ms / 1000)
