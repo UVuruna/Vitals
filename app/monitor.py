@@ -338,6 +338,7 @@ class ProcessInfo:
     count: int = 0    # Number of processes in this group (parallel count)
     vms: int = 0      # Virtual Memory Size (commit size)
     timestamp: float = field(default_factory=time.time)
+    uptime_seconds: int = 0  # Rolling average only: seconds active within retention window
 
     def __post_init__(self):
         if self.timestamp == 0:
@@ -590,6 +591,7 @@ class ProcessMonitor:
 
         # Rolling average buffer: (timestamp, {name: (value, threads, count, vms)}) snapshots
         self._rolling_snapshots: deque = deque()
+        self._refresh_rate_ms: int = 1000  # Used to compute uptime from sample count
 
         # Initialize CPU percent (first call returns 0)
         if mode == MonitorMode.CPU:
@@ -685,6 +687,10 @@ class ProcessMonitor:
         """Configure history tracking."""
         self.history_max_size = max_size
         self.retention_seconds = retention_minutes * 60
+
+    def set_refresh_rate(self, refresh_rate_ms: int):
+        """Set refresh rate used to compute uptime from sample count."""
+        self._refresh_rate_ms = refresh_rate_ms
 
     def get_processes(self, limit: int = 10) -> list[ProcessInfo]:
         """
@@ -845,12 +851,14 @@ class ProcessMonitor:
             avg_value = total_val / samples
             if avg_value <= 0:
                 continue
+            uptime_seconds = round(samples * self._refresh_rate_ms / 1000)
             result.append(ProcessInfo(
                 name=name,
                 value=avg_value,
                 threads=round(total_threads / samples),
                 count=round(total_count / samples),
                 vms=round(total_vms / samples),
+                uptime_seconds=uptime_seconds,
             ))
 
         return sorted(result, key=lambda p: p.value, reverse=True)
@@ -985,6 +993,7 @@ class SharedDataCollector(QThread):
                     ram_gb=ram_gb,
                 )
             self._cpu_monitor.set_history_settings(history_rows, retention_minutes)
+            self._cpu_monitor.set_refresh_rate(refresh_rate_ms)
             self._cpu_refresh_ms = refresh_rate_ms
             self._cpu_enabled = True
             self._interval_ms = self._compute_interval()
@@ -1013,6 +1022,7 @@ class SharedDataCollector(QThread):
                     ram_gb=ram_gb,
                 )
             self._memory_monitor.set_history_settings(history_rows, retention_minutes)
+            self._memory_monitor.set_refresh_rate(refresh_rate_ms)
             self._memory_refresh_ms = refresh_rate_ms
             self._memory_enabled = True
             self._interval_ms = self._compute_interval()

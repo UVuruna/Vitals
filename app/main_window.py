@@ -566,7 +566,7 @@ class BaseMonitorWindow(QMainWindow):
 
         self.bottom_stack = QStackedWidget()
         self.history_table = self._create_table(4, mode_cols=self._get_mode_cols(), has_time=True, bg_color=self.HISTORY_BG)
-        self.rolling_table = self._create_table(0, mode_cols=self._get_mode_cols(), has_time=False, bg_color=self.ROLLING_BG)
+        self.rolling_table = self._create_table(0, mode_cols=self._get_mode_cols(), has_time=False, bg_color=self.ROLLING_BG, has_uptime=True)
         self.bottom_stack.addWidget(self.history_table)   # index 0 = Peak Usage
         self.bottom_stack.addWidget(self.rolling_table)   # index 1 = Rolling Average
         history_layout.addWidget(self.bottom_stack)
@@ -662,7 +662,7 @@ class BaseMonitorWindow(QMainWindow):
         item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         return item
 
-    def _create_table(self, rows: int, mode_cols: str = "none", has_time: bool = False, bg_color: str = None, has_total_row: bool = False) -> QTableWidget:
+    def _create_table(self, rows: int, mode_cols: str = "none", has_time: bool = False, bg_color: str = None, has_total_row: bool = False, has_uptime: bool = False) -> QTableWidget:
         """Create a styled table.
 
         Args:
@@ -670,6 +670,7 @@ class BaseMonitorWindow(QMainWindow):
             mode_cols: "cpu" for Parallel+Threads, "mem" for Commit, "none" for no extra cols
             has_time: Add Time column
             bg_color: Background color
+            has_uptime: Add Uptime column (rolling average table only)
         """
         if bg_color is None:
             bg_color = self.CARD_COLOR
@@ -686,6 +687,9 @@ class BaseMonitorWindow(QMainWindow):
         if has_time:
             cols += 1
             headers.append("Time")
+        if has_uptime:
+            cols += 1
+            headers.append("Uptime")
 
         table = QTableWidget(rows + 1 if has_total_row else rows, cols)
         table.setHorizontalHeaderLabels(headers)
@@ -714,6 +718,9 @@ class BaseMonitorWindow(QMainWindow):
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)  # Commit
             col_idx += 1
         if has_time:
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
+            col_idx += 1
+        if has_uptime:
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
 
         # Styling
@@ -763,6 +770,9 @@ class BaseMonitorWindow(QMainWindow):
             table.resizeColumnToContents(col_idx)  # Commit
             col_idx += 1
         if has_time:
+            table.resizeColumnToContents(col_idx)
+            col_idx += 1
+        if has_uptime:
             table.resizeColumnToContents(col_idx)
 
         # Enable hover events for tooltips and install delegate for total row background
@@ -1094,6 +1104,7 @@ class CPUWindow(BaseMonitorWindow):
             mode_cols="cpu",
             has_time=False,
             bg_color=self.ROLLING_BG,
+            has_uptime=True,
         )
 
         # Add to layouts
@@ -1245,6 +1256,8 @@ class CPUWindow(BaseMonitorWindow):
 
             self.rolling_table.setItem(row, 3, QTableWidgetItem(str(proc.count)))
             self.rolling_table.setItem(row, 4, QTableWidgetItem(str(proc.threads) if proc.threads > 0 else ""))
+            uptime_min = proc.uptime_seconds // 60
+            self.rolling_table.setItem(row, 5, QTableWidgetItem(f"{uptime_min}m"))
 
     def closeEvent(self, event):
         """Handle close - disable CPU monitoring."""
@@ -1369,6 +1382,7 @@ class MemoryWindow(BaseMonitorWindow):
             mode_cols="mem",
             has_time=False,
             bg_color=self.ROLLING_BG,
+            has_uptime=True,
         )
 
         # Add to layouts
@@ -1540,6 +1554,8 @@ class MemoryWindow(BaseMonitorWindow):
                 commit_pct = proc.vms / self._commit_limit_bytes * 100
                 commit_item.setForeground(color_mgr.get_value_color(commit_pct, "memory_total"))
             self.rolling_table.setItem(row, 3, commit_item)
+            uptime_min = proc.uptime_seconds // 60
+            self.rolling_table.setItem(row, 4, QTableWidgetItem(f"{uptime_min}m"))
 
     def closeEvent(self, event):
         """Handle close - disable Memory monitoring."""
