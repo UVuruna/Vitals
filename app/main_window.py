@@ -1254,8 +1254,11 @@ class CPUWindow(BaseMonitorWindow):
 
             self.rolling_table.setItem(row, 3, QTableWidgetItem(str(proc.count)))
             self.rolling_table.setItem(row, 4, QTableWidgetItem(str(proc.threads) if proc.threads > 0 else ""))
-            uptime_min = proc.uptime_seconds // 60
-            self.rolling_table.setItem(row, 5, QTableWidgetItem(f"{uptime_min}m"))
+            uptime_min = round(proc.uptime_seconds / 60)
+            uptime_item = QTableWidgetItem(f"{uptime_min}m")
+            if uptime_min >= self._cpu_settings.retention_minutes:
+                uptime_item.setForeground(QColor(self.TEXT_MUTED))
+            self.rolling_table.setItem(row, 5, uptime_item)
 
     def closeEvent(self, event):
         """Handle close - disable CPU monitoring."""
@@ -1552,8 +1555,11 @@ class MemoryWindow(BaseMonitorWindow):
                 commit_pct = proc.vms / self._commit_limit_bytes * 100
                 commit_item.setForeground(color_mgr.get_value_color(commit_pct, "memory_total"))
             self.rolling_table.setItem(row, 3, commit_item)
-            uptime_min = proc.uptime_seconds // 60
-            self.rolling_table.setItem(row, 4, QTableWidgetItem(f"{uptime_min}m"))
+            uptime_min = round(proc.uptime_seconds / 60)
+            uptime_item = QTableWidgetItem(f"{uptime_min}m")
+            if uptime_min >= self._memory_settings.retention_minutes:
+                uptime_item.setForeground(QColor(self.TEXT_MUTED))
+            self.rolling_table.setItem(row, 4, uptime_item)
 
     def closeEvent(self, event):
         """Handle close - disable Memory monitoring."""
