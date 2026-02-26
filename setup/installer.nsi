@@ -15,17 +15,18 @@ Unicode true
 
 ; -- App Info -----------------------------------------------------
 !define APP_NAME "PMUsage"
-!define APP_PUBLISHER "UVuruna"
 !define APP_EXE "PMUsage.exe"
-; APP_VERSION is passed from build.py via /DAPP_VERSION flag (reads setup/app_info.json)
 !define APP_DESCRIPTION "Real-time CPU and Memory usage monitor"
 
 ; Registry key for uninstall info
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
 
-; -- Paths (passed from build.py via /D flags) --------------------
-; DIST_DIR -- PyInstaller output (dist\PMUsage\)
-; SETUP_DIR -- setup folder (for icon reference)
+; -- Paths and company info (passed from build.py via /D flags) ---
+; DIST_DIR      -- PyInstaller output (dist\PMUsage\)
+; SETUP_DIR     -- setup folder (for icon reference)
+; APP_VERSION   -- version string (reads setup/app_info.json)
+; APP_PUBLISHER -- company name (reads root company.json)
+; APP_URL       -- website URL  (reads root company.json)
 
 ; -- General Settings ---------------------------------------------
 Name "${APP_NAME}"
@@ -85,6 +86,7 @@ Section "!${APP_NAME} (required)" SecMain
     WriteRegStr HKLM "${UNINST_KEY}" "UninstallString" "$\"$INSTDIR\Uninstall.exe$\""
     WriteRegStr HKLM "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
     WriteRegStr HKLM "${UNINST_KEY}" "Publisher" "${APP_PUBLISHER}"
+    WriteRegStr HKLM "${UNINST_KEY}" "URLInfoAbout" "${APP_URL}"
     WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${APP_VERSION}"
     WriteRegDWORD HKLM "${UNINST_KEY}" "NoModify" 1
     WriteRegDWORD HKLM "${UNINST_KEY}" "NoRepair" 1

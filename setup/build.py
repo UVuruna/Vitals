@@ -279,6 +279,8 @@ def build_installer():
         f"/DDIST_DIR={DIST_DIR}",
         f"/DSETUP_DIR={SETUP_DIR}",
         f"/DAPP_VERSION={APP_INFO['version']}",
+        f"/DAPP_PUBLISHER={COMPANY['company_name']}",
+        f"/DAPP_URL={COMPANY['website']}",
         str(NSI_PATH),
     ]
 
