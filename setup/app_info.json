@@ -1,8 +1,7 @@
 {
-    "app_name": "PMUsage",
-    "company": "UVuruna",
-    "product_name": "PMUsage",
+    "version": "2.0.143",
+    "name": "PMUsage",
     "description": "Real-time CPU and Memory usage monitor",
-    "copyright": "© 2026 UVuruna",
-    "version": "2.0.142"
+    "exe_name": "PMUsage.exe",
+    "installer_name": "PMUsage_Setup.exe"
 }

@@ -30,10 +30,10 @@ DIST_DIR = PROJECT_DIR / "dist"
 BUILD_DIR = PROJECT_DIR / "build"
 
 ICON_PATH = PROJECT_DIR / "assets" / "icon.ico"
-CERT_PATH = SETUP_DIR / "cert" / "PMUsage.pfx"
 PASSWORD_PATH = SETUP_DIR / "cert" / "password.txt"
 NSI_PATH = SETUP_DIR / "installer.nsi"
 APP_INFO_PATH = SETUP_DIR / "app_info.json"
+COMPANY_JSON_PATH = PROJECT_DIR.parent.parent / "company.json"
 VERSION_INFO_PATH = SETUP_DIR / "version_info.txt"
 
 
@@ -50,9 +50,15 @@ def _load_app_info() -> dict:
     return json.loads(APP_INFO_PATH.read_text(encoding="utf-8"))
 
 
+def _load_company() -> dict:
+    return json.loads(COMPANY_JSON_PATH.read_text(encoding="utf-8"))
+
+
 CERT_PASSWORD = _load_password()
 APP_INFO = _load_app_info()
-APP_NAME = APP_INFO["app_name"]
+COMPANY = _load_company()
+APP_NAME = APP_INFO["name"]
+CERT_PATH = SETUP_DIR / "cert" / f"{APP_NAME}.pfx"
 ENTRY_POINT = PROJECT_DIR / "main.py"
 
 
@@ -86,13 +92,13 @@ VSVersionInfo(
     StringFileInfo([
       StringTable(
         u'040904B0',
-        [StringStruct(u'CompanyName', u'{APP_INFO["company"]}'),
+        [StringStruct(u'CompanyName', u'{COMPANY["company_name"]}'),
          StringStruct(u'FileDescription', u'{APP_INFO["description"]}'),
          StringStruct(u'FileVersion', u'{v}'),
-         StringStruct(u'InternalName', u'{APP_INFO["app_name"]}'),
-         StringStruct(u'LegalCopyright', u'{APP_INFO["copyright"]}'),
-         StringStruct(u'OriginalFilename', u'{APP_INFO["app_name"]}.exe'),
-         StringStruct(u'ProductName', u'{APP_INFO["product_name"]}'),
+         StringStruct(u'InternalName', u'{APP_INFO["name"]}'),
+         StringStruct(u'LegalCopyright', u'{COMPANY["copyright_string"]}'),
+         StringStruct(u'OriginalFilename', u'{APP_INFO["exe_name"]}'),
+         StringStruct(u'ProductName', u'{APP_INFO["name"]}'),
          StringStruct(u'ProductVersion', u'{v}')])
       ]),
     VarFileInfo([VarStruct(u'Translation', [0x0409, 1200])])
@@ -101,7 +107,7 @@ VSVersionInfo(
 """
     VERSION_INFO_PATH.write_text(content, encoding="utf-8")
     print(f"  Written: {VERSION_INFO_PATH}")
-    print(f"  Version: {v}  Company: {APP_INFO['company']}")
+    print(f"  Version: {v}  Company: {COMPANY['company_name']}")
 
 
 def step(msg: str):
@@ -278,7 +284,7 @@ def build_installer():
 
     run(cmd)
 
-    installer_path = DIST_DIR / f"{APP_NAME}_Setup.exe"
+    installer_path = DIST_DIR / APP_INFO["installer_name"]
     if installer_path.exists():
         print(f"  Installer: {installer_path}")
         size_mb = installer_path.stat().st_size / (1024 * 1024)
@@ -307,7 +313,7 @@ def main():
     build_installer()
 
     step("BUILD COMPLETE")
-    print(f"  Installer: {DIST_DIR / f'{APP_NAME}_Setup.exe'}")
+    print(f"  Installer: {DIST_DIR / APP_INFO['installer_name']}")
     print()
 
 
