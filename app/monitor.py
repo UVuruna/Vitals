@@ -595,6 +595,7 @@ class ProcessMonitor:
 
         # Peak buffer: (timestamp, total_usage) — rolling window, same retention as snapshots
         self._peak_buffer: deque = deque()
+        self._first_cpu_tick: bool = True  # First bulk-collect tick has bogus total_cpu (no prev delta)
 
         # Initialize CPU percent (first call returns 0)
         if mode == MonitorMode.CPU:
@@ -717,11 +718,14 @@ class ProcessMonitor:
         self.stats.total_usage = total_cpu
         self.stats.process_count = len(aggregated)
 
-        now_ts = time.time()
-        self._peak_buffer.append((now_ts, total_cpu))
-        cutoff = now_ts - self.retention_seconds
-        while self._peak_buffer and self._peak_buffer[0][0] < cutoff:
-            self._peak_buffer.popleft()
+        if self._first_cpu_tick:
+            self._first_cpu_tick = False
+        else:
+            now_ts = time.time()
+            self._peak_buffer.append((now_ts, total_cpu))
+            cutoff = now_ts - self.retention_seconds
+            while self._peak_buffer and self._peak_buffer[0][0] < cutoff:
+                self._peak_buffer.popleft()
 
         top = heapq.nlargest(limit, aggregated.items(), key=lambda x: x[1][_CPU_IDX])
         return [
