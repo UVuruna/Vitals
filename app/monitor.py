@@ -593,6 +593,9 @@ class ProcessMonitor:
         self._rolling_snapshots: deque = deque()
         self._refresh_rate_ms: int = 1000  # Used to compute uptime from sample count
 
+        # Peak buffer: (timestamp, total_usage) — rolling window, same retention as snapshots
+        self._peak_buffer: deque = deque()
+
         # Initialize CPU percent (first call returns 0)
         if mode == MonitorMode.CPU:
             self._init_cpu_percent()
@@ -714,9 +717,11 @@ class ProcessMonitor:
         self.stats.total_usage = total_cpu
         self.stats.process_count = len(aggregated)
 
-        if total_cpu > self.stats.max_usage:
-            self.stats.max_usage = total_cpu
-            self.stats.max_usage_time = datetime.now()
+        now_ts = time.time()
+        self._peak_buffer.append((now_ts, total_cpu))
+        cutoff = now_ts - self.retention_seconds
+        while self._peak_buffer and self._peak_buffer[0][0] < cutoff:
+            self._peak_buffer.popleft()
 
         top = heapq.nlargest(limit, aggregated.items(), key=lambda x: x[1][_CPU_IDX])
         return [
@@ -730,9 +735,11 @@ class ProcessMonitor:
         self.stats.total_usage = vm.used
         self.stats.process_count = len(aggregated)
 
-        if vm.used > self.stats.max_usage:
-            self.stats.max_usage = vm.used
-            self.stats.max_usage_time = datetime.now()
+        now_ts = time.time()
+        self._peak_buffer.append((now_ts, vm.used))
+        cutoff = now_ts - self.retention_seconds
+        while self._peak_buffer and self._peak_buffer[0][0] < cutoff:
+            self._peak_buffer.popleft()
 
         top = heapq.nlargest(limit, aggregated.items(), key=lambda x: x[1][_RSS_IDX])
         return [
@@ -861,7 +868,11 @@ class ProcessMonitor:
             avg_value = total_val / total_snapshots
             if avg_value <= 0:
                 continue
-            uptime_seconds = round(samples * self._refresh_rate_ms / 1000)
+            if len(self._rolling_snapshots) >= 2:
+                actual_span = self._rolling_snapshots[-1][0] - self._rolling_snapshots[0][0]
+                uptime_seconds = round(samples * actual_span / total_snapshots)
+            else:
+                uptime_seconds = 0
             result.append(ProcessInfo(
                 name=name,
                 value=avg_value,
@@ -911,17 +922,18 @@ class ProcessMonitor:
                 return f"{total:,.0f} {unit} ({format_pct(pct)})"
 
     def get_max_display(self, unit: str = "MB") -> str:
-        """Get formatted maximum usage string."""
-        if self.stats.max_usage_time is None:
+        """Get formatted maximum usage string within the rolling retention window."""
+        if not self._peak_buffer:
             return "No data yet"
 
-        time_str = self.stats.max_usage_time.strftime("%H:%M")
+        peak_ts, peak_val = max(self._peak_buffer, key=lambda x: x[1])
+        time_str = datetime.fromtimestamp(peak_ts).strftime("%H:%M")
 
         if self.mode == MonitorMode.CPU:
-            return f"Peak: {format_pct(self.stats.max_usage)} at {time_str}"
+            return f"Peak: {format_pct(peak_val)} at {time_str}"
         else:
             divisor = MEMORY_UNITS.get(unit, MEMORY_UNITS["MB"])
-            value = self.stats.max_usage / divisor
+            value = peak_val / divisor
             if unit == "GB":
                 return f"Peak: {value:,.2f} {unit} at {time_str}"
             else:
