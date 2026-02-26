@@ -374,7 +374,6 @@ class BaseMonitorWindow(QMainWindow):
                 self.peak_label.setVisible(True)
             else:
                 self.bottom_toggle_btn.setText("◀ Rolling Average ▶")
-                self.peak_label.setVisible(False)
         current_cols = layout.get("current_cols")
         if isinstance(current_cols, list):
             self._saved_col_widths_current = current_cols
@@ -652,7 +651,6 @@ class BaseMonitorWindow(QMainWindow):
             self.peak_label.setVisible(True)
         else:
             self.bottom_toggle_btn.setText("◀ Rolling Average ▶")
-            self.peak_label.setVisible(False)
 
     def _make_total_item(self, text: str) -> QTableWidgetItem:
         """Create a styled QTableWidgetItem for the Σ total row."""
