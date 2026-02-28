@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer, QEvent
+from PySide6.QtCore import Qt, QTimer, QEvent, QRect
 
 
 def get_base_path() -> Path:
@@ -56,7 +56,7 @@ from .process_actions import (
     set_priority,
 )
 from .process_dialog import KillConfirmDialog, PriorityDialog
-from .styles import CONTEXT_MENU_STYLE
+from .styles import CONTEXT_MENU_STYLE, Defaults, Fonts, FontScale
 
 
 class TotalRowDelegate(QStyledItemDelegate):
@@ -156,6 +156,10 @@ class BaseMonitorWindow(QMainWindow):
         self._layout_restored: bool = False
         self._peer_window: 'BaseMonitorWindow | None' = None
         self._bottom_page: int = 0  # 0 = Peak Usage, 1 = Rolling Average
+
+        # Font scale base size (set by subclass via _initial_settings before super().__init__)
+        self._font_base: int = getattr(self, '_initial_settings', None)
+        self._font_base = self._font_base.font_size if self._font_base else Defaults.FONT_SIZE
 
         # Set window icon (Qt level)
         base = get_base_path()
@@ -325,6 +329,7 @@ class BaseMonitorWindow(QMainWindow):
             data["windows"][self._get_window_key()] = {
                 "x": geo.x(), "y": geo.y(),
                 "width": geo.width(), "height": geo.height(),
+                "font_size": self._font_base,
                 "splitter": self.splitter.sizes(),
                 "bottom_page": self._bottom_page,
                 "current_cols": [
@@ -361,7 +366,22 @@ class BaseMonitorWindow(QMainWindow):
             return
         x, y, w, h = layout.get("x"), layout.get("y"), layout.get("width"), layout.get("height")
         if all(v is not None for v in [x, y, w, h]):
-            self.setGeometry(x, y, w, h)
+            saved_rect = QRect(x, y, w, h)
+            on_screen = any(
+                screen.availableGeometry().intersects(saved_rect)
+                for screen in QApplication.screens()
+            )
+            if on_screen:
+                self.setGeometry(x, y, w, h)
+            else:
+                primary = QApplication.primaryScreen().availableGeometry()
+                new_x = primary.x() + (primary.width() - w) // 2
+                new_y = primary.y() + (primary.height() - h) // 2
+                self.setGeometry(new_x, new_y, w, h)
+        saved_font = layout.get("font_size")
+        if saved_font is not None and saved_font != self._font_base:
+            self._font_base = int(saved_font)
+            self._apply_fonts()
         splitter_sizes = layout.get("splitter")
         if isinstance(splitter_sizes, list) and len(splitter_sizes) == 2:
             self.splitter.setSizes(splitter_sizes)
@@ -424,6 +444,45 @@ class BaseMonitorWindow(QMainWindow):
         palette.setColor(QPalette.ColorRole.ButtonText, QColor(self.TEXT))
         self.setPalette(palette)
 
+    def _font(self, offset: int, bold: bool = False) -> QFont:
+        """Create a proportionally scaled font.
+
+        Uses FontScale offsets: TITLE(+5), SECTION(+2), SUBTITLE(+1),
+        BODY(0), SMALL(-1), TINY(-2).
+        """
+        weight = QFont.Weight.Bold if bold else QFont.Weight.Normal
+        return QFont(Fonts.FAMILY, FontScale.size(self._font_base, offset), weight)
+
+    def _apply_fonts(self):
+        """Re-apply all fonts after font_size change. Updates labels, buttons, and tables."""
+        self.title_label.setFont(self._font(FontScale.TITLE, bold=True))
+        self.total_label.setFont(self._font(FontScale.SUBTITLE))
+        for lbl in self.sensor_name_labels:
+            lbl.setFont(self._font(FontScale.TINY))
+        for lbl in self.sensor_value_labels:
+            lbl.setFont(self._font(FontScale.BODY))
+        self.current_title.setFont(self._font(FontScale.SECTION, bold=True))
+        self.bottom_toggle_btn.setFont(self._font(FontScale.SECTION, bold=True))
+        self.peak_label.setFont(self._font(FontScale.SMALL))
+        self.pause_btn.setFont(self._font(FontScale.BODY))
+        self.settings_btn.setFont(self._font(FontScale.BODY))
+        # Update table row heights and header font
+        row_h = FontScale.row_height(self._font_base)
+        header_css = f"""
+            QHeaderView::section {{
+                background-color: {self.HEADER_COLOR};
+                color: {self.TEXT};
+                font-family: {Fonts.FAMILY};
+                font-size: {FontScale.size(self._font_base, FontScale.SMALL)}pt;
+                font-weight: bold;
+                padding: 8px;
+                border: none;
+            }}
+        """
+        for table in (self.current_table, self.history_table, self.rolling_table):
+            table.verticalHeader().setDefaultSectionSize(row_h)
+            table.horizontalHeader().setStyleSheet(header_css)
+
     def _setup_ui(self):
         """Initialize the main UI."""
         self.setWindowTitle(self._get_title())
@@ -451,14 +510,14 @@ class BaseMonitorWindow(QMainWindow):
         title_row.setContentsMargins(0, 0, 0, 0)
 
         self.title_label = QLabel(self._get_title())
-        self.title_label.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        self.title_label.setFont(self._font(FontScale.TITLE, bold=True))
         self.title_label.setStyleSheet(f"color: {self.TEXT}; background: transparent;")
         title_row.addWidget(self.title_label)
 
         title_row.addStretch()
 
         self.total_label = QLabel("")
-        self.total_label.setFont(QFont("Segoe UI", 12))
+        self.total_label.setFont(self._font(FontScale.SUBTITLE))
         self.total_label.setStyleSheet(f"color: {self.TEXT}; background: transparent;")
         self.total_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         title_row.addWidget(self.total_label)
@@ -483,13 +542,13 @@ class BaseMonitorWindow(QMainWindow):
             col_layout.setSpacing(1)
 
             name_lbl = QLabel("")
-            name_lbl.setFont(QFont("Segoe UI", 9))
+            name_lbl.setFont(self._font(FontScale.TINY))
             name_lbl.setStyleSheet(f"color: {self.TEXT_MUTED}; background: transparent;")
             name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             col_layout.addWidget(name_lbl)
 
             value_lbl = QLabel("")
-            value_lbl.setFont(QFont("Segoe UI", 11))
+            value_lbl.setFont(self._font(FontScale.BODY))
             value_lbl.setStyleSheet(f"color: {self.TEXT}; background: transparent;")
             value_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             col_layout.addWidget(value_lbl)
@@ -521,7 +580,7 @@ class BaseMonitorWindow(QMainWindow):
         current_layout.setSpacing(4)
 
         self.current_title = QLabel("Current Processes")
-        self.current_title.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        self.current_title.setFont(self._font(FontScale.SECTION, bold=True))
         self.current_title.setStyleSheet(f"color: {self.TEXT};")
         current_layout.addWidget(self.current_title)
 
@@ -540,7 +599,7 @@ class BaseMonitorWindow(QMainWindow):
         bottom_header_row.setContentsMargins(0, 0, 0, 0)
 
         self.bottom_toggle_btn = QPushButton("◀ Peak Usage ▶")
-        self.bottom_toggle_btn.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        self.bottom_toggle_btn.setFont(self._font(FontScale.SECTION, bold=True))
         self.bottom_toggle_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
@@ -558,7 +617,7 @@ class BaseMonitorWindow(QMainWindow):
         bottom_header_row.addStretch()
 
         self.peak_label = QLabel("Peak: --")
-        self.peak_label.setFont(QFont("Segoe UI", 10))
+        self.peak_label.setFont(self._font(FontScale.SMALL))
         self.peak_label.setStyleSheet(f"color: {self.TEXT_MUTED}; background: transparent;")
         bottom_header_row.addWidget(self.peak_label)
         history_layout.addLayout(bottom_header_row)
@@ -582,7 +641,7 @@ class BaseMonitorWindow(QMainWindow):
         btn_layout.addStretch()
 
         self.pause_btn = QPushButton("Pause")
-        self.pause_btn.setFont(QFont("Segoe UI", 11))
+        self.pause_btn.setFont(self._font(FontScale.BODY))
         self.pause_btn.setFixedSize(100, 36)
         self.pause_btn.setStyleSheet(f"""
             QPushButton {{
@@ -599,7 +658,7 @@ class BaseMonitorWindow(QMainWindow):
         btn_layout.addWidget(self.pause_btn)
 
         self.settings_btn = QPushButton("Settings")
-        self.settings_btn.setFont(QFont("Segoe UI", 11))
+        self.settings_btn.setFont(self._font(FontScale.BODY))
         self.settings_btn.setFixedSize(100, 36)
         self.settings_btn.setStyleSheet(f"""
             QPushButton {{
@@ -657,7 +716,7 @@ class BaseMonitorWindow(QMainWindow):
         item = QTableWidgetItem(text)
         item.setData(TotalRowDelegate.ROLE, True)
         item.setForeground(QColor(self.TEXT))
-        item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        item.setFont(self._font(FontScale.SMALL, bold=True))
         return item
 
     def _create_table(self, rows: int, mode_cols: str = "none", has_time: bool = False, bg_color: str = None, has_total_row: bool = False, has_uptime: bool = False) -> QTableWidget:
@@ -741,13 +800,15 @@ class BaseMonitorWindow(QMainWindow):
             QHeaderView::section {{
                 background-color: {self.HEADER_COLOR};
                 color: {self.TEXT};
+                font-family: {Fonts.FAMILY};
+                font-size: {FontScale.size(self._font_base, FontScale.SMALL)}pt;
                 font-weight: bold;
                 padding: 8px;
                 border: none;
             }}
         """)
 
-        table.verticalHeader().setDefaultSectionSize(32)
+        table.verticalHeader().setDefaultSectionSize(FontScale.row_height(self._font_base))
 
         # Left-align header text for all columns except # and Process (so narrow columns clip from right)
         align_left = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -1002,6 +1063,7 @@ class CPUWindow(BaseMonitorWindow):
             history_rows=initial_settings.history_rows,
             refresh_rate_ms=initial_settings.refresh_rate_ms,
             retention_minutes=initial_settings.retention_minutes,
+            font_size=initial_settings.font_size,
         )
         super().__init__(parent)
 
@@ -1035,6 +1097,9 @@ class CPUWindow(BaseMonitorWindow):
             prev = self._cpu_settings
             self._cpu_settings = new_settings
             self._apply_settings(prev)
+            if new_settings.font_size != prev.font_size:
+                self._font_base = new_settings.font_size
+                self._apply_fonts()
             if self._peer_window and new_settings.refresh_rate_ms != prev.refresh_rate_ms:
                 self._peer_window._sync_refresh_rate(new_settings.refresh_rate_ms)
 
@@ -1280,6 +1345,7 @@ class MemoryWindow(BaseMonitorWindow):
             refresh_rate_ms=initial_settings.refresh_rate_ms,
             retention_minutes=initial_settings.retention_minutes,
             memory_unit=initial_settings.memory_unit,
+            font_size=initial_settings.font_size,
         )
         self._commit_limit_bytes: int = initial_settings.commit_limit_bytes
         super().__init__(parent)
@@ -1314,6 +1380,9 @@ class MemoryWindow(BaseMonitorWindow):
             prev = self._memory_settings
             self._memory_settings = new_settings
             self._apply_settings(prev)
+            if new_settings.font_size != prev.font_size:
+                self._font_base = new_settings.font_size
+                self._apply_fonts()
             if self._peer_window and new_settings.refresh_rate_ms != prev.refresh_rate_ms:
                 self._peer_window._sync_refresh_rate(new_settings.refresh_rate_ms)
 

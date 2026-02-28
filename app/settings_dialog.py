@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from .monitor import MonitorMode
-from .styles import Defaults, MEMORY_UNITS
+from .styles import Defaults, FontScale, MEMORY_UNITS
 from .color_management import ProcessColorManager
 
 
@@ -115,6 +115,7 @@ def _save_last_setup(settings: 'InitialSettings') -> None:
             "refresh_rate_ms": settings.refresh_rate_ms,
             "retention_minutes": settings.retention_minutes,
             "memory_unit": settings.memory_unit,
+            "font_size": settings.font_size,
         })
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -632,6 +633,7 @@ class InitialSettings:
     refresh_rate_ms: int = Defaults.REFRESH_RATE_MS
     retention_minutes: int = Defaults.RETENTION_MINUTES
     memory_unit: str = Defaults.MEMORY_UNIT
+    font_size: int = Defaults.FONT_SIZE
 
     @property
     def cpu_threads(self) -> int:
@@ -827,6 +829,27 @@ class InitialSettingsDialog(QDialog):
         row4.addWidget(self.retention_label)
         layout.addLayout(row4)
 
+        # Font size
+        row_font = QHBoxLayout()
+        row_font.addWidget(self._make_label("Font size:", 11, color="#aaaaaa"))
+        row_font.addStretch()
+        self.font_slider = QSlider(Qt.Orientation.Horizontal)
+        self.font_slider.setRange(8, 18)
+        self.font_slider.setValue(Defaults.FONT_SIZE)
+        self.font_slider.setFixedWidth(140)
+        self.font_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
+        """)
+        row_font.addWidget(self.font_slider)
+        self.font_label = self._make_label(f"{Defaults.FONT_SIZE} pt", 11)
+        self.font_label.setFixedWidth(65)
+        self.font_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.font_slider.valueChanged.connect(lambda v: self.font_label.setText(f"{v} pt"))
+        row_font.addWidget(self.font_label)
+        layout.addLayout(row_font)
+
         layout.addSpacing(8)
 
         # Memory Settings
@@ -936,6 +959,8 @@ class InitialSettingsDialog(QDialog):
             self.retention_slider.setValue(int(saved["retention_minutes"]) // 10)
         if "memory_unit" in saved:
             self.unit_combo.setCurrentText(saved["memory_unit"])
+        if "font_size" in saved:
+            self.font_slider.setValue(int(saved["font_size"]))
 
     def get_settings(self) -> InitialSettings:
         return InitialSettings(
@@ -946,6 +971,7 @@ class InitialSettingsDialog(QDialog):
             refresh_rate_ms=self.refresh_slider.value() * 500,
             retention_minutes=self.retention_slider.value() * 10,
             memory_unit=self.unit_combo.currentText(),
+            font_size=self.font_slider.value(),
         )
 
 
@@ -960,6 +986,7 @@ class CPUSettings:
     history_rows: int = Defaults.HISTORY_ROWS
     refresh_rate_ms: int = Defaults.REFRESH_RATE_MS
     retention_minutes: int = Defaults.RETENTION_MINUTES
+    font_size: int = Defaults.FONT_SIZE
 
 
 @dataclass
@@ -970,6 +997,7 @@ class MemorySettings:
     refresh_rate_ms: int = Defaults.REFRESH_RATE_MS
     retention_minutes: int = Defaults.RETENTION_MINUTES
     memory_unit: str = Defaults.MEMORY_UNIT
+    font_size: int = Defaults.FONT_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -1100,6 +1128,27 @@ class CPUSettingsDialog(QDialog):
         row4.addWidget(self.retention_label)
         layout.addLayout(row4)
 
+        # Font size
+        row_font = QHBoxLayout()
+        row_font.addWidget(self._make_label("Font size:", 11, color="#aaaaaa"))
+        row_font.addStretch()
+        self.font_slider = QSlider(Qt.Orientation.Horizontal)
+        self.font_slider.setRange(8, 18)
+        self.font_slider.setValue(Defaults.FONT_SIZE)
+        self.font_slider.setFixedWidth(140)
+        self.font_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
+        """)
+        row_font.addWidget(self.font_slider)
+        self.font_label = self._make_label(f"{Defaults.FONT_SIZE} pt", 11)
+        self.font_label.setFixedWidth(65)
+        self.font_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.font_slider.valueChanged.connect(lambda v: self.font_label.setText(f"{v} pt"))
+        row_font.addWidget(self.font_label)
+        layout.addLayout(row_font)
+
         # Color Settings — all sections in one compact container (4px spacing)
         color_container = QWidget()
         color_container.setStyleSheet("background: transparent;")
@@ -1148,6 +1197,7 @@ class CPUSettingsDialog(QDialog):
         self.history_spin.setValue(self.settings.history_rows)
         self.refresh_slider.setValue(self.settings.refresh_rate_ms // 500)
         self.retention_slider.setValue(self.settings.retention_minutes // 10)
+        self.font_slider.setValue(self.settings.font_size)
 
     def get_settings(self) -> CPUSettings:
         return CPUSettings(
@@ -1155,6 +1205,7 @@ class CPUSettingsDialog(QDialog):
             history_rows=self.history_spin.value(),
             refresh_rate_ms=self.refresh_slider.value() * 500,
             retention_minutes=self.retention_slider.value() * 10,
+            font_size=self.font_slider.value(),
         )
 
 
@@ -1286,6 +1337,27 @@ class MemorySettingsDialog(QDialog):
         row4.addWidget(self.retention_label)
         layout.addLayout(row4)
 
+        # Font size
+        row_font = QHBoxLayout()
+        row_font.addWidget(self._make_label("Font size:", 11, color="#aaaaaa"))
+        row_font.addStretch()
+        self.font_slider = QSlider(Qt.Orientation.Horizontal)
+        self.font_slider.setRange(8, 18)
+        self.font_slider.setValue(Defaults.FONT_SIZE)
+        self.font_slider.setFixedWidth(140)
+        self.font_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
+        """)
+        row_font.addWidget(self.font_slider)
+        self.font_label = self._make_label(f"{Defaults.FONT_SIZE} pt", 11)
+        self.font_label.setFixedWidth(65)
+        self.font_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.font_slider.valueChanged.connect(lambda v: self.font_label.setText(f"{v} pt"))
+        row_font.addWidget(self.font_label)
+        layout.addLayout(row_font)
+
         layout.addWidget(self._make_label("Memory Settings", 12, bold=True))
         row5 = QHBoxLayout()
         row5.addWidget(self._make_label("Display unit:", 11, color="#aaaaaa"))
@@ -1362,6 +1434,7 @@ class MemorySettingsDialog(QDialog):
         self.refresh_slider.setValue(self.settings.refresh_rate_ms // 500)
         self.retention_slider.setValue(self.settings.retention_minutes // 10)
         self.unit_combo.setCurrentText(self.settings.memory_unit)
+        self.font_slider.setValue(self.settings.font_size)
 
     def get_settings(self) -> MemorySettings:
         return MemorySettings(
@@ -1370,4 +1443,5 @@ class MemorySettingsDialog(QDialog):
             refresh_rate_ms=self.refresh_slider.value() * 500,
             retention_minutes=self.retention_slider.value() * 10,
             memory_unit=self.unit_combo.currentText(),
+            font_size=self.font_slider.value(),
         )

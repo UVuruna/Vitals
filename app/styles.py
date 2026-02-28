@@ -38,6 +38,35 @@ class Fonts:
     SIZE_SMALL = 10
 
 
+class FontScale:
+    """Proportional font scaling (like em/rem in CSS).
+
+    All sizes are defined as offsets from a base size.
+    Default base = 11pt reproduces the original hardcoded sizes.
+    """
+
+    # Offsets from base size
+    TITLE = 5       # base + 5 → 16pt at default (window title)
+    SECTION = 2     # base + 2 → 13pt at default (section headers)
+    SUBTITLE = 1    # base + 1 → 12pt at default (total label, buttons)
+    BODY = 0        # base     → 11pt at default (standard text)
+    SMALL = -1      # base - 1 → 10pt at default (secondary text)
+    TINY = -2       # base - 2 →  9pt at default (core labels)
+
+    MIN_SIZE = 6    # Absolute minimum font size (pt)
+
+    @staticmethod
+    def size(base: int, offset: int) -> int:
+        """Compute a scaled font size from base + offset, clamped to MIN_SIZE."""
+        return max(FontScale.MIN_SIZE, base + offset)
+
+    @staticmethod
+    def row_height(base: int) -> int:
+        """Compute table row height proportional to base font size."""
+        # Default: base=11 → row_height=28. Scale linearly.
+        return round(28 * base / 11)
+
+
 # Default configuration values
 class Defaults:
     """Default settings values."""
@@ -49,6 +78,7 @@ class Defaults:
     RETENTION_MINUTES = 120
 
     MEMORY_UNIT = "MB"
+    FONT_SIZE = 11
 
     # These are auto-detected but can be overridden
     CPU_THREADS = None  # Auto-detect
