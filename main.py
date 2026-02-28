@@ -5,6 +5,7 @@ Process Monitor - Entry Point
 Real-time CPU and Memory usage monitoring for Windows processes.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -33,8 +34,17 @@ def main():
         pass
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Process Monitor")
-    app.setApplicationVersion("2.0.155")
+
+    # Load app metadata from app_info.json (single source of truth)
+    app_info_path = get_base_path() / "setup" / "app_info.json"
+    if app_info_path.exists():
+        with open(app_info_path, encoding="utf-8") as f:
+            app_info = json.load(f)
+        app.setApplicationName(app_info.get("name", "PMUsage"))
+        app.setApplicationVersion(app_info.get("version", "0.0.0"))
+    else:
+        app.setApplicationName("PMUsage")
+        app.setApplicationVersion("0.0.0")
     app.setOrganizationName("PC Gadgets")
 
     # Set app icon

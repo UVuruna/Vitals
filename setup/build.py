@@ -175,9 +175,10 @@ def build_pyinstaller():
         "--icon", str(ICON_PATH),
         "--windowed",
         "--version-file", str(VERSION_INFO_PATH),
-        # Bundle assets and config
+        # Bundle assets, config, and app metadata
         "--add-data", f"{PROJECT_DIR / 'assets'};assets",
         "--add-data", f"{PROJECT_DIR / 'config'};config",
+        "--add-data", f"{APP_INFO_PATH};setup",
     ]
 
     # Add hidden imports
