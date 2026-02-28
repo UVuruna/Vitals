@@ -1109,8 +1109,10 @@ class SharedDataCollector(QThread):
                 hwinfo = cpu_monitor.get_hwinfo_data() if cpu_monitor else HWiNFOData()
 
                 if need_cpu:
-                    processes = cpu_monitor._extract_cpu_top(aggregated, total_cpu, cpu_settings['current_rows'])
-                    cpu_monitor.update_history(processes)
+                    history_limit = max(cpu_settings['current_rows'], cpu_settings['history_rows'])
+                    all_processes = cpu_monitor._extract_cpu_top(aggregated, total_cpu, history_limit)
+                    processes = all_processes[:cpu_settings['current_rows']]
+                    cpu_monitor.update_history(all_processes)
                     cpu_monitor.update_rolling_average(aggregated)
                     cpu_totals = ProcessInfo(
                         name="Total",
@@ -1131,8 +1133,10 @@ class SharedDataCollector(QThread):
 
                 if need_mem:
                     unit = mem_settings.get('memory_unit', 'MB')
-                    processes = mem_monitor._extract_mem_top(aggregated, total_rss, mem_settings['current_rows'])
-                    mem_monitor.update_history(processes)
+                    history_limit = max(mem_settings['current_rows'], mem_settings['history_rows'])
+                    all_processes = mem_monitor._extract_mem_top(aggregated, total_rss, history_limit)
+                    processes = all_processes[:mem_settings['current_rows']]
+                    mem_monitor.update_history(all_processes)
                     mem_monitor.update_rolling_average(aggregated)
                     mem_totals = ProcessInfo(
                         name="Total",

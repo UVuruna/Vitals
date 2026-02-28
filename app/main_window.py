@@ -721,6 +721,40 @@ class BaseMonitorWindow(QMainWindow):
         item.setFont(self._font(FontScale.SMALL, bold=True))
         return item
 
+    def _fill_process_rows(self, table: QTableWidget, data, fill_cols_fn, *, limit: int | None = None):
+        """Fill table rows with process data. Handles row number, name+color+tooltip, and clearing.
+
+        Args:
+            table: Target QTableWidget.
+            data: List of ProcessInfo or HistoryRecord items.
+            fill_cols_fn: Callable(table, row, item, color_mgr) that fills mode-specific columns.
+            limit: Max rows to fill (defaults to table.rowCount()).
+        """
+        color_mgr = ProcessColorManager()
+        max_rows = limit if limit is not None else table.rowCount()
+
+        for row, item in enumerate(data):
+            if row >= max_rows:
+                break
+            table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+
+            name_item = QTableWidgetItem(item.name)
+            proc_color = color_mgr.get_process_color(item.name)
+            if proc_color:
+                name_item.setForeground(proc_color)
+            company = color_mgr.get_company_name(item.name)
+            if company:
+                name_item.setToolTip(company)
+            table.setItem(row, 1, name_item)
+
+            fill_cols_fn(table, row, item, color_mgr)
+
+        for row in range(min(len(data), max_rows), max_rows):
+            for col in range(table.columnCount()):
+                table.setItem(row, col, QTableWidgetItem(""))
+
+        return color_mgr
+
     def _create_table(self, rows: int, mode_cols: str = "none", has_time: bool = False, bg_color: str = None, has_total_row: bool = False, has_uptime: bool = False) -> QTableWidget:
         """Create a styled table.
 
@@ -1191,6 +1225,32 @@ class CPUWindow(BaseMonitorWindow):
 
         self._connect_table_selection()
 
+    def _fill_cpu_cols(self, table, row, item, color_mgr):
+        """Fill CPU-specific columns: Usage, Count, Threads."""
+        monitor = self._collector.cpu_monitor
+        value_str = monitor.format_value(item.value, "MB") if monitor else f"{item.value:.0f}"
+        value_item = QTableWidgetItem(value_str)
+        if monitor:
+            pct = item.value / (monitor.cpu_threads * 100) * 100
+            value_item.setForeground(color_mgr.get_value_color(pct, "cpu"))
+        table.setItem(row, 2, value_item)
+        table.setItem(row, 3, QTableWidgetItem(str(item.count)))
+        table.setItem(row, 4, QTableWidgetItem(str(item.threads) if item.threads > 0 else ""))
+
+    def _fill_cpu_history_cols(self, table, row, item, color_mgr):
+        """Fill CPU history columns: Usage, Count, Threads, Time."""
+        self._fill_cpu_cols(table, row, item, color_mgr)
+        table.setItem(row, 5, QTableWidgetItem(item.time_str))
+
+    def _fill_cpu_rolling_cols(self, table, row, item, color_mgr):
+        """Fill CPU rolling columns: Usage, Count, Threads, Uptime."""
+        self._fill_cpu_cols(table, row, item, color_mgr)
+        uptime_min = round(item.uptime_seconds / 60)
+        uptime_item = QTableWidgetItem(f"{uptime_min}m")
+        if uptime_min >= self._cpu_settings.retention_minutes:
+            uptime_item.setForeground(QColor(self.TEXT_MUTED))
+        table.setItem(row, 5, uptime_item)
+
     def _on_data_ready(self, data: MonitorData):
         """Handle data from collector."""
         if self.is_paused:
@@ -1223,37 +1283,9 @@ class CPUWindow(BaseMonitorWindow):
                 )
 
         # Update current table
-        color_mgr = ProcessColorManager()
         total_row = self.current_table.rowCount() - 1
-        for row, proc in enumerate(data.processes):
-            if row >= total_row:
-                break
-
-            self.current_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
-
-            name_item = QTableWidgetItem(proc.name)
-            proc_color = color_mgr.get_process_color(proc.name)
-            if proc_color:
-                name_item.setForeground(proc_color)
-            company = color_mgr.get_company_name(proc.name)
-            if company:
-                name_item.setToolTip(company)
-            self.current_table.setItem(row, 1, name_item)
-
-            value_str = monitor.format_value(proc.value, "MB") if monitor else f"{proc.value:.0f}"
-            value_item = QTableWidgetItem(value_str)
-            if monitor:
-                pct = proc.value / (monitor.cpu_threads * 100) * 100
-                value_item.setForeground(color_mgr.get_value_color(pct, "cpu"))
-            self.current_table.setItem(row, 2, value_item)
-
-            self.current_table.setItem(row, 3, QTableWidgetItem(str(proc.count)))
-            self.current_table.setItem(row, 4, QTableWidgetItem(str(proc.threads) if proc.threads > 0 else ""))
-
-        # Clear empty rows (excluding Σ total row)
-        for row in range(len(data.processes), total_row):
-            for col in range(self.current_table.columnCount()):
-                self.current_table.setItem(row, col, QTableWidgetItem(""))
+        color_mgr = self._fill_process_rows(
+            self.current_table, data.processes, self._fill_cpu_cols, limit=total_row)
 
         # Fill Σ total row
         totals = data.process_totals
@@ -1269,66 +1301,11 @@ class CPUWindow(BaseMonitorWindow):
         self.current_table.setItem(total_row, 4, self._make_total_item(str(totals.threads) if totals.threads > 0 else ""))
 
         # Update history table
-        for row, record in enumerate(data.history):
-            if row >= self.history_table.rowCount():
-                break
-
-            self.history_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
-
-            name_item = QTableWidgetItem(record.name)
-            proc_color = color_mgr.get_process_color(record.name)
-            if proc_color:
-                name_item.setForeground(proc_color)
-            company = color_mgr.get_company_name(record.name)
-            if company:
-                name_item.setToolTip(company)
-            self.history_table.setItem(row, 1, name_item)
-
-            value_str = monitor.format_value(record.value, "MB") if monitor else f"{record.value:.0f}"
-            value_item = QTableWidgetItem(value_str)
-            if monitor:
-                pct = record.value / (monitor.cpu_threads * 100) * 100
-                value_item.setForeground(color_mgr.get_value_color(pct, "cpu"))
-            self.history_table.setItem(row, 2, value_item)
-
-            self.history_table.setItem(row, 3, QTableWidgetItem(str(record.count)))
-            self.history_table.setItem(row, 4, QTableWidgetItem(str(record.threads) if record.threads > 0 else ""))
-            self.history_table.setItem(row, 5, QTableWidgetItem(record.time_str))
-
-        # Clear empty rows
-        for row in range(len(data.history), self.history_table.rowCount()):
-            for col in range(self.history_table.columnCount()):
-                self.history_table.setItem(row, col, QTableWidgetItem(""))
+        self._fill_process_rows(self.history_table, data.history, self._fill_cpu_history_cols)
 
         # Update rolling average table (dynamic row count)
-        rolling_data = data.rolling_average
-        self.rolling_table.setRowCount(len(rolling_data))
-        for row, proc in enumerate(rolling_data):
-            self.rolling_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
-
-            name_item = QTableWidgetItem(proc.name)
-            proc_color = color_mgr.get_process_color(proc.name)
-            if proc_color:
-                name_item.setForeground(proc_color)
-            company = color_mgr.get_company_name(proc.name)
-            if company:
-                name_item.setToolTip(company)
-            self.rolling_table.setItem(row, 1, name_item)
-
-            value_str = monitor.format_value(proc.value, "MB") if monitor else f"{proc.value:.0f}"
-            value_item = QTableWidgetItem(value_str)
-            if monitor:
-                pct = proc.value / (monitor.cpu_threads * 100) * 100
-                value_item.setForeground(color_mgr.get_value_color(pct, "cpu"))
-            self.rolling_table.setItem(row, 2, value_item)
-
-            self.rolling_table.setItem(row, 3, QTableWidgetItem(str(proc.count)))
-            self.rolling_table.setItem(row, 4, QTableWidgetItem(str(proc.threads) if proc.threads > 0 else ""))
-            uptime_min = round(proc.uptime_seconds / 60)
-            uptime_item = QTableWidgetItem(f"{uptime_min}m")
-            if uptime_min >= self._cpu_settings.retention_minutes:
-                uptime_item.setForeground(QColor(self.TEXT_MUTED))
-            self.rolling_table.setItem(row, 5, uptime_item)
+        self.rolling_table.setRowCount(len(data.rolling_average))
+        self._fill_process_rows(self.rolling_table, data.rolling_average, self._fill_cpu_rolling_cols)
 
     def closeEvent(self, event):
         """Handle close - disable CPU monitoring."""
@@ -1476,6 +1453,37 @@ class MemoryWindow(BaseMonitorWindow):
 
         self._connect_table_selection()
 
+    def _fill_memory_cols(self, table, row, item, color_mgr):
+        """Fill Memory-specific columns: Usage, Commit."""
+        monitor = self._collector.memory_monitor
+        unit = self._memory_settings.memory_unit
+        value_str = monitor.format_value(item.value, unit) if monitor else f"{item.value:.0f}"
+        value_item = QTableWidgetItem(value_str)
+        if monitor:
+            pct = item.value / monitor.ram_bytes * 100
+            value_item.setForeground(color_mgr.get_value_color(pct, "memory"))
+        table.setItem(row, 2, value_item)
+        commit_str = monitor.format_value(item.vms, unit) if monitor else ""
+        commit_item = QTableWidgetItem(commit_str)
+        if monitor and self._commit_limit_bytes > 0:
+            commit_pct = item.vms / self._commit_limit_bytes * 100
+            commit_item.setForeground(color_mgr.get_value_color(commit_pct, "memory_total"))
+        table.setItem(row, 3, commit_item)
+
+    def _fill_memory_history_cols(self, table, row, item, color_mgr):
+        """Fill Memory history columns: Usage, Commit, Time."""
+        self._fill_memory_cols(table, row, item, color_mgr)
+        table.setItem(row, 4, QTableWidgetItem(item.time_str))
+
+    def _fill_memory_rolling_cols(self, table, row, item, color_mgr):
+        """Fill Memory rolling columns: Usage, Commit, Uptime."""
+        self._fill_memory_cols(table, row, item, color_mgr)
+        uptime_min = round(item.uptime_seconds / 60)
+        uptime_item = QTableWidgetItem(f"{uptime_min}m")
+        if uptime_min >= self._memory_settings.retention_minutes:
+            uptime_item.setForeground(QColor(self.TEXT_MUTED))
+        table.setItem(row, 4, uptime_item)
+
     def _on_data_ready(self, data: MonitorData):
         """Handle data from collector."""
         if self.is_paused:
@@ -1512,41 +1520,9 @@ class MemoryWindow(BaseMonitorWindow):
                 self.sensor_value_labels[i].setStyleSheet(f"color: {self.TEXT}; background: transparent;")
 
         # Update current table
-        color_mgr = ProcessColorManager()
         total_row = self.current_table.rowCount() - 1
-        for row, proc in enumerate(data.processes):
-            if row >= total_row:
-                break
-
-            self.current_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
-
-            name_item = QTableWidgetItem(proc.name)
-            proc_color = color_mgr.get_process_color(proc.name)
-            if proc_color:
-                name_item.setForeground(proc_color)
-            company = color_mgr.get_company_name(proc.name)
-            if company:
-                name_item.setToolTip(company)
-            self.current_table.setItem(row, 1, name_item)
-
-            value_str = monitor.format_value(proc.value, unit) if monitor else f"{proc.value:.0f}"
-            value_item = QTableWidgetItem(value_str)
-            if monitor:
-                pct = proc.value / monitor.ram_bytes * 100
-                value_item.setForeground(color_mgr.get_value_color(pct, "memory"))
-            self.current_table.setItem(row, 2, value_item)
-
-            commit_str = monitor.format_value(proc.vms, unit) if monitor else ""
-            commit_item = QTableWidgetItem(commit_str)
-            if monitor and self._commit_limit_bytes > 0:
-                commit_pct = proc.vms / self._commit_limit_bytes * 100
-                commit_item.setForeground(color_mgr.get_value_color(commit_pct, "memory_total"))
-            self.current_table.setItem(row, 3, commit_item)
-
-        # Clear empty rows (excluding Σ total row)
-        for row in range(len(data.processes), total_row):
-            for col in range(self.current_table.columnCount()):
-                self.current_table.setItem(row, col, QTableWidgetItem(""))
+        color_mgr = self._fill_process_rows(
+            self.current_table, data.processes, self._fill_memory_cols, limit=total_row)
 
         # Fill Σ total row
         totals = data.process_totals
@@ -1566,74 +1542,11 @@ class MemoryWindow(BaseMonitorWindow):
         self.current_table.setItem(total_row, 3, total_commit_item)
 
         # Update history table
-        for row, record in enumerate(data.history):
-            if row >= self.history_table.rowCount():
-                break
-
-            self.history_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
-
-            name_item = QTableWidgetItem(record.name)
-            proc_color = color_mgr.get_process_color(record.name)
-            if proc_color:
-                name_item.setForeground(proc_color)
-            company = color_mgr.get_company_name(record.name)
-            if company:
-                name_item.setToolTip(company)
-            self.history_table.setItem(row, 1, name_item)
-
-            value_str = monitor.format_value(record.value, unit) if monitor else f"{record.value:.0f}"
-            value_item = QTableWidgetItem(value_str)
-            if monitor:
-                pct = record.value / monitor.ram_bytes * 100
-                value_item.setForeground(color_mgr.get_value_color(pct, "memory"))
-            self.history_table.setItem(row, 2, value_item)
-
-            commit_str = monitor.format_value(record.vms, unit) if monitor else ""
-            commit_item = QTableWidgetItem(commit_str)
-            if monitor and self._commit_limit_bytes > 0:
-                commit_pct = record.vms / self._commit_limit_bytes * 100
-                commit_item.setForeground(color_mgr.get_value_color(commit_pct, "memory_total"))
-            self.history_table.setItem(row, 3, commit_item)
-            self.history_table.setItem(row, 4, QTableWidgetItem(record.time_str))
-
-        # Clear empty rows
-        for row in range(len(data.history), self.history_table.rowCount()):
-            for col in range(self.history_table.columnCount()):
-                self.history_table.setItem(row, col, QTableWidgetItem(""))
+        self._fill_process_rows(self.history_table, data.history, self._fill_memory_history_cols)
 
         # Update rolling average table (dynamic row count)
-        rolling_data = data.rolling_average
-        self.rolling_table.setRowCount(len(rolling_data))
-        for row, proc in enumerate(rolling_data):
-            self.rolling_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
-
-            name_item = QTableWidgetItem(proc.name)
-            proc_color = color_mgr.get_process_color(proc.name)
-            if proc_color:
-                name_item.setForeground(proc_color)
-            company = color_mgr.get_company_name(proc.name)
-            if company:
-                name_item.setToolTip(company)
-            self.rolling_table.setItem(row, 1, name_item)
-
-            value_str = monitor.format_value(proc.value, unit) if monitor else f"{proc.value:.0f}"
-            value_item = QTableWidgetItem(value_str)
-            if monitor:
-                pct = proc.value / monitor.ram_bytes * 100
-                value_item.setForeground(color_mgr.get_value_color(pct, "memory"))
-            self.rolling_table.setItem(row, 2, value_item)
-
-            commit_str = monitor.format_value(proc.vms, unit) if monitor else ""
-            commit_item = QTableWidgetItem(commit_str)
-            if monitor and self._commit_limit_bytes > 0:
-                commit_pct = proc.vms / self._commit_limit_bytes * 100
-                commit_item.setForeground(color_mgr.get_value_color(commit_pct, "memory_total"))
-            self.rolling_table.setItem(row, 3, commit_item)
-            uptime_min = round(proc.uptime_seconds / 60)
-            uptime_item = QTableWidgetItem(f"{uptime_min}m")
-            if uptime_min >= self._memory_settings.retention_minutes:
-                uptime_item.setForeground(QColor(self.TEXT_MUTED))
-            self.rolling_table.setItem(row, 4, uptime_item)
+        self.rolling_table.setRowCount(len(data.rolling_average))
+        self._fill_process_rows(self.rolling_table, data.rolling_average, self._fill_memory_rolling_cols)
 
     def closeEvent(self, event):
         """Handle close - disable Memory monitoring."""
