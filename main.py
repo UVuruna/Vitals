@@ -35,17 +35,17 @@ def main():
 
     app = QApplication(sys.argv)
 
-    # Load app metadata from app_info.json (single source of truth)
-    app_info_path = get_base_path() / "setup" / "app_info.json"
-    if app_info_path.exists():
-        with open(app_info_path, encoding="utf-8") as f:
-            app_info = json.load(f)
-        app.setApplicationName(app_info.get("name", "PMUsage"))
-        app.setApplicationVersion(app_info.get("version", "0.0.0"))
-    else:
-        app.setApplicationName("PMUsage")
-        app.setApplicationVersion("0.0.0")
-    app.setOrganizationName("PC Gadgets")
+    # Load app metadata (single source of truth)
+    base = get_base_path()
+    with open(base / "setup" / "app_info.json", encoding="utf-8") as f:
+        app_info = json.load(f)
+    # company.json: bundled at root in frozen exe, two levels up in dev
+    company_path = base / "company.json" if getattr(sys, 'frozen', False) else base.parent.parent / "company.json"
+    with open(company_path, encoding="utf-8") as f:
+        company = json.load(f)
+    app.setApplicationName(app_info["name"])
+    app.setApplicationVersion(app_info["version"])
+    app.setOrganizationName(company["company_name"])
 
     # Set app icon
     base = get_base_path()

@@ -179,6 +179,7 @@ def build_pyinstaller():
         "--add-data", f"{PROJECT_DIR / 'assets'};assets",
         "--add-data", f"{PROJECT_DIR / 'config'};config",
         "--add-data", f"{APP_INFO_PATH};setup",
+        "--add-data", f"{COMPANY_JSON_PATH};.",
     ]
 
     # Add hidden imports
