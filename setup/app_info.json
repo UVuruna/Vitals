@@ -1,5 +1,5 @@
 {
-    "version": "2.0.155",
+    "version": "2.0.166",
     "name": "PMUsage",
     "description": "Real-time CPU and Memory usage monitor",
     "exe_name": "PMUsage.exe",
