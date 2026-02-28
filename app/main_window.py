@@ -479,7 +479,9 @@ class BaseMonitorWindow(QMainWindow):
                 border: none;
             }}
         """
+        content_font = self._font(FontScale.SMALL)
         for table in (self.current_table, self.history_table, self.rolling_table):
+            table.setFont(content_font)
             table.verticalHeader().setDefaultSectionSize(row_h)
             table.horizontalHeader().setStyleSheet(header_css)
 
@@ -833,6 +835,9 @@ class BaseMonitorWindow(QMainWindow):
             col_idx += 1
         if has_uptime:
             table.resizeColumnToContents(col_idx)
+
+        # Set table content font (inherited by all QTableWidgetItems)
+        table.setFont(self._font(FontScale.SMALL))
 
         # Enable hover events for tooltips and install delegate for total row background
         table.viewport().setMouseTracking(True)
