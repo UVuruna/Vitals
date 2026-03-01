@@ -591,6 +591,8 @@ class ProcessMonitor:
 
         # Rolling average buffer: (timestamp, {name: (value, threads, count, vms)}) snapshots
         self._rolling_snapshots: deque = deque()
+        # Incremental accumulator: {name: [total_value, total_threads, total_count, total_vms, sample_count]}
+        self._rolling_acc: dict[str, list] = {}
         self._refresh_rate_ms: int = 1000  # Used to compute uptime from sample count
 
         # Peak buffer: (timestamp, total_usage) — rolling window, same retention as snapshots
@@ -816,8 +818,12 @@ class ProcessMonitor:
         Stores a lightweight snapshot of all process values from the aggregated dict.
         CPU mode captures (cpu_pct, threads, count, 0); Memory mode captures (rss, 0, count, vms).
         Old snapshots outside the retention window are purged immediately.
+
+        Maintains an incremental accumulator (_rolling_acc) so get_rolling_average()
+        reads O(processes) instead of O(snapshots * processes).
         """
         now = time.time()
+        acc = self._rolling_acc
 
         if self.mode == MonitorMode.CPU:
             snapshot = {
@@ -830,11 +836,34 @@ class ProcessMonitor:
                 for name, entry in aggregated.items()
             }
 
+        # Add new snapshot values to accumulator
+        for name, (value, threads, count, vms) in snapshot.items():
+            if name not in acc:
+                acc[name] = [0.0, 0, 0, 0, 0]
+            entry = acc[name]
+            entry[0] += value
+            entry[1] += threads
+            entry[2] += count
+            entry[3] += vms
+            entry[4] += 1
+
         self._rolling_snapshots.append((now, snapshot))
 
+        # Purge expired snapshots and subtract their values from accumulator
         cutoff = now - self.retention_seconds
         while self._rolling_snapshots and self._rolling_snapshots[0][0] < cutoff:
-            self._rolling_snapshots.popleft()
+            _, expired = self._rolling_snapshots.popleft()
+            for name, (value, threads, count, vms) in expired.items():
+                entry = acc.get(name)
+                if entry is None:
+                    continue
+                entry[0] -= value
+                entry[1] -= threads
+                entry[2] -= count
+                entry[3] -= vms
+                entry[4] -= 1
+                if entry[4] <= 0:
+                    del acc[name]
 
     def get_rolling_average(self, limit: int = 0) -> list[ProcessInfo]:
         """Calculate per-process averages across the rolling window, sorted by average value descending.
@@ -842,6 +871,7 @@ class ProcessMonitor:
         Args:
             limit: Maximum number of processes to return (0 = no limit).
 
+        Reads from the incremental accumulator (_rolling_acc) maintained by update_rolling_average().
         Each process that appeared in at least one snapshot is included.
         Threads and count are rounded to the nearest integer.
         Processes with zero average value are excluded.
@@ -850,21 +880,13 @@ class ProcessMonitor:
         if total_snapshots == 0:
             return []
 
-        # acc: {name: [total_value, total_threads, total_count, total_vms, sample_count]}
-        # sample_count = snapshots where this process was present (for uptime calculation only)
-        acc: dict[str, list] = {}
-        for _, snapshot in self._rolling_snapshots:
-            for name, (value, threads, count, vms) in snapshot.items():
-                if name not in acc:
-                    acc[name] = [0.0, 0, 0, 0, 0]
-                acc[name][0] += value
-                acc[name][1] += threads
-                acc[name][2] += count
-                acc[name][3] += vms
-                acc[name][4] += 1
+        if total_snapshots >= 2:
+            actual_span = self._rolling_snapshots[-1][0] - self._rolling_snapshots[0][0]
+        else:
+            actual_span = 0.0
 
         result = []
-        for name, (total_val, total_threads, total_count, total_vms, samples) in acc.items():
+        for name, (total_val, total_threads, total_count, total_vms, samples) in self._rolling_acc.items():
             if samples == 0:
                 continue
             # Denominator is always total_snapshots — same for all processes.
@@ -872,11 +894,7 @@ class ProcessMonitor:
             avg_value = total_val / total_snapshots
             if avg_value <= 0:
                 continue
-            if len(self._rolling_snapshots) >= 2:
-                actual_span = self._rolling_snapshots[-1][0] - self._rolling_snapshots[0][0]
-                uptime_seconds = round(samples * actual_span / total_snapshots)
-            else:
-                uptime_seconds = 0
+            uptime_seconds = round(samples * actual_span / total_snapshots) if actual_span else 0
             result.append(ProcessInfo(
                 name=name,
                 value=avg_value,
