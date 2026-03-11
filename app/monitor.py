@@ -1354,11 +1354,10 @@ class SharedDataCollector(QThread):
 
             # Start ETW tracer if not already running
             if self._network_tracer is None:
-                from .network_monitor import NetworkTracer
+                from .network_monitor import NetworkTracer, _log as _net_log
                 self._network_tracer = NetworkTracer()
                 ok = self._network_tracer.start()
-                if not ok:
-                    pass  # error accessible via self._network_tracer.error
+                _net_log.info("configure_network: tracer.start() returned %s, error=%s", ok, self._network_tracer.error)
 
     def disable_cpu(self):
         """Disable CPU monitoring."""

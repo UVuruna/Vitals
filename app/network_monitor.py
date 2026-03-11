@@ -12,9 +12,27 @@ Data flow:
 
 import ctypes
 import ctypes.wintypes as wt
+import logging
 import struct
+import sys
 import threading
 from collections import defaultdict
+from pathlib import Path
+
+# File logger for ETW diagnostics (visible even from frozen EXE without console)
+def _setup_etw_logger():
+    logger = logging.getLogger("etw_net")
+    logger.setLevel(logging.DEBUG)
+    if getattr(sys, 'frozen', False):
+        log_path = Path(sys.executable).parent / "network_debug.log"
+    else:
+        log_path = Path(__file__).parent.parent / "network_debug.log"
+    handler = logging.FileHandler(str(log_path), mode='w', encoding='utf-8')
+    handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
+    logger.addHandler(handler)
+    return logger
+
+_log = _setup_etw_logger()
 
 
 # ---------------------------------------------------------------------------
@@ -295,17 +313,22 @@ class NetworkTracer:
 
     def start(self) -> bool:
         """Start ETW trace session. Returns True on success."""
+        _log.info("start() called, _running=%s", self._running)
         if self._running:
             return True
 
         self._error = None
 
-        if not self._is_admin():
+        is_admin = self._is_admin()
+        _log.info("is_admin=%s", is_admin)
+        if not is_admin:
             self._error = "ETW kernel trace requires Administrator privileges"
+            _log.error(self._error)
             return False
 
         # Stop any leftover session from a previous crash
         self._stop_existing_session()
+        _log.info("stopped existing session")
 
         # Build properties buffer using struct.pack_into for reliable byte-level writes.
         # ctypes from_buffer + nested struct assignment can silently write to copies.
@@ -341,13 +364,16 @@ class NetworkTracer:
 
         # Start trace session
         self._session_handle = ctypes.c_uint64(0)
+        _log.info("calling StartTraceW session=%s", self._SESSION_NAME)
         status = _StartTraceW(
             ctypes.byref(self._session_handle),
             self._SESSION_NAME,
             self._props_buf,
         )
+        _log.info("StartTraceW returned 0x%08X, handle=%s", status, self._session_handle.value)
         if status != 0:
             self._error = f"StartTraceW failed: 0x{status:08X}"
+            _log.error(self._error)
             return False
 
         # Create callback (prevent GC)
@@ -357,6 +383,7 @@ class NetworkTracer:
         self._running = True
         self._thread = threading.Thread(target=self._consume, daemon=True, name="ETW-NetTrace")
         self._thread.start()
+        _log.info("consumer thread started")
         return True
 
     def stop(self):
@@ -419,6 +446,7 @@ class NetworkTracer:
 
     def _consume(self):
         """Consumer thread: open trace and call ProcessTrace (blocks until session stops)."""
+        _log.info("_consume() started")
         try:
             logfile = _EVENT_TRACE_LOGFILEW()
             logfile.LoggerName = self._SESSION_NAME
@@ -426,20 +454,27 @@ class NetworkTracer:
             logfile.EventRecordCallback = ctypes.cast(self._callback_ref, ctypes.c_void_p).value
 
             self._trace_handle = ctypes.c_uint64(_OpenTraceW(ctypes.byref(logfile)))
+            _log.info("OpenTraceW handle=%s (invalid=%s)", self._trace_handle.value, self._trace_handle.value == _INVALID_PROCESSTRACE_HANDLE)
             if self._trace_handle.value == _INVALID_PROCESSTRACE_HANDLE:
                 self._error = "OpenTraceW failed: invalid handle"
+                _log.error(self._error)
                 self._running = False
                 return
 
             handle_arr = (ctypes.c_uint64 * 1)(self._trace_handle.value)
+            _log.info("calling ProcessTrace (blocking)...")
             status = _ProcessTrace(handle_arr, 1, None, None)
+            _log.info("ProcessTrace returned 0x%08X", status)
             if status != 0:
                 self._error = f"ProcessTrace failed: 0x{status:08X}"
+                _log.error(self._error)
 
         except Exception as e:
             self._error = f"ETW consumer error: {e}"
+            _log.exception("ETW consumer exception")
         finally:
             self._running = False
+            _log.info("_consume() ended")
 
     def _event_callback(self, event_ptr):
         """ETW event callback — called for each kernel network event.
