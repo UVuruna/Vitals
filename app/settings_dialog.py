@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from .monitor import MonitorMode
-from .styles import Defaults, FontScale, MEMORY_UNITS
+from .styles import Defaults, FontScale, MEMORY_UNITS, NETWORK_UNITS
 from .color_management import ProcessColorManager
 
 
@@ -110,11 +110,16 @@ def _save_last_setup(settings: 'InitialSettings') -> None:
         data.update({
             "cpu_enabled": settings.cpu_enabled,
             "memory_enabled": settings.memory_enabled,
+            "network_enabled": settings.network_enabled,
             "current_rows": settings.current_rows,
             "history_rows": settings.history_rows,
             "refresh_rate_ms": settings.refresh_rate_ms,
             "retention_minutes": settings.retention_minutes,
             "memory_unit": settings.memory_unit,
+            "network_unit": settings.network_unit,
+            "network_sort_mode": settings.network_sort_mode,
+            "network_max_download_mbps": settings.network_max_download_mbps,
+            "network_max_upload_mbps": settings.network_max_upload_mbps,
             "font_size": settings.font_size,
         })
         with open(path, "w", encoding="utf-8") as f:
@@ -628,11 +633,16 @@ class InitialSettings:
     """Settings from initial dialog (launcher)."""
     cpu_enabled: bool = True
     memory_enabled: bool = False
+    network_enabled: bool = False
     current_rows: int = Defaults.CURRENT_ROWS
     history_rows: int = Defaults.HISTORY_ROWS
     refresh_rate_ms: int = Defaults.REFRESH_RATE_MS
     retention_minutes: int = Defaults.RETENTION_MINUTES
     memory_unit: str = Defaults.MEMORY_UNIT
+    network_unit: str = Defaults.NETWORK_UNIT
+    network_sort_mode: str = Defaults.NETWORK_SORT_MODE
+    network_max_download_mbps: int = Defaults.NETWORK_MAX_DOWNLOAD_MBPS
+    network_max_upload_mbps: int = Defaults.NETWORK_MAX_UPLOAD_MBPS
     font_size: int = Defaults.FONT_SIZE
 
     @property
@@ -752,6 +762,14 @@ class InitialSettingsDialog(QDialog):
         self.mem_btn.clicked.connect(self._update_mode_buttons)
         mode_row.addWidget(self.mem_btn)
 
+        self.net_btn = QPushButton("Network")
+        self.net_btn.setFont(QFont("Segoe UI", 11))
+        self.net_btn.setFixedHeight(36)
+        self.net_btn.setCheckable(True)
+        self.net_btn.setChecked(False)
+        self.net_btn.clicked.connect(self._update_mode_buttons)
+        mode_row.addWidget(self.net_btn)
+
         active_style = """
             QPushButton { background-color: #e94560; color: white; border: none; border-radius: 6px; }
         """
@@ -763,10 +781,11 @@ class InitialSettingsDialog(QDialog):
         """
         self.cpu_btn.setStyleSheet(active_style)
         self.mem_btn.setStyleSheet(inactive_style)
+        self.net_btn.setStyleSheet(inactive_style)
 
         layout.addLayout(mode_row)
 
-        hint = self._make_label("Select one or both monitors", 9, color="#666666")
+        hint = self._make_label("Select one or more monitors", 9, color="#666666")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
 
@@ -862,6 +881,71 @@ class InitialSettingsDialog(QDialog):
         row5.addWidget(self.unit_combo)
         layout.addLayout(row5)
 
+        # Network Settings (visible when network is checked)
+        self._net_settings_container = QWidget()
+        self._net_settings_container.setStyleSheet("background: transparent;")
+        net_layout = QVBoxLayout(self._net_settings_container)
+        net_layout.setContentsMargins(0, 0, 0, 0)
+        net_layout.setSpacing(8)
+
+        net_layout.addWidget(self._make_label("Network Settings", 12, bold=True))
+
+        row_net_unit = QHBoxLayout()
+        row_net_unit.addWidget(self._make_label("Speed unit:", 11, color="#aaaaaa"))
+        row_net_unit.addStretch()
+        self.net_unit_combo = self._make_combo(["KB/s", "MB/s"], Defaults.NETWORK_UNIT)
+        row_net_unit.addWidget(self.net_unit_combo)
+        net_layout.addLayout(row_net_unit)
+
+        row_net_sort = QHBoxLayout()
+        row_net_sort.addWidget(self._make_label("Sort by:", 11, color="#aaaaaa"))
+        row_net_sort.addStretch()
+        self.net_sort_combo = self._make_combo(["total", "download", "upload"], Defaults.NETWORK_SORT_MODE)
+        row_net_sort.addWidget(self.net_sort_combo)
+        net_layout.addLayout(row_net_sort)
+
+        # Auto-detect link speed for default
+        from .network_monitor import get_link_speed_mbps
+        link_speed = get_link_speed_mbps()
+
+        row_net_dl = QHBoxLayout()
+        row_net_dl.addWidget(self._make_label("Max download (Mbps):", 11, color="#aaaaaa"))
+        row_net_dl.addStretch()
+        self.net_dl_spin = QSpinBox()
+        self.net_dl_spin.setRange(0, 100000)
+        self.net_dl_spin.setValue(link_speed)
+        self.net_dl_spin.setSpecialValueText("auto")
+        self.net_dl_spin.setFont(QFont("Segoe UI", 11))
+        self.net_dl_spin.setFixedHeight(32)
+        self.net_dl_spin.setFixedWidth(100)
+        self.net_dl_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.net_dl_spin.setStyleSheet(_SPINBOX_STYLE)
+        row_net_dl.addWidget(self.net_dl_spin)
+        net_layout.addLayout(row_net_dl)
+
+        row_net_ul = QHBoxLayout()
+        row_net_ul.addWidget(self._make_label("Max upload (Mbps):", 11, color="#aaaaaa"))
+        row_net_ul.addStretch()
+        self.net_ul_spin = QSpinBox()
+        self.net_ul_spin.setRange(0, 100000)
+        self.net_ul_spin.setValue(link_speed)
+        self.net_ul_spin.setSpecialValueText("auto")
+        self.net_ul_spin.setFont(QFont("Segoe UI", 11))
+        self.net_ul_spin.setFixedHeight(32)
+        self.net_ul_spin.setFixedWidth(100)
+        self.net_ul_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.net_ul_spin.setStyleSheet(_SPINBOX_STYLE)
+        row_net_ul.addWidget(self.net_ul_spin)
+        net_layout.addLayout(row_net_ul)
+
+        speed_hint = self._make_label(
+            "0 = auto-detect from link speed. Test yours at speedtest.net", 9, color="#666666"
+        )
+        net_layout.addWidget(speed_hint)
+
+        layout.addWidget(self._net_settings_container)
+        self._net_settings_container.setVisible(False)
+
         # Start with Windows toggle
         startup_row = QHBoxLayout()
         startup_row.addWidget(self._make_label("Start with Windows:", 11, color="#aaaaaa"))
@@ -917,7 +1001,11 @@ class InitialSettingsDialog(QDialog):
         """
         self.cpu_btn.setStyleSheet(active_style if self.cpu_btn.isChecked() else inactive_style)
         self.mem_btn.setStyleSheet(active_style if self.mem_btn.isChecked() else inactive_style)
-        self.start_btn.setEnabled(self.cpu_btn.isChecked() or self.mem_btn.isChecked())
+        self.net_btn.setStyleSheet(active_style if self.net_btn.isChecked() else inactive_style)
+        self._net_settings_container.setVisible(self.net_btn.isChecked())
+        self.start_btn.setEnabled(
+            self.cpu_btn.isChecked() or self.mem_btn.isChecked() or self.net_btn.isChecked()
+        )
 
     def _update_startup_toggle(self):
         """Refresh startup toggle button style to match its checked state."""
@@ -934,7 +1022,7 @@ class InitialSettingsDialog(QDialog):
             """)
 
     def _on_start(self):
-        if not self.cpu_btn.isChecked() and not self.mem_btn.isChecked():
+        if not self.cpu_btn.isChecked() and not self.mem_btn.isChecked() and not self.net_btn.isChecked():
             return
         set_startup_registered(self.startup_toggle.isChecked())
         _save_last_setup(self.get_settings())
@@ -948,6 +1036,8 @@ class InitialSettingsDialog(QDialog):
             self.cpu_btn.setChecked(bool(saved["cpu_enabled"]))
         if "memory_enabled" in saved:
             self.mem_btn.setChecked(bool(saved["memory_enabled"]))
+        if "network_enabled" in saved:
+            self.net_btn.setChecked(bool(saved["network_enabled"]))
         self._update_mode_buttons()
         if "current_rows" in saved:
             self.current_spin.setValue(int(saved["current_rows"]))
@@ -959,6 +1049,14 @@ class InitialSettingsDialog(QDialog):
             self.retention_slider.setValue(int(saved["retention_minutes"]) // 10)
         if "memory_unit" in saved:
             self.unit_combo.setCurrentText(saved["memory_unit"])
+        if "network_unit" in saved:
+            self.net_unit_combo.setCurrentText(saved["network_unit"])
+        if "network_sort_mode" in saved:
+            self.net_sort_combo.setCurrentText(saved["network_sort_mode"])
+        if "network_max_download_mbps" in saved:
+            self.net_dl_spin.setValue(int(saved["network_max_download_mbps"]))
+        if "network_max_upload_mbps" in saved:
+            self.net_ul_spin.setValue(int(saved["network_max_upload_mbps"]))
         if "font_size" in saved:
             self.font_slider.setValue(int(saved["font_size"]))
 
@@ -966,11 +1064,16 @@ class InitialSettingsDialog(QDialog):
         return InitialSettings(
             cpu_enabled=self.cpu_btn.isChecked(),
             memory_enabled=self.mem_btn.isChecked(),
+            network_enabled=self.net_btn.isChecked(),
             current_rows=self.current_spin.value(),
             history_rows=self.history_spin.value(),
             refresh_rate_ms=self.refresh_slider.value() * 500,
             retention_minutes=self.retention_slider.value() * 10,
             memory_unit=self.unit_combo.currentText(),
+            network_unit=self.net_unit_combo.currentText(),
+            network_sort_mode=self.net_sort_combo.currentText(),
+            network_max_download_mbps=self.net_dl_spin.value(),
+            network_max_upload_mbps=self.net_ul_spin.value(),
             font_size=self.font_slider.value(),
         )
 
@@ -1443,5 +1546,289 @@ class MemorySettingsDialog(QDialog):
             refresh_rate_ms=self.refresh_slider.value() * 500,
             retention_minutes=self.retention_slider.value() * 10,
             memory_unit=self.unit_combo.currentText(),
+            font_size=self.font_slider.value(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# NetworkSettings / NetworkSettingsDialog
+# ---------------------------------------------------------------------------
+
+@dataclass
+class NetworkSettings:
+    """Settings for Network window only."""
+    current_rows: int = Defaults.CURRENT_ROWS
+    history_rows: int = Defaults.HISTORY_ROWS
+    refresh_rate_ms: int = Defaults.REFRESH_RATE_MS
+    retention_minutes: int = Defaults.RETENTION_MINUTES
+    network_unit: str = Defaults.NETWORK_UNIT
+    sort_mode: str = Defaults.NETWORK_SORT_MODE
+    max_download_mbps: int = Defaults.NETWORK_MAX_DOWNLOAD_MBPS
+    max_upload_mbps: int = Defaults.NETWORK_MAX_UPLOAD_MBPS
+    font_size: int = Defaults.FONT_SIZE
+
+
+class NetworkSettingsDialog(QDialog):
+    """Settings dialog for Network window."""
+
+    def __init__(self, parent: Optional[QWidget] = None, settings: Optional[NetworkSettings] = None):
+        super().__init__(parent)
+        self.settings = settings or NetworkSettings()
+        self.setWindowTitle("Network Monitor - Settings")
+        self.resize(400, 700)
+
+        icon_path = get_base_path() / "assets" / "icon.ico"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e2e"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#2a2a3e"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Button, QColor("#3a3a4e"))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#e94560"))
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
+
+        self._setup_ui()
+        self._load_settings()
+
+    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: str = "#ffffff") -> QLabel:
+        label = QLabel(text)
+        weight = QFont.Weight.Bold if bold else QFont.Weight.Normal
+        label.setFont(QFont("Segoe UI", size, weight))
+        label.setStyleSheet(f"color: {color}; background: transparent;")
+        return label
+
+    def _make_combo(self, items: list, default: str) -> QComboBox:
+        combo = QComboBox()
+        combo.addItems(items)
+        combo.setCurrentText(default)
+        combo.setFont(QFont("Segoe UI", 11))
+        combo.setMinimumContentsLength(max(len(item) for item in items))
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        combo.setFixedHeight(32)
+        combo.setStyleSheet("""
+            QComboBox {
+                background-color: #3a3a4e; color: #ffffff;
+                border: 1px solid #4a4a5e; border-radius: 4px; padding: 4px 8px;
+            }
+            QComboBox::drop-down { border: none; width: 24px; }
+            QComboBox::down-arrow {
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #ffffff;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #3a3a4e; color: #ffffff;
+                selection-background-color: #e94560;
+            }
+        """)
+        return combo
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(32, 24, 32, 24)
+
+        title = self._make_label("Network Monitor Settings", 16, bold=True)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        layout.addSpacing(12)
+
+        # Display settings
+        row1 = QHBoxLayout()
+        row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
+        row1.addStretch()
+        self.current_spin = _make_spinbox(Defaults.CURRENT_ROWS)
+        row1.addWidget(self.current_spin)
+        layout.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
+        row2.addStretch()
+        self.history_spin = _make_spinbox(Defaults.HISTORY_ROWS)
+        row2.addWidget(self.history_spin)
+        layout.addLayout(row2)
+
+        row3 = QHBoxLayout()
+        row3.addWidget(self._make_label("Refresh rate:", 11, color="#aaaaaa"))
+        row3.addStretch()
+        self.refresh_slider = QSlider(Qt.Orientation.Horizontal)
+        self.refresh_slider.setRange(1, 10)
+        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 500)
+        self.refresh_slider.setFixedWidth(140)
+        self.refresh_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
+        """)
+        row3.addWidget(self.refresh_slider)
+        self.refresh_label = self._make_label(f"{Defaults.REFRESH_RATE_MS} ms", 11)
+        self.refresh_label.setFixedWidth(65)
+        self.refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 500} ms"))
+        row3.addWidget(self.refresh_label)
+        layout.addLayout(row3)
+
+        row4 = QHBoxLayout()
+        row4.addWidget(self._make_label("History retention:", 11, color="#aaaaaa"))
+        row4.addStretch()
+        self.retention_slider = QSlider(Qt.Orientation.Horizontal)
+        self.retention_slider.setRange(1, 36)
+        self.retention_slider.setValue(Defaults.RETENTION_MINUTES // 10)
+        self.retention_slider.setFixedWidth(140)
+        self.retention_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
+        """)
+        row4.addWidget(self.retention_slider)
+        self.retention_label = self._make_label(f"{Defaults.RETENTION_MINUTES} min", 11)
+        self.retention_label.setFixedWidth(65)
+        self.retention_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.retention_slider.valueChanged.connect(lambda v: self.retention_label.setText(f"{v * 10} min"))
+        row4.addWidget(self.retention_label)
+        layout.addLayout(row4)
+
+        # Font size
+        row_font = QHBoxLayout()
+        row_font.addWidget(self._make_label("Font size:", 11, color="#aaaaaa"))
+        row_font.addStretch()
+        self.font_slider = QSlider(Qt.Orientation.Horizontal)
+        self.font_slider.setRange(8, 18)
+        self.font_slider.setValue(Defaults.FONT_SIZE)
+        self.font_slider.setFixedWidth(140)
+        self.font_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
+        """)
+        row_font.addWidget(self.font_slider)
+        self.font_label = self._make_label(f"{Defaults.FONT_SIZE} pt", 11)
+        self.font_label.setFixedWidth(65)
+        self.font_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.font_slider.valueChanged.connect(lambda v: self.font_label.setText(f"{v} pt"))
+        row_font.addWidget(self.font_label)
+        layout.addLayout(row_font)
+
+        # Network-specific settings
+        layout.addWidget(self._make_label("Network Settings", 12, bold=True))
+
+        row_unit = QHBoxLayout()
+        row_unit.addWidget(self._make_label("Speed unit:", 11, color="#aaaaaa"))
+        row_unit.addStretch()
+        self.unit_combo = self._make_combo(["KB/s", "MB/s"], Defaults.NETWORK_UNIT)
+        row_unit.addWidget(self.unit_combo)
+        layout.addLayout(row_unit)
+
+        row_sort = QHBoxLayout()
+        row_sort.addWidget(self._make_label("Sort by:", 11, color="#aaaaaa"))
+        row_sort.addStretch()
+        self.sort_combo = self._make_combo(["total", "download", "upload"], Defaults.NETWORK_SORT_MODE)
+        row_sort.addWidget(self.sort_combo)
+        layout.addLayout(row_sort)
+
+        row_dl = QHBoxLayout()
+        row_dl.addWidget(self._make_label("Max download (Mbps):", 11, color="#aaaaaa"))
+        row_dl.addStretch()
+        self.dl_spin = QSpinBox()
+        self.dl_spin.setRange(0, 100000)
+        self.dl_spin.setSpecialValueText("auto")
+        self.dl_spin.setFont(QFont("Segoe UI", 11))
+        self.dl_spin.setFixedHeight(32)
+        self.dl_spin.setFixedWidth(100)
+        self.dl_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.dl_spin.setStyleSheet(_SPINBOX_STYLE)
+        row_dl.addWidget(self.dl_spin)
+        layout.addLayout(row_dl)
+
+        row_ul = QHBoxLayout()
+        row_ul.addWidget(self._make_label("Max upload (Mbps):", 11, color="#aaaaaa"))
+        row_ul.addStretch()
+        self.ul_spin = QSpinBox()
+        self.ul_spin.setRange(0, 100000)
+        self.ul_spin.setSpecialValueText("auto")
+        self.ul_spin.setFont(QFont("Segoe UI", 11))
+        self.ul_spin.setFixedHeight(32)
+        self.ul_spin.setFixedWidth(100)
+        self.ul_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.ul_spin.setStyleSheet(_SPINBOX_STYLE)
+        row_ul.addWidget(self.ul_spin)
+        layout.addLayout(row_ul)
+
+        speed_hint = self._make_label(
+            "0 = auto-detect from link speed. Test yours at speedtest.net", 9, color="#666666"
+        )
+        layout.addWidget(speed_hint)
+
+        # Color Settings
+        color_container = QWidget()
+        color_container.setStyleSheet("background: transparent;")
+        cc_layout = QVBoxLayout(color_container)
+        cc_layout.setContentsMargins(0, 0, 0, 0)
+        cc_layout.setSpacing(4)
+
+        self._color_scale_dl = _build_color_section(
+            cc_layout, self._make_label, mode="net_dl", show_legend=False,
+            title="Download Color Settings",
+        )
+        self._color_scale_ul = _build_color_section(
+            cc_layout, self._make_label, mode="net_ul", show_legend=False,
+            title="Upload Color Settings",
+        )
+
+        legend_row = QHBoxLayout()
+        legend_row.addStretch()
+        legend_btn = _make_legend_btn()
+        legend_btn.clicked.connect(self._show_legend)
+        legend_row.addWidget(legend_btn)
+        cc_layout.addLayout(legend_row)
+        layout.addWidget(color_container)
+
+        layout.addStretch()
+
+        self.apply_btn = QPushButton("Apply")
+        self.apply_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        self.apply_btn.setFixedHeight(44)
+        self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.apply_btn.setStyleSheet("""
+            QPushButton { background-color: #e94560; color: white; border: none; border-radius: 8px; }
+            QPushButton:hover { background-color: #ff6b6b; }
+        """)
+        self.apply_btn.clicked.connect(self.accept)
+        layout.addWidget(self.apply_btn)
+
+    def _show_legend(self):
+        CompanyLegendDialog(self).exec()
+
+    def accept(self):
+        ProcessColorManager().update_value_thresholds(self._color_scale_dl.thresholds, "net_dl")
+        ProcessColorManager().update_value_thresholds(self._color_scale_ul.thresholds, "net_ul")
+        super().accept()
+
+    def _load_settings(self):
+        self.current_spin.setValue(self.settings.current_rows)
+        self.history_spin.setValue(self.settings.history_rows)
+        self.refresh_slider.setValue(self.settings.refresh_rate_ms // 500)
+        self.retention_slider.setValue(self.settings.retention_minutes // 10)
+        self.font_slider.setValue(self.settings.font_size)
+        self.unit_combo.setCurrentText(self.settings.network_unit)
+        self.sort_combo.setCurrentText(self.settings.sort_mode)
+        self.dl_spin.setValue(self.settings.max_download_mbps)
+        self.ul_spin.setValue(self.settings.max_upload_mbps)
+
+    def get_settings(self) -> NetworkSettings:
+        return NetworkSettings(
+            current_rows=self.current_spin.value(),
+            history_rows=self.history_spin.value(),
+            refresh_rate_ms=self.refresh_slider.value() * 500,
+            retention_minutes=self.retention_slider.value() * 10,
+            network_unit=self.unit_combo.currentText(),
+            sort_mode=self.sort_combo.currentText(),
+            max_download_mbps=self.dl_spin.value(),
+            max_upload_mbps=self.ul_spin.value(),
             font_size=self.font_slider.value(),
         )
