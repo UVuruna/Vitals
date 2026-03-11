@@ -174,6 +174,7 @@ def build_pyinstaller():
         "--name", APP_NAME,
         "--icon", str(ICON_PATH),
         "--windowed",
+        "--uac-admin",
         "--version-file", str(VERSION_INFO_PATH),
         # Bundle assets, config, and app metadata
         "--add-data", f"{PROJECT_DIR / 'assets'};assets",

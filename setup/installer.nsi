@@ -102,8 +102,9 @@ Section "Desktop Shortcut" SecDesktop
 SectionEnd
 
 Section "Start with Windows" SecAutostart
-    ; Use registry Run key for autostart (no admin needed at runtime)
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_NAME}" "$\"$INSTDIR\${APP_EXE}$\""
+    ; UAC-elevated apps are silently skipped by Registry Run.
+    ; Use Task Scheduler with /rl highest to autostart elevated.
+    nsExec::ExecToLog 'schtasks /create /tn "${APP_NAME}" /tr "$\"$INSTDIR\${APP_EXE}$\"" /sc onlogon /rl highest /f'
 SectionEnd
 
 ; -- Section Descriptions -----------------------------------------
@@ -118,7 +119,8 @@ SectionEnd
 ; =================================================================
 
 Section "Uninstall"
-    ; Remove autostart registry key
+    ; Remove autostart scheduled task and legacy registry key
+    nsExec::ExecToLog 'schtasks /delete /tn "${APP_NAME}" /f'
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_NAME}"
 
     ; Remove shortcuts
