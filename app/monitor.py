@@ -1095,9 +1095,8 @@ class NetworkMonitor:
         total_dl_rate = total_recv / elapsed_sec
         total_ul_rate = total_sent / elapsed_sec
 
-        # Update peak buffer
-        peak_value = self._sort_key(total_dl_rate, total_ul_rate)
-        self._peak_buffer.append((now, peak_value, total_dl_rate, total_ul_rate))
+        # Update peak buffer (track download only)
+        self._peak_buffer.append((now, total_dl_rate))
         cutoff = now - self.retention_seconds
         while self._peak_buffer and self._peak_buffer[0][0] < cutoff:
             self._peak_buffer.popleft()
@@ -1209,12 +1208,12 @@ class NetworkMonitor:
         return sorted(self.history.values(), key=lambda r: r.sort_value, reverse=True)[:self.history_max_size]
 
     def get_peak_display(self, unit: str = "MB/s") -> str:
-        """Get formatted peak speed string."""
+        """Get formatted peak download speed string."""
         if not self._peak_buffer:
             return "Peak: --"
-        peak_ts, _, peak_dl, peak_ul = max(self._peak_buffer, key=lambda x: x[1])
+        peak_ts, peak_dl = max(self._peak_buffer, key=lambda x: x[1])
         time_str = datetime.fromtimestamp(peak_ts).strftime("%H:%M")
-        return f"Peak: ↓{format_speed(peak_dl, unit)} ↑{format_speed(peak_ul, unit)} at {time_str}"
+        return f"Peak: {format_speed(peak_dl, unit)} at {time_str}"
 
 
 class SharedDataCollector(QThread):
@@ -1357,7 +1356,9 @@ class SharedDataCollector(QThread):
             if self._network_tracer is None:
                 from .network_monitor import NetworkTracer
                 self._network_tracer = NetworkTracer()
-                self._network_tracer.start()
+                ok = self._network_tracer.start()
+                if not ok:
+                    pass  # error accessible via self._network_tracer.error
 
     def disable_cpu(self):
         """Disable CPU monitoring."""

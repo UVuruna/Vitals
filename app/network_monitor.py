@@ -12,6 +12,7 @@ Data flow:
 
 import ctypes
 import ctypes.wintypes as wt
+import struct
 import threading
 from collections import defaultdict
 
@@ -29,10 +30,13 @@ class _GUID(ctypes.Structure):
     ]
 
 
-# SystemTraceControlGuid — required for kernel trace sessions
-_SystemTraceControlGuid = _GUID(
-    0x9E814AAD, 0x3204, 0x11D2,
-    (ctypes.c_ubyte * 8)(0x9A, 0x82, 0x00, 0x60, 0x08, 0xA8, 0x69, 0x39),
+# Custom session GUID for our SystemTraceProvider session.
+# When using EVENT_TRACE_SYSTEM_LOGGER_MODE with a custom session name,
+# Wnode.Guid must NOT be SystemTraceControlGuid — it must be a unique GUID.
+# Generated via uuid.uuid4() and fixed for this application.
+_PMUsageNetTraceGuid = _GUID(
+    0x7B3A1F2E, 0x4D5C, 0x6E7F,
+    (ctypes.c_ubyte * 8)(0x8A, 0x9B, 0x0C, 0x1D, 0x2E, 0x3F, 0x40, 0x51),
 )
 
 # Provider GUIDs for kernel TCP/IP and UDP/IP events
@@ -281,6 +285,14 @@ class NetworkTracer:
         """Last error message, or None if running normally."""
         return self._error
 
+    @staticmethod
+    def _is_admin() -> bool:
+        """Check if running with administrator privileges."""
+        try:
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except Exception:
+            return False
+
     def start(self) -> bool:
         """Start ETW trace session. Returns True on success."""
         if self._running:
@@ -288,26 +300,44 @@ class NetworkTracer:
 
         self._error = None
 
+        if not self._is_admin():
+            self._error = "ETW kernel trace requires Administrator privileges"
+            return False
+
         # Stop any leftover session from a previous crash
         self._stop_existing_session()
 
-        # Allocate properties buffer (struct + space for session name in UTF-16)
+        # Build properties buffer using struct.pack_into for reliable byte-level writes.
+        # ctypes from_buffer + nested struct assignment can silently write to copies.
         name_bytes = (len(self._SESSION_NAME) + 1) * 2
-        props_size = ctypes.sizeof(_EVENT_TRACE_PROPERTIES) + name_bytes
+        props_struct_size = 120  # sizeof(EVENT_TRACE_PROPERTIES) on x64
+        props_size = props_struct_size + name_bytes
         self._props_buf = ctypes.create_string_buffer(props_size)
-        props = _EVENT_TRACE_PROPERTIES.from_buffer(self._props_buf)
 
-        # Fill properties
-        props.Wnode.BufferSize = props_size
-        props.Wnode.Flags = _WNODE_FLAG_TRACED_GUID
-        props.Wnode.ClientContext = 1  # QPC timestamps
-        ctypes.memmove(ctypes.byref(props.Wnode.Guid), ctypes.byref(_SystemTraceControlGuid), ctypes.sizeof(_GUID))
-        props.BufferSize = 64          # 64 KB per ETW buffer
-        props.MinimumBuffers = 4
-        props.MaximumBuffers = 64
-        props.LogFileMode = _EVENT_TRACE_REAL_TIME_MODE | _EVENT_TRACE_SYSTEM_LOGGER_MODE
-        props.EnableFlags = _EVENT_TRACE_FLAG_NETWORK_TCPIP
-        props.LoggerNameOffset = ctypes.sizeof(_EVENT_TRACE_PROPERTIES)
+        # Custom session GUID as bytes (NOT SystemTraceControlGuid — that causes 0x57)
+        guid_bytes = struct.pack('<IHH8s', 0x7B3A1F2E, 0x4D5C, 0x6E7F,
+                                 bytes([0x8A, 0x9B, 0x0C, 0x1D, 0x2E, 0x3F, 0x40, 0x51]))
+
+        # WNODE_HEADER (offsets 0-47)
+        struct.pack_into('<I', self._props_buf, 0, props_size)           # Wnode.BufferSize
+        # ProviderId (4), HistoricalContext (8), TimeStamp (8) = 0 (already zeroed)
+        self._props_buf[24:40] = guid_bytes                              # Wnode.Guid
+        struct.pack_into('<I', self._props_buf, 40, 1)                   # Wnode.ClientContext = QPC
+        struct.pack_into('<I', self._props_buf, 44, _WNODE_FLAG_TRACED_GUID)  # Wnode.Flags
+
+        # EVENT_TRACE_PROPERTIES fields (offsets 48-119)
+        struct.pack_into('<I', self._props_buf, 48, 64)                  # BufferSize (64 KB)
+        struct.pack_into('<I', self._props_buf, 52, 4)                   # MinimumBuffers
+        struct.pack_into('<I', self._props_buf, 56, 64)                  # MaximumBuffers
+        # MaximumFileSize = 0 (offset 60, already zeroed)
+        log_mode = _EVENT_TRACE_REAL_TIME_MODE | _EVENT_TRACE_SYSTEM_LOGGER_MODE
+        struct.pack_into('<I', self._props_buf, 64, log_mode)            # LogFileMode
+        # FlushTimer = 0 (offset 68)
+        struct.pack_into('<I', self._props_buf, 72, _EVENT_TRACE_FLAG_NETWORK_TCPIP)  # EnableFlags
+        # AgeLimit through RealTimeBuffersLost = 0 (offsets 76-103)
+        # LoggerThreadId = 0 (offset 104, 8 bytes)
+        # LogFileNameOffset = 0 (offset 112)
+        struct.pack_into('<I', self._props_buf, 116, props_struct_size)  # LoggerNameOffset
 
         # Start trace session
         self._session_handle = ctypes.c_uint64(0)
@@ -402,7 +432,9 @@ class NetworkTracer:
                 return
 
             handle_arr = (ctypes.c_uint64 * 1)(self._trace_handle.value)
-            _ProcessTrace(handle_arr, 1, None, None)
+            status = _ProcessTrace(handle_arr, 1, None, None)
+            if status != 0:
+                self._error = f"ProcessTrace failed: 0x{status:08X}"
 
         except Exception as e:
             self._error = f"ETW consumer error: {e}"
@@ -453,4 +485,4 @@ class NetworkTracer:
                     counters[1] += size
 
         except Exception:
-            pass  # Never crash the ETW consumer thread
+            pass  # Callback errors are silently ignored to avoid flooding
