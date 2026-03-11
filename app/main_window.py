@@ -481,8 +481,7 @@ class BaseMonitorWindow(QMainWindow):
         self.current_title.setFont(self._font(FontScale.SECTION, bold=True))
         self.bottom_toggle_btn.setFont(self._font(FontScale.SECTION, bold=True))
         self.peak_label.setFont(self._font(FontScale.SMALL))
-        self.pause_btn.setFont(self._font(FontScale.BODY))
-        self.settings_btn.setFont(self._font(FontScale.BODY))
+        self.menuBar().setFont(self._font(FontScale.BODY))
         # Update table row heights and header font
         row_h = FontScale.row_height(self._font_base)
         header_css = f"""
@@ -655,47 +654,7 @@ class BaseMonitorWindow(QMainWindow):
 
         layout.addWidget(self.splitter)
 
-        # Buttons
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-
-        self.pause_btn = QPushButton("Pause")
-        self.pause_btn.setFont(self._font(FontScale.BODY))
-        self.pause_btn.setFixedSize(100, 36)
-        self.pause_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {self.HEADER_COLOR};
-                color: {self.TEXT};
-                border: none;
-                border-radius: 6px;
-            }}
-            QPushButton:hover {{
-                background-color: #4a4a5e;
-            }}
-        """)
-        self.pause_btn.clicked.connect(self._toggle_pause)
-        btn_layout.addWidget(self.pause_btn)
-
-        self.settings_btn = QPushButton("Settings")
-        self.settings_btn.setFont(self._font(FontScale.BODY))
-        self.settings_btn.setFixedSize(100, 36)
-        self.settings_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {self.HEADER_COLOR};
-                color: {self.TEXT};
-                border: none;
-                border-radius: 6px;
-            }}
-            QPushButton:hover {{
-                background-color: #4a4a5e;
-            }}
-        """)
-        self.settings_btn.clicked.connect(self._show_settings)
-        btn_layout.addWidget(self.settings_btn)
-
-        layout.addLayout(btn_layout)
-
-        # Menu
+        # Menu bar — contains File, View, and a clickable Pause action
         menubar = self.menuBar()
         menubar.setStyleSheet(f"""
             QMenuBar {{
@@ -719,6 +678,11 @@ class BaseMonitorWindow(QMainWindow):
         pause_action = QAction("Pause/Resume", self)
         pause_action.triggered.connect(self._toggle_pause)
         view_menu.addAction(pause_action)
+
+        # Pause as a direct menubar action (clickable text in the bar itself)
+        self._pause_action = QAction("Pause", self)
+        self._pause_action.triggered.connect(self._toggle_pause)
+        menubar.addAction(self._pause_action)
 
     def _toggle_bottom_table(self):
         """Switch between Peak Usage (index 0) and Rolling Average (index 1)."""
@@ -1100,7 +1064,7 @@ class BaseMonitorWindow(QMainWindow):
     def _toggle_pause(self):
         """Toggle pause. Must be implemented by subclasses for proper pause/resume."""
         self.is_paused = not self.is_paused
-        self.pause_btn.setText("Resume" if self.is_paused else "Pause")
+        self._pause_action.setText("Resume" if self.is_paused else "Pause")
 
     def _on_data_ready(self, data: MonitorData):
         """Handle data from collector (runs on main thread via signal)."""
