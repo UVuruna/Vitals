@@ -189,6 +189,21 @@ class BaseMonitorWindow(QMainWindow):
         if not self._layout_restored:
             self._layout_restored = True
             self._restore_window_layout()
+            self._ensure_on_screen()
+
+    def _ensure_on_screen(self):
+        """Move window onto visible screen area if it is fully off-screen."""
+        rect = self.frameGeometry()
+        on_screen = any(
+            screen.availableGeometry().intersects(rect)
+            for screen in QApplication.screens()
+        )
+        if not on_screen:
+            primary = QApplication.primaryScreen().availableGeometry()
+            self.move(
+                primary.x() + (primary.width() - rect.width()) // 2,
+                primary.y() + (primary.height() - rect.height()) // 2,
+            )
 
     def _set_native_taskbar_icon(self):
         """Set per-window icon via COM IPropertyStore + WM_SETICON.
