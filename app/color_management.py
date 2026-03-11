@@ -73,6 +73,24 @@ _DEFAULT_VALUE_RANGES_MEM_ALL = [
     {"max_pct": 100, "color": "#C85555"},
 ]
 
+# Default thresholds for Network download (% of max download speed)
+_DEFAULT_VALUE_RANGES_NET_DL = [
+    {"max_pct": 5,   "color": "#5B9BD5"},
+    {"max_pct": 15,  "color": "#6AAF6A"},
+    {"max_pct": 35,  "color": "#C8B040"},
+    {"max_pct": 60,  "color": "#D4803A"},
+    {"max_pct": 100, "color": "#C85555"},
+]
+
+# Default thresholds for Network upload (% of max upload speed)
+_DEFAULT_VALUE_RANGES_NET_UL = [
+    {"max_pct": 5,   "color": "#5B9BD5"},
+    {"max_pct": 15,  "color": "#6AAF6A"},
+    {"max_pct": 35,  "color": "#C8B040"},
+    {"max_pct": 60,  "color": "#D4803A"},
+    {"max_pct": 100, "color": "#C85555"},
+]
+
 # Near-white for processes with no company information at all (text color in table)
 _DEFAULT_NO_COMPANY_COLOR = "#D2D2D2"
 
@@ -245,6 +263,10 @@ class ProcessColorManager:
         self._value_ranges_memory_all: list[tuple[float, QColor]] = []
         self._value_ranges_memory_all_total: list[tuple[float, QColor]] = []
 
+        # Network color ranges (download and upload have independent scales)
+        self._value_ranges_net_dl: list[tuple[float, QColor]] = []
+        self._value_ranges_net_ul: list[tuple[float, QColor]] = []
+
         self._load_config()
 
     def _load_config(self):
@@ -287,6 +309,18 @@ class ProcessColorManager:
         self._value_ranges_memory_all = list(parsed_ranges_mem_all)
         self._value_ranges_memory_all_total = list(parsed_ranges_mem_all)
 
+        # Network color ranges
+        parsed_ranges_net_dl = [
+            (float(entry["max_pct"]), QColor(entry["color"]))
+            for entry in _DEFAULT_VALUE_RANGES_NET_DL
+        ]
+        parsed_ranges_net_ul = [
+            (float(entry["max_pct"]), QColor(entry["color"]))
+            for entry in _DEFAULT_VALUE_RANGES_NET_UL
+        ]
+        self._value_ranges_net_dl = list(parsed_ranges_net_dl)
+        self._value_ranges_net_ul = list(parsed_ranges_net_ul)
+
         # Load user-set hue params and color thresholds from last_setup.json
         setup_path = _get_last_setup_path()
         if setup_path.exists():
@@ -300,7 +334,7 @@ class ProcessColorManager:
                     self._hue_lightness = float(hue["lightness"])
                 # Restore saved color thresholds (overrides defaults)
                 saved_thresholds = setup_data.get("color_thresholds", {})
-                for mode_key in ("cpu", "cpu_all", "memory", "memory_total", "memory_all", "memory_all_total"):
+                for mode_key in ("cpu", "cpu_all", "memory", "memory_total", "memory_all", "memory_all_total", "net_dl", "net_ul"):
                     saved = saved_thresholds.get(mode_key)
                     if isinstance(saved, list) and len(saved) == 4:
                         self._apply_threshold_values(mode_key, saved)
@@ -427,38 +461,49 @@ class ProcessColorManager:
         except Exception:
             pass
 
+    def _get_ranges_ref(self, mode: str) -> list[tuple[float, QColor]]:
+        """Return the range list for a given mode key."""
+        mapping = {
+            "cpu": self._value_ranges_cpu,
+            "cpu_all": self._value_ranges_cpu_all,
+            "memory": self._value_ranges_memory,
+            "memory_total": self._value_ranges_memory_total,
+            "memory_all": self._value_ranges_memory_all,
+            "memory_all_total": self._value_ranges_memory_all_total,
+            "net_dl": self._value_ranges_net_dl,
+            "net_ul": self._value_ranges_net_ul,
+        }
+        return mapping.get(mode, self._value_ranges_memory)
+
+    def _set_ranges(self, mode: str, ranges: list[tuple[float, QColor]]):
+        """Set the range list for a given mode key."""
+        if mode == "cpu":
+            self._value_ranges_cpu = ranges
+        elif mode == "cpu_all":
+            self._value_ranges_cpu_all = ranges
+        elif mode == "memory_total":
+            self._value_ranges_memory_total = ranges
+        elif mode == "memory_all":
+            self._value_ranges_memory_all = ranges
+        elif mode == "memory_all_total":
+            self._value_ranges_memory_all_total = ranges
+        elif mode == "net_dl":
+            self._value_ranges_net_dl = ranges
+        elif mode == "net_ul":
+            self._value_ranges_net_ul = ranges
+        else:
+            self._value_ranges_memory = ranges
+
     def _apply_threshold_values(self, mode: str, thresholds: list):
         """Apply threshold values to the correct range list (in-memory only, no save).
 
         Must be called while holding self._mutex, or during single-threaded init.
         """
-        if mode == "cpu":
-            ranges = self._value_ranges_cpu
-        elif mode == "cpu_all":
-            ranges = self._value_ranges_cpu_all
-        elif mode == "memory_total":
-            ranges = self._value_ranges_memory_total
-        elif mode == "memory_all":
-            ranges = self._value_ranges_memory_all
-        elif mode == "memory_all_total":
-            ranges = self._value_ranges_memory_all_total
-        else:
-            ranges = self._value_ranges_memory
+        ranges = self._get_ranges_ref(mode)
         colors = [color for _, color in ranges]
         new_ranges = [(float(t), colors[i]) for i, t in enumerate(thresholds)]
         new_ranges.append((100.0, colors[-1]))
-        if mode == "cpu":
-            self._value_ranges_cpu = new_ranges
-        elif mode == "cpu_all":
-            self._value_ranges_cpu_all = new_ranges
-        elif mode == "memory_total":
-            self._value_ranges_memory_total = new_ranges
-        elif mode == "memory_all":
-            self._value_ranges_memory_all = new_ranges
-        elif mode == "memory_all_total":
-            self._value_ranges_memory_all_total = new_ranges
-        else:
-            self._value_ranges_memory = new_ranges
+        self._set_ranges(mode, new_ranges)
 
     def update_value_thresholds(self, thresholds: list, mode: str):
         """Update the 4 color zone thresholds in-memory and persist to last_setup.json.
@@ -489,22 +534,10 @@ class ProcessColorManager:
         """Return value color ranges for UI display (ColorScaleWidget).
 
         Args:
-            mode: "cpu" or "memory"
+            mode: "cpu", "memory", "net_dl", "net_ul", etc.
         """
         with QMutexLocker(self._mutex):
-            if mode == "cpu":
-                ranges = self._value_ranges_cpu
-            elif mode == "cpu_all":
-                ranges = self._value_ranges_cpu_all
-            elif mode == "memory_total":
-                ranges = self._value_ranges_memory_total
-            elif mode == "memory_all":
-                ranges = self._value_ranges_memory_all
-            elif mode == "memory_all_total":
-                ranges = self._value_ranges_memory_all_total
-            else:
-                ranges = self._value_ranges_memory
-            return list(ranges)
+            return list(self._get_ranges_ref(mode))
 
     def get_legend(self) -> list[tuple[str, QColor, int]]:
         """Return (label, color, count) sorted by count descending.
@@ -569,24 +602,13 @@ class ProcessColorManager:
 
         Args:
             pct:  Usage as 0-100 (e.g. 20.0 for 20%)
-            mode: "cpu" or "memory"
+            mode: "cpu", "memory", "net_dl", "net_ul", etc.
 
         Returns:
             QColor from the configured value_colors ranges for the given mode
         """
         with QMutexLocker(self._mutex):
-            if mode == "cpu":
-                ranges = self._value_ranges_cpu
-            elif mode == "cpu_all":
-                ranges = self._value_ranges_cpu_all
-            elif mode == "memory_total":
-                ranges = self._value_ranges_memory_total
-            elif mode == "memory_all":
-                ranges = self._value_ranges_memory_all
-            elif mode == "memory_all_total":
-                ranges = self._value_ranges_memory_all_total
-            else:
-                ranges = self._value_ranges_memory
+            ranges = self._get_ranges_ref(mode)
 
         for max_pct_val, color in ranges:
             if pct <= max_pct_val:

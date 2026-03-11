@@ -78,11 +78,17 @@ class Defaults:
     RETENTION_MINUTES = 120
 
     MEMORY_UNIT = "MB"
+    NETWORK_UNIT = "MB/s"
     FONT_SIZE = 11
 
     # These are auto-detected but can be overridden
     CPU_THREADS = None  # Auto-detect
     RAM_GB = None  # Auto-detect
+
+    # Network defaults (Mbps — user overrides in settings)
+    NETWORK_MAX_DOWNLOAD_MBPS = 0  # 0 = auto-detect from link speed
+    NETWORK_MAX_UPLOAD_MBPS = 0    # 0 = auto-detect from link speed
+    NETWORK_SORT_MODE = "total"    # "total", "download", or "upload"
 
 
 # Memory unit conversions
@@ -90,6 +96,12 @@ MEMORY_UNITS = {
     "KB": 1024,
     "MB": 1024 ** 2,
     "GB": 1024 ** 3,
+}
+
+# Network speed unit conversions (bytes/sec to display unit)
+NETWORK_UNITS = {
+    "KB/s": 1024,
+    "MB/s": 1024 ** 2,
 }
 
 # Process name mappings for aggregation
@@ -130,6 +142,37 @@ CONTEXT_MENU_STYLE = """
         margin: 4px 0;
     }
 """
+
+
+def format_speed(bytes_per_sec: float, unit: str = "MB/s") -> str:
+    """Format a bytes/sec value in the user's selected network unit.
+
+    Args:
+        bytes_per_sec: Raw speed in bytes per second.
+        unit: Display unit ("KB/s" or "MB/s").
+
+    Returns:
+        Formatted string like "1,234 KB/s" or "12.34 MB/s".
+    """
+    divisor = NETWORK_UNITS.get(unit, NETWORK_UNITS["MB/s"])
+    value = bytes_per_sec / divisor
+    if unit == "MB/s":
+        if value >= 100:
+            return f"{value:,.0f} {unit}"
+        return f"{value:,.2f} {unit}"
+    return f"{value:,.0f} {unit}"
+
+
+def format_bytes_total(total_bytes: float, unit: str = "MB/s") -> str:
+    """Format cumulative byte count in a human-readable unit (MB or GB).
+
+    Automatically picks GB for values >= 1 GB, else MB.
+    """
+    if total_bytes >= 1024 ** 3:
+        return f"{total_bytes / (1024 ** 3):,.2f} GB"
+    if total_bytes >= 1024 ** 2:
+        return f"{total_bytes / (1024 ** 2):,.1f} MB"
+    return f"{total_bytes / 1024:,.0f} KB"
 
 
 def format_pct(value: float) -> str:
