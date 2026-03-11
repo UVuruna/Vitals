@@ -12,7 +12,7 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from app.main_window import CPUWindow, MemoryWindow
+from app.main_window import CPUWindow, MemoryWindow, NetworkWindow
 from app.monitor import SharedDataCollector
 from app.settings_dialog import InitialSettingsDialog
 
@@ -85,6 +85,15 @@ def main():
             )
         memory_window.show()
         windows.append(memory_window)
+
+    network_window = None
+    if settings.network_enabled:
+        network_window = NetworkWindow(settings, collector)
+        if len(windows) > 0:
+            last = windows[-1]
+            network_window.move(last.x() + last.width() + 20, last.y())
+        network_window.show()
+        windows.append(network_window)
 
     # Link refresh rates: changing one window's rate syncs to the other
     if cpu_window is not None and memory_window is not None:

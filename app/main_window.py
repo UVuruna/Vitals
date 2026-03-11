@@ -37,14 +37,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .monitor import MonitorMode, MonitorData, SharedDataCollector
+from .monitor import MonitorMode, MonitorData, NetworkMonitorData, SharedDataCollector
 from .color_management import ProcessColorManager
 from .settings_dialog import (
     InitialSettings,
     CPUSettings,
     MemorySettings,
+    NetworkSettings,
     CPUSettingsDialog,
     MemorySettingsDialog,
+    NetworkSettingsDialog,
     get_last_setup_path,
 )
 from .process_actions import (
@@ -56,7 +58,7 @@ from .process_actions import (
     set_priority,
 )
 from .process_dialog import KillConfirmDialog, PriorityDialog
-from .styles import CONTEXT_MENU_STYLE, Defaults, Fonts, FontScale
+from .styles import CONTEXT_MENU_STYLE, Defaults, Fonts, FontScale, format_speed, format_bytes_total
 
 
 class TotalRowDelegate(QStyledItemDelegate):
@@ -777,6 +779,11 @@ class BaseMonitorWindow(QMainWindow):
         elif mode_cols == "mem":
             cols += 1
             headers.append("Commit")
+        elif mode_cols == "net":
+            # Replace "Usage" with "Download" and add "Upload"
+            headers[2] = "Download"
+            cols += 1
+            headers.append("Upload")
         if has_time:
             cols += 1
             headers.append("Time")
@@ -809,6 +816,9 @@ class BaseMonitorWindow(QMainWindow):
             col_idx += 1
         elif mode_cols == "mem":
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)  # Commit
+            col_idx += 1
+        elif mode_cols == "net":
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)  # Upload
             col_idx += 1
         if has_time:
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
@@ -1553,4 +1563,206 @@ class MemoryWindow(BaseMonitorWindow):
         self._save_window_layout()
         self._collector.memory_data_ready.disconnect(self._on_data_ready)
         self._collector.disable_memory()
+        super().closeEvent(event)
+
+
+class NetworkWindow(BaseMonitorWindow):
+    """Network Monitor window."""
+
+    def __init__(self, initial_settings: InitialSettings, collector: SharedDataCollector, parent=None):
+        self._initial_settings = initial_settings
+        self._collector = collector
+        self._network_settings = NetworkSettings(
+            current_rows=initial_settings.current_rows,
+            history_rows=initial_settings.history_rows,
+            refresh_rate_ms=initial_settings.refresh_rate_ms,
+            retention_minutes=initial_settings.retention_minutes,
+            network_unit=initial_settings.network_unit,
+            sort_mode=initial_settings.network_sort_mode,
+            max_download_mbps=initial_settings.network_max_download_mbps,
+            max_upload_mbps=initial_settings.network_max_upload_mbps,
+            font_size=initial_settings.font_size,
+        )
+        # Max speed in bytes/sec for color scale percentage calculation
+        self._max_dl_bytes = initial_settings.network_max_download_mbps * 1_000_000 / 8
+        self._max_ul_bytes = initial_settings.network_max_upload_mbps * 1_000_000 / 8
+        super().__init__(parent)
+
+        # Connect to collector signal
+        self._collector.network_data_ready.connect(self._on_data_ready)
+
+        # Configure and start collector
+        self._apply_settings()
+        if not self._collector.isRunning():
+            self._collector.start()
+
+    def _get_mode(self) -> MonitorMode:
+        return MonitorMode.NETWORK
+
+    def _get_title(self) -> str:
+        return "Network Monitor"
+
+    def _get_mode_cols(self) -> str:
+        return "net"
+
+    def _get_window_key(self) -> str:
+        return "network"
+
+    def _show_settings(self):
+        """Show Network settings dialog."""
+        dialog = NetworkSettingsDialog(self, self._network_settings)
+        if dialog.exec():
+            new_settings = dialog.get_settings()
+            if new_settings == self._network_settings:
+                return
+            prev = self._network_settings
+            self._network_settings = new_settings
+            self._max_dl_bytes = new_settings.max_download_mbps * 1_000_000 / 8
+            self._max_ul_bytes = new_settings.max_upload_mbps * 1_000_000 / 8
+            self._apply_settings(prev)
+            if new_settings.font_size != prev.font_size:
+                self._font_base = new_settings.font_size
+                self._apply_fonts()
+
+    def _apply_settings(self, prev_settings: 'NetworkSettings | None' = None):
+        """Apply current settings to collector. Rebuilds tables only if row counts changed."""
+        self._collector.configure_network(
+            current_rows=self._network_settings.current_rows,
+            history_rows=self._network_settings.history_rows,
+            retention_minutes=self._network_settings.retention_minutes,
+            refresh_rate_ms=self._network_settings.refresh_rate_ms,
+            network_unit=self._network_settings.network_unit,
+            sort_mode=self._network_settings.sort_mode,
+            max_download_mbps=self._network_settings.max_download_mbps,
+            max_upload_mbps=self._network_settings.max_upload_mbps,
+        )
+        rows_changed = (
+            prev_settings is None
+            or prev_settings.current_rows != self._network_settings.current_rows
+            or prev_settings.history_rows != self._network_settings.history_rows
+        )
+        if rows_changed:
+            self._rebuild_tables()
+
+    def _rebuild_tables(self):
+        """Rebuild tables with current settings."""
+        current_layout = self.current_section.layout()
+
+        # Remove old tables
+        current_layout.removeWidget(self.current_table)
+        self.current_table.deleteLater()
+
+        self.bottom_stack.removeWidget(self.history_table)
+        self.history_table.deleteLater()
+        self.bottom_stack.removeWidget(self.rolling_table)
+        self.rolling_table.deleteLater()
+
+        # Create new tables
+        self.current_table = self._create_table(
+            self._network_settings.current_rows,
+            mode_cols="net",
+            has_time=False,
+            bg_color=self.CURRENT_BG,
+        )
+        self.history_table = self._create_table(
+            self._network_settings.history_rows,
+            mode_cols="net",
+            has_time=True,
+            bg_color=self.HISTORY_BG,
+        )
+        self.rolling_table = self._create_table(
+            0,
+            mode_cols="net",
+            has_time=False,
+            bg_color=self.ROLLING_BG,
+            has_uptime=True,
+        )
+
+        # Add to layouts
+        current_layout.addWidget(self.current_table)
+        self.bottom_stack.insertWidget(0, self.history_table)
+        self.bottom_stack.insertWidget(1, self.rolling_table)
+        self.bottom_stack.setCurrentIndex(self._bottom_page)
+
+        # Re-apply saved column widths after rebuild
+        if self._saved_col_widths_current:
+            self._apply_col_widths(self.current_table, self._saved_col_widths_current)
+        if self._saved_col_widths_history:
+            self._apply_col_widths(self.history_table, self._saved_col_widths_history)
+        if self._saved_col_widths_rolling:
+            self._apply_col_widths(self.rolling_table, self._saved_col_widths_rolling)
+
+        self._connect_table_selection()
+
+    def _fill_net_cols(self, table, row, item, color_mgr):
+        """Fill Network-specific columns: Download, Upload."""
+        unit = self._network_settings.network_unit
+        dl_str = format_speed(item.download, unit)
+        dl_item = QTableWidgetItem(dl_str)
+        if self._max_dl_bytes > 0:
+            dl_pct = item.download / self._max_dl_bytes * 100
+            dl_item.setForeground(color_mgr.get_value_color(dl_pct, "net_dl"))
+        table.setItem(row, 2, dl_item)
+
+        ul_str = format_speed(item.upload, unit)
+        ul_item = QTableWidgetItem(ul_str)
+        if self._max_ul_bytes > 0:
+            ul_pct = item.upload / self._max_ul_bytes * 100
+            ul_item.setForeground(color_mgr.get_value_color(ul_pct, "net_ul"))
+        table.setItem(row, 3, ul_item)
+
+    def _fill_net_history_cols(self, table, row, item, color_mgr):
+        """Fill Network history columns: Download, Upload, Time."""
+        self._fill_net_cols(table, row, item, color_mgr)
+        table.setItem(row, 4, QTableWidgetItem(item.time_str))
+
+    def _fill_net_rolling_cols(self, table, row, item, color_mgr):
+        """Fill Network rolling columns: Download, Upload, Uptime."""
+        self._fill_net_cols(table, row, item, color_mgr)
+        # NetworkProcessInfo doesn't have uptime_seconds — rolling avg shows all accumulated
+        table.setItem(row, 4, QTableWidgetItem(""))
+
+    def _on_data_ready(self, data: NetworkMonitorData):
+        """Handle data from collector."""
+        if self.is_paused:
+            return
+
+        unit = self._network_settings.network_unit
+
+        # Update header — big number = current download speed
+        self.total_label.setText(f"↓ {format_speed(data.current_download, unit)}")
+        self.peak_label.setText(data.peak_display)
+
+        # Sensor row: Upload speed, Total Download, Total Upload
+        self.sensor_widget.setVisible(True)
+        self.sensor_name_labels[0].setText("Upload")
+        self.sensor_value_labels[0].setText(f"↑ {format_speed(data.current_upload, unit)}")
+        self.sensor_value_labels[0].setStyleSheet(f"color: {self.TEXT}; background: transparent;")
+
+        self.sensor_name_labels[1].setText("Total ↓")
+        self.sensor_value_labels[1].setText(format_bytes_total(data.cumulative_download, unit))
+        self.sensor_value_labels[1].setStyleSheet(f"color: {self.TEXT}; background: transparent;")
+
+        self.sensor_name_labels[2].setText("Total ↑")
+        self.sensor_value_labels[2].setText(format_bytes_total(data.cumulative_upload, unit))
+        self.sensor_value_labels[2].setStyleSheet(f"color: {self.TEXT}; background: transparent;")
+
+        # Update current table (no total row for network)
+        self._fill_process_rows(
+            self.current_table, data.processes, self._fill_net_cols,
+            limit=self.current_table.rowCount(),
+        )
+
+        # Update history table
+        self._fill_process_rows(self.history_table, data.history, self._fill_net_history_cols)
+
+        # Update rolling average table (dynamic row count)
+        self.rolling_table.setRowCount(len(data.rolling_average))
+        self._fill_process_rows(self.rolling_table, data.rolling_average, self._fill_net_rolling_cols)
+
+    def closeEvent(self, event):
+        """Handle close - disable Network monitoring."""
+        self._save_window_layout()
+        self._collector.network_data_ready.disconnect(self._on_data_ready)
+        self._collector.disable_network()
         super().closeEvent(event)
