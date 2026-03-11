@@ -307,7 +307,7 @@ class HWiNFOSharedMemory:
 # Global HWiNFO reader instance
 _hwinfo_reader: Optional[HWiNFOSharedMemory] = None
 
-from .styles import MEMORY_UNITS, format_pct, get_process_display_name
+from .styles import MEMORY_UNITS, format_pct, format_speed, get_process_display_name
 from .color_management import ProcessColorManager
 
 
@@ -325,6 +325,7 @@ class MonitorMode(Enum):
 
     CPU = auto()
     MEMORY = auto()
+    NETWORK = auto()
     BOTH = auto()  # Opens both CPU and Memory windows
 
 
@@ -376,7 +377,7 @@ def _collect_processes(
     need_cpu: bool,
     need_mem: bool,
     cpu_threads: int,
-) -> tuple[dict[str, list], float, int]:
+) -> tuple[dict[str, list], float, int, dict[int, str]]:
     """
     Single psutil pass collecting CPU and/or memory data.
 
@@ -396,6 +397,7 @@ def _collect_processes(
         attrs += ['memory_info']
 
     aggregated: dict[str, list] = {}
+    pid_to_name: dict[int, str] = {}
     total_cpu = 0.0
     total_rss = 0
 
@@ -426,6 +428,7 @@ def _collect_processes(
 
             pid = info.get('pid') or 0
             display_name = get_process_display_name(name)
+            pid_to_name[pid] = display_name
             if display_name in aggregated:
                 entry = aggregated[display_name]
                 entry[_CPU_IDX]     += cpu_pct
@@ -440,7 +443,7 @@ def _collect_processes(
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
 
-    return aggregated, total_cpu, total_rss
+    return aggregated, total_cpu, total_rss, pid_to_name
 
 
 # ---- CPU delta state for _collect_processes_bulk ----
@@ -453,7 +456,7 @@ def _collect_processes_bulk(
     need_cpu: bool,
     need_mem: bool,
     cpu_threads: int,
-) -> tuple[dict[str, list], float, int]:
+) -> tuple[dict[str, list], float, int, dict[int, str]]:
     """
     Single NtQuerySystemInformation(SystemProcessInformation) call collecting
     all process data at once.
@@ -461,8 +464,8 @@ def _collect_processes_bulk(
     Replaces ~300 per-process NtQueryInformationProcess kernel transitions with
     one system-wide call, reducing CPU usage by ~10–20×.
 
-    Returns same format as _collect_processes():
-        (aggregated dict, total_cpu float, total_rss int)
+    Returns:
+        (aggregated dict, total_cpu float, total_rss int, pid_to_name dict)
     """
     global _prev_cpu_times, _prev_collect_time
 
@@ -489,6 +492,7 @@ def _collect_processes_bulk(
     elapsed_100ns = (now - _prev_collect_time) * 10_000_000 if _prev_collect_time > 0 else 0.0
 
     aggregated: dict[str, list] = {}
+    pid_to_name: dict[int, str] = {}
     total_cpu = 0.0
     total_rss = 0
     new_cpu_times: dict[int, tuple[int, int]] = {}
@@ -535,6 +539,7 @@ def _collect_processes_bulk(
         elif name:
             total_rss += rss
             display_name = get_process_display_name(name)
+            pid_to_name[pid] = display_name
             if display_name in aggregated:
                 entry = aggregated[display_name]
                 entry[_CPU_IDX]     += cpu_pct
@@ -553,7 +558,7 @@ def _collect_processes_bulk(
         _prev_cpu_times = new_cpu_times
         _prev_collect_time = now
 
-    return aggregated, total_cpu, total_rss
+    return aggregated, total_cpu, total_rss, pid_to_name
 
 
 class ProcessMonitor:
@@ -710,7 +715,7 @@ class ProcessMonitor:
         """
         need_cpu = self.mode == MonitorMode.CPU
         need_mem = self.mode == MonitorMode.MEMORY
-        aggregated, total_cpu, total_rss = _collect_processes(need_cpu, need_mem, self.cpu_threads)
+        aggregated, total_cpu, total_rss, _ = _collect_processes(need_cpu, need_mem, self.cpu_threads)
         if need_cpu:
             return self._extract_cpu_top(aggregated, total_cpu, limit)
         return self._extract_mem_top(aggregated, total_rss, limit)
@@ -975,6 +980,243 @@ class MonitorData:
     rolling_average: list[ProcessInfo] = field(default_factory=list)  # Per-process rolling averages
 
 
+# ---------------------------------------------------------------------------
+# Network monitoring data structures
+# ---------------------------------------------------------------------------
+
+@dataclass
+class NetworkProcessInfo:
+    """Per-process network traffic for one tick."""
+    name: str
+    download: float  # bytes/sec received
+    upload: float    # bytes/sec sent
+    timestamp: float = field(default_factory=time.time)
+
+
+@dataclass
+class NetworkHistoryRecord:
+    """Historical peak network record for a process."""
+    name: str
+    download: float  # peak bytes/sec download
+    upload: float    # peak bytes/sec upload
+    sort_value: float  # the value used for ranking (depends on sort mode)
+    timestamp: float = field(default_factory=time.time)
+
+    @property
+    def time_str(self) -> str:
+        return datetime.fromtimestamp(self.timestamp).strftime("%H:%M")
+
+
+@dataclass
+class NetworkMonitorData:
+    """Data emitted by SharedDataCollector for the network window."""
+    processes: list[NetworkProcessInfo]
+    history: list[NetworkHistoryRecord]
+    rolling_average: list[NetworkProcessInfo]
+    current_download: float   # total bytes/sec download (all processes)
+    current_upload: float     # total bytes/sec upload (all processes)
+    cumulative_download: int  # total bytes downloaded since start
+    cumulative_upload: int    # total bytes uploaded since start
+    peak_display: str
+    sort_mode: str            # "total", "download", or "upload"
+
+
+class NetworkMonitor:
+    """Tracks per-process network traffic, history peaks, and rolling averages.
+
+    Works similarly to ProcessMonitor but for network bytes/sec.
+    """
+
+    def __init__(self, sort_mode: str = "total"):
+        self.sort_mode = sort_mode
+        self.history: dict[str, NetworkHistoryRecord] = {}
+        self.history_max_size = 10
+        self.retention_seconds = 120 * 60
+
+        # Cumulative totals (bytes since monitoring started)
+        self.cumulative_download: int = 0
+        self.cumulative_upload: int = 0
+
+        # Peak total speed buffer: (timestamp, speed_bytes_per_sec)
+        self._peak_buffer: deque = deque()
+
+        # Rolling average: deque of (timestamp, {name: (dl, ul)})
+        self._rolling_snapshots: deque = deque()
+        self._rolling_acc: dict[str, list] = {}  # {name: [total_dl, total_ul, samples]}
+
+    def _sort_key(self, dl: float, ul: float) -> float:
+        """Compute sort key based on current sort mode."""
+        if self.sort_mode == "download":
+            return dl
+        elif self.sort_mode == "upload":
+            return ul
+        return dl + ul
+
+    def process_snapshot(
+        self,
+        pid_bytes: dict[int, tuple[int, int]],
+        pid_to_name: dict[int, str],
+        elapsed_sec: float,
+        limit: int = 10,
+    ) -> list[NetworkProcessInfo]:
+        """Aggregate ETW per-PID bytes into per-process-name rates.
+
+        Args:
+            pid_bytes: {pid: (bytes_recv, bytes_sent)} from NetworkTracer.snapshot_and_reset()
+            pid_to_name: {pid: display_name} mapping from bulk process collect
+            elapsed_sec: seconds since last snapshot (for rate calculation)
+            limit: max processes to return
+
+        Returns:
+            Top N processes sorted by sort_mode, as NetworkProcessInfo list.
+        """
+        if elapsed_sec <= 0:
+            elapsed_sec = 1.0
+
+        # Aggregate by process name
+        name_bytes: dict[str, list[int]] = {}
+        for pid, (recv, sent) in pid_bytes.items():
+            name = pid_to_name.get(pid)
+            if not name:
+                continue
+            if name not in name_bytes:
+                name_bytes[name] = [0, 0]
+            name_bytes[name][0] += recv
+            name_bytes[name][1] += sent
+
+        # Update cumulative totals
+        total_recv = sum(r for r, _ in pid_bytes.values())
+        total_sent = sum(s for _, s in pid_bytes.values())
+        self.cumulative_download += total_recv
+        self.cumulative_upload += total_sent
+
+        # Compute rates
+        now = time.time()
+        total_dl_rate = total_recv / elapsed_sec
+        total_ul_rate = total_sent / elapsed_sec
+
+        # Update peak buffer
+        peak_value = self._sort_key(total_dl_rate, total_ul_rate)
+        self._peak_buffer.append((now, peak_value, total_dl_rate, total_ul_rate))
+        cutoff = now - self.retention_seconds
+        while self._peak_buffer and self._peak_buffer[0][0] < cutoff:
+            self._peak_buffer.popleft()
+
+        # Build process list with rates
+        process_list: list[tuple[str, float, float]] = []
+        for name, (recv, sent) in name_bytes.items():
+            dl_rate = recv / elapsed_sec
+            ul_rate = sent / elapsed_sec
+            process_list.append((name, dl_rate, ul_rate))
+
+        # Sort by sort mode
+        process_list.sort(key=lambda x: self._sort_key(x[1], x[2]), reverse=True)
+        top = process_list[:limit]
+
+        # Update rolling average accumulator
+        snapshot = {name: (dl, ul) for name, dl, ul in process_list}
+        self._update_rolling(now, snapshot)
+
+        return [
+            NetworkProcessInfo(name=name, download=dl, upload=ul)
+            for name, dl, ul in top
+        ]
+
+    def _update_rolling(self, now: float, snapshot: dict[str, tuple[float, float]]):
+        """Add snapshot to rolling average and purge expired entries."""
+        acc = self._rolling_acc
+
+        for name, (dl, ul) in snapshot.items():
+            if name not in acc:
+                acc[name] = [0.0, 0.0, 0]
+            entry = acc[name]
+            entry[0] += dl
+            entry[1] += ul
+            entry[2] += 1
+
+        self._rolling_snapshots.append((now, snapshot))
+
+        cutoff = now - self.retention_seconds
+        while self._rolling_snapshots and self._rolling_snapshots[0][0] < cutoff:
+            _, expired = self._rolling_snapshots.popleft()
+            for name, (dl, ul) in expired.items():
+                entry = acc.get(name)
+                if entry is None:
+                    continue
+                entry[0] -= dl
+                entry[1] -= ul
+                entry[2] -= 1
+                if entry[2] <= 0:
+                    del acc[name]
+
+    def get_rolling_average(self, limit: int = 0) -> list[NetworkProcessInfo]:
+        """Get per-process rolling averages sorted by sort mode."""
+        total_snapshots = len(self._rolling_snapshots)
+        if total_snapshots == 0:
+            return []
+
+        result = []
+        for name, (total_dl, total_ul, samples) in self._rolling_acc.items():
+            if samples == 0:
+                continue
+            avg_dl = total_dl / total_snapshots
+            avg_ul = total_ul / total_snapshots
+            if avg_dl <= 0 and avg_ul <= 0:
+                continue
+            result.append(NetworkProcessInfo(name=name, download=avg_dl, upload=avg_ul))
+
+        result.sort(key=lambda p: self._sort_key(p.download, p.upload), reverse=True)
+        return result[:limit] if limit > 0 else result
+
+    def update_history(self, processes: list[NetworkProcessInfo]):
+        """Update peak history records."""
+        now = time.time()
+
+        # Remove expired
+        self.history = {
+            name: rec for name, rec in self.history.items()
+            if (now - rec.timestamp) < self.retention_seconds
+        }
+
+        for proc in processes:
+            sort_val = self._sort_key(proc.download, proc.upload)
+            if sort_val <= 0:
+                continue
+
+            if proc.name in self.history:
+                if sort_val > self.history[proc.name].sort_value:
+                    self.history[proc.name] = NetworkHistoryRecord(
+                        name=proc.name, download=proc.download, upload=proc.upload,
+                        sort_value=sort_val, timestamp=now,
+                    )
+            else:
+                if len(self.history) < self.history_max_size:
+                    self.history[proc.name] = NetworkHistoryRecord(
+                        name=proc.name, download=proc.download, upload=proc.upload,
+                        sort_value=sort_val, timestamp=now,
+                    )
+                elif self.history:
+                    min_name = min(self.history, key=lambda k: self.history[k].sort_value)
+                    if sort_val > self.history[min_name].sort_value:
+                        del self.history[min_name]
+                        self.history[proc.name] = NetworkHistoryRecord(
+                            name=proc.name, download=proc.download, upload=proc.upload,
+                            sort_value=sort_val, timestamp=now,
+                        )
+
+    def get_history(self) -> list[NetworkHistoryRecord]:
+        """Get historical records sorted by sort_value descending."""
+        return sorted(self.history.values(), key=lambda r: r.sort_value, reverse=True)[:self.history_max_size]
+
+    def get_peak_display(self, unit: str = "MB/s") -> str:
+        """Get formatted peak speed string."""
+        if not self._peak_buffer:
+            return "Peak: --"
+        peak_ts, _, peak_dl, peak_ul = max(self._peak_buffer, key=lambda x: x[1])
+        time_str = datetime.fromtimestamp(peak_ts).strftime("%H:%M")
+        return f"Peak: ↓{format_speed(peak_dl, unit)} ↑{format_speed(peak_ul, unit)} at {time_str}"
+
+
 class SharedDataCollector(QThread):
     """
     Singleton that collects process data once and distributes to multiple windows.
@@ -982,6 +1224,7 @@ class SharedDataCollector(QThread):
 
     cpu_data_ready = Signal(MonitorData)
     memory_data_ready = Signal(MonitorData)
+    network_data_ready = Signal(NetworkMonitorData)
 
     _instance: Optional['SharedDataCollector'] = None
     _lock = QMutex()
@@ -1002,19 +1245,27 @@ class SharedDataCollector(QThread):
 
         self._cpu_monitor: Optional[ProcessMonitor] = None
         self._memory_monitor: Optional[ProcessMonitor] = None
+        self._network_monitor: Optional[NetworkMonitor] = None
+        self._network_tracer = None  # NetworkTracer (lazy import)
         self._running = False
         self._interval_ms = 1000
         self._cpu_refresh_ms = 1000
         self._memory_refresh_ms = 1000
+        self._network_refresh_ms = 1000
         self._mutex = QMutex()
 
         # Settings per mode
         self._cpu_settings: Optional[dict] = None
         self._memory_settings: Optional[dict] = None
+        self._network_settings: Optional[dict] = None
+
+        # Network timing
+        self._last_network_time: float = 0.0
 
         # Subscribers
         self._cpu_enabled = False
         self._memory_enabled = False
+        self._network_enabled = False
 
     def configure_cpu(
         self,
@@ -1072,18 +1323,64 @@ class SharedDataCollector(QThread):
             self._memory_enabled = True
             self._interval_ms = self._compute_interval()
 
+    def configure_network(
+        self,
+        current_rows: int,
+        history_rows: int,
+        retention_minutes: int,
+        refresh_rate_ms: int,
+        network_unit: str,
+        sort_mode: str,
+        max_download_mbps: int,
+        max_upload_mbps: int,
+    ):
+        """Configure Network monitoring."""
+        with QMutexLocker(self._mutex):
+            self._network_settings = {
+                'current_rows': current_rows,
+                'history_rows': history_rows,
+                'network_unit': network_unit,
+                'sort_mode': sort_mode,
+                'max_download_mbps': max_download_mbps,
+                'max_upload_mbps': max_upload_mbps,
+            }
+            if self._network_monitor is None:
+                self._network_monitor = NetworkMonitor(sort_mode=sort_mode)
+            self._network_monitor.sort_mode = sort_mode
+            self._network_monitor.history_max_size = history_rows
+            self._network_monitor.retention_seconds = retention_minutes * 60
+            self._network_refresh_ms = refresh_rate_ms
+            self._network_enabled = True
+            self._interval_ms = self._compute_interval()
+
+            # Start ETW tracer if not already running
+            if self._network_tracer is None:
+                from .network_monitor import NetworkTracer
+                self._network_tracer = NetworkTracer()
+                self._network_tracer.start()
+
     def disable_cpu(self):
         """Disable CPU monitoring."""
         with QMutexLocker(self._mutex):
             self._cpu_enabled = False
-            if not self._memory_enabled:
+            if not self._memory_enabled and not self._network_enabled:
                 self.stop()
 
     def disable_memory(self):
         """Disable Memory monitoring."""
         with QMutexLocker(self._mutex):
             self._memory_enabled = False
-            if not self._cpu_enabled:
+            if not self._cpu_enabled and not self._network_enabled:
+                self.stop()
+
+    def disable_network(self):
+        """Disable Network monitoring."""
+        with QMutexLocker(self._mutex):
+            self._network_enabled = False
+            if self._network_tracer is not None:
+                self._network_tracer.stop()
+                self._network_tracer = None
+            if not self._cpu_enabled and not self._memory_enabled:
                 self.stop()
 
     def _compute_interval(self) -> int:
@@ -1093,6 +1390,8 @@ class SharedDataCollector(QThread):
             rates.append(self._cpu_refresh_ms)
         if self._memory_enabled:
             rates.append(self._memory_refresh_ms)
+        if self._network_enabled:
+            rates.append(self._network_refresh_ms)
         return min(rates) if rates else 1000
 
     def run(self):
@@ -1108,15 +1407,20 @@ class SharedDataCollector(QThread):
                 mem_enabled = self._memory_enabled
                 mem_monitor = self._memory_monitor
                 mem_settings = self._memory_settings.copy() if self._memory_settings else None
+                net_enabled = self._network_enabled
+                net_monitor = self._network_monitor
+                net_tracer = self._network_tracer
+                net_settings = self._network_settings.copy() if self._network_settings else None
                 interval = self._interval_ms
 
             need_cpu = bool(cpu_enabled and cpu_monitor and cpu_settings)
             need_mem = bool(mem_enabled and mem_monitor and mem_settings)
+            need_net = bool(net_enabled and net_monitor and net_tracer and net_settings)
 
-            if need_cpu or need_mem:
+            if need_cpu or need_mem or need_net:
                 # Single NtQuerySystemInformation call (replaces ~300 per-process psutil calls)
                 cpu_threads = cpu_monitor.cpu_threads if cpu_monitor else psutil.cpu_count()
-                aggregated, total_cpu, total_rss = _collect_processes_bulk(need_cpu, need_mem, cpu_threads)
+                aggregated, total_cpu, total_rss, pid_to_name = _collect_processes_bulk(need_cpu, need_mem, cpu_threads)
 
                 # Register new process names for company color lookup (fast no-op for cached names)
                 color_mgr = ProcessColorManager()
@@ -1173,11 +1477,46 @@ class SharedDataCollector(QThread):
                         rolling_average=mem_monitor.get_rolling_average(mem_settings['history_rows']),
                     ))
 
+                if need_net:
+                    now = time.time()
+                    elapsed = now - self._last_network_time if self._last_network_time > 0 else 1.0
+                    self._last_network_time = now
+
+                    pid_bytes = net_tracer.snapshot_and_reset()
+                    net_unit = net_settings.get('network_unit', 'MB/s')
+                    net_limit = max(net_settings['current_rows'], net_settings['history_rows'])
+                    net_processes = net_monitor.process_snapshot(
+                        pid_bytes, pid_to_name, elapsed, net_limit,
+                    )
+                    net_monitor.update_history(net_processes)
+
+                    # Compute current total rates for header
+                    total_recv = sum(r for r, _ in pid_bytes.values())
+                    total_sent = sum(s for _, s in pid_bytes.values())
+                    current_dl = total_recv / elapsed if elapsed > 0 else 0.0
+                    current_ul = total_sent / elapsed if elapsed > 0 else 0.0
+
+                    self.network_data_ready.emit(NetworkMonitorData(
+                        processes=net_processes[:net_settings['current_rows']],
+                        history=net_monitor.get_history(),
+                        rolling_average=net_monitor.get_rolling_average(net_settings['history_rows']),
+                        current_download=current_dl,
+                        current_upload=current_ul,
+                        cumulative_download=net_monitor.cumulative_download,
+                        cumulative_upload=net_monitor.cumulative_upload,
+                        peak_display=net_monitor.get_peak_display(net_unit),
+                        sort_mode=net_monitor.sort_mode,
+                    ))
+
             self.msleep(interval)
 
     def stop(self):
         """Stop the collector."""
         self._running = False
+        # Stop ETW tracer if running
+        if self._network_tracer is not None:
+            self._network_tracer.stop()
+            self._network_tracer = None
         self.wait(2000)
 
     @property
@@ -1189,6 +1528,11 @@ class SharedDataCollector(QThread):
     def memory_monitor(self) -> Optional[ProcessMonitor]:
         """Get Memory monitor instance."""
         return self._memory_monitor
+
+    @property
+    def network_monitor(self) -> Optional[NetworkMonitor]:
+        """Get Network monitor instance."""
+        return self._network_monitor
 
     @classmethod
     def reset_instance(cls):
