@@ -1698,8 +1698,11 @@ class NetworkWindow(BaseMonitorWindow):
     def _fill_net_rolling_cols(self, table, row, item, color_mgr):
         """Fill Network rolling columns: Download, Upload, Uptime."""
         self._fill_net_cols(table, row, item, color_mgr)
-        # NetworkProcessInfo doesn't have uptime_seconds — rolling avg shows all accumulated
-        table.setItem(row, 4, QTableWidgetItem(""))
+        uptime_min = round(item.uptime_seconds / 60)
+        uptime_item = QTableWidgetItem(f"{uptime_min}m")
+        if uptime_min >= self._network_settings.retention_minutes:
+            uptime_item.setForeground(QColor(self.TEXT_MUTED))
+        table.setItem(row, 4, uptime_item)
 
     def _on_data_ready(self, data: NetworkMonitorData):
         """Handle data from collector."""

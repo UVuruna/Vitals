@@ -991,6 +991,7 @@ class NetworkProcessInfo:
     download: float  # bytes/sec received
     upload: float    # bytes/sec sent
     timestamp: float = field(default_factory=time.time)
+    uptime_seconds: int = 0  # Rolling average only: seconds active within retention window
 
 
 @dataclass
@@ -1154,6 +1155,11 @@ class NetworkMonitor:
         if total_snapshots == 0:
             return []
 
+        if total_snapshots >= 2:
+            actual_span = self._rolling_snapshots[-1][0] - self._rolling_snapshots[0][0]
+        else:
+            actual_span = 0.0
+
         result = []
         for name, (total_dl, total_ul, samples) in self._rolling_acc.items():
             if samples == 0:
@@ -1162,7 +1168,8 @@ class NetworkMonitor:
             avg_ul = total_ul / total_snapshots
             if avg_dl <= 0 and avg_ul <= 0:
                 continue
-            result.append(NetworkProcessInfo(name=name, download=avg_dl, upload=avg_ul))
+            uptime_seconds = round(samples * actual_span / total_snapshots) if actual_span else 0
+            result.append(NetworkProcessInfo(name=name, download=avg_dl, upload=avg_ul, uptime_seconds=uptime_seconds))
 
         result.sort(key=lambda p: self._sort_key(p.download, p.upload), reverse=True)
         return result[:limit] if limit > 0 else result
