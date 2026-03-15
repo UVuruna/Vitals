@@ -102,9 +102,11 @@ Section "Desktop Shortcut" SecDesktop
 SectionEnd
 
 Section "Start with Windows" SecAutostart
-    ; UAC-elevated apps are silently skipped by Registry Run.
-    ; Use Task Scheduler with /rl highest to autostart elevated.
-    nsExec::ExecToLog 'schtasks /create /tn "${APP_NAME}" /tr "$\"$INSTDIR\${APP_EXE}$\"" /sc onlogon /rl highest /f'
+    ; Remove legacy Registry Run entry (UAC-elevated apps are silently skipped)
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_NAME}"
+
+    ; Use Task Scheduler with /rl highest to autostart elevated apps
+    ExecWait 'schtasks /create /tn "${APP_NAME}" /tr "\"$INSTDIR\${APP_EXE}\"" /sc onlogon /rl highest /f'
 SectionEnd
 
 ; -- Section Descriptions -----------------------------------------
