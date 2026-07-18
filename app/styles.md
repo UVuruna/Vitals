@@ -6,7 +6,12 @@
 
 ## Purpose
 
-Centralized UI styling constants including colors, fonts, dimensions, and default values. Also contains process name mapping logic.
+Single source of truth for the application's dark-theme palette, dimensions,
+fonts, and every tunable default/threshold value used across the UI and
+collector. `color_management.py` explicitly does **not** hold palette
+constants — only value-threshold gradient data and process-coloring logic;
+`Colors` here is the one place window chrome, settings dialogs, and the
+shared context menu pull hex values from.
 
 ---
 
@@ -14,113 +19,86 @@ Centralized UI styling constants including colors, fonts, dimensions, and defaul
 
 ### Uses
 
-- None (standalone constants)
+- None — standalone constants and pure functions (no imports from other `app` modules)
 
 ### Used by
 
-- [MainWindow](main_window.md) - UI styling
-- [SettingsDialog](settings_dialog.md) - UI styling
-- [ProcessMonitor](monitor.md) - Process name mapping
+- [Main Window](main_window.md) — `Colors`, `Defaults`, `Fonts`, `FontScale`, `CONTEXT_MENU_STYLE`, `format_speed`, `format_bytes_total`
+- [Settings Dialog](settings_dialog.md) — `Colors`, `Defaults`, `FontScale`, `MEMORY_UNITS`, `NETWORK_UNITS`
+- [Monitor](monitor.md) — `Defaults`, `MEMORY_UNITS`, `format_pct`, `format_speed`, `get_process_display_name`
+- [Tray Controller](tray.md) — `CONTEXT_MENU_STYLE`
+- `process_actions.py` — `get_process_display_name`
+- `process_dialog.py` — `Fonts`
 
 ---
 
 ## Constants
 
-### Colors
+### Colors (dark theme — single palette source)
 
-| Constant | Value | Usage |
-|----------|-------|-------|
-| `BACKGROUND` | #ECF5F9 | Window background |
-| `CURRENT_HEADER` | #FFC6C6 | Current section header (red) |
-| `CURRENT_BODY` | #FFE2E2 | Current section body (light red) |
-| `HISTORY_HEADER` | #A2D2FF | History section header (blue) |
-| `HISTORY_BODY` | #E2F1FF | History section body (light blue) |
-| `TEXT_PRIMARY` | #060606 | Main text |
-| `TEXT_SECONDARY` | #444444 | Secondary text |
-| `ACCENT_CPU` | #FF6B6B | CPU accent color |
-| `ACCENT_MEMORY` | #4ECDC4 | Memory accent color |
-
----
+| Attribute | Value | Usage |
+|-----------|-------|-------|
+| `BACKGROUND` | `#1e1e2e` | Window background |
+| `CARD` | `#2a2a3e` | Card/panel background |
+| `HEADER` | `#3a3a4e` | Header row / table header background |
+| `BORDER` | `#4a4a5e` | Input borders |
+| `ACCENT` / `ACCENT_HOVER` | `#e94560` / `#ff6b6b` | Buttons, highlights |
+| `TEXT` / `TEXT_MUTED` / `TEXT_DIM` / `TEXT_FAINT` / `TEXT_DISABLED` | `#ffffff` … `#555555` | Text hierarchy, brightest to dimmest |
+| `CURRENT_BG` / `HISTORY_BG` / `ROLLING_BG` | `#2d2d42` / `#2a3a3e` / `#2a382e` | Per-section table backgrounds |
+| `TEMP_WARNING` / `TEMP_CRITICAL` | `#ffa500` / `#ff4444` | HWiNFO temperature thresholds |
 
 ### Dimensions
 
-| Constant | Value | Usage |
-|----------|-------|-------|
-| `WINDOW_WIDTH` | 500 | Main window width |
-| `WINDOW_MIN_HEIGHT` | 400 | Minimum window height |
-| `MARGIN` | 10 | Standard margin |
-| `SPACING` | 8 | Widget spacing |
-| `TABLE_ROW_HEIGHT` | 28 | Table row height |
-| `HEADER_HEIGHT` | 50 | Header widget height |
-| `SETTINGS_WIDTH` | 450 | Settings dialog width |
-| `SETTINGS_HEIGHT` | 400 | Settings dialog height |
+`WINDOW_WIDTH` (500), `WINDOW_MIN_HEIGHT` (400), `MARGIN` (10), `SPACING` (8),
+`TABLE_ROW_HEIGHT` (28), `HEADER_HEIGHT` (50), `SETTINGS_WIDTH` (450),
+`SETTINGS_HEIGHT` (400).
 
----
+### Fonts / FontScale
 
-### Fonts
+`Fonts` holds the base family (`"Segoe UI"`) and three fixed sizes used by
+plain dialogs (`SIZE_HEADER`/`SIZE_BODY`/`SIZE_SMALL`).
 
-| Constant | Value |
-|----------|-------|
-| `FAMILY` | "Segoe UI" |
-| `SIZE_HEADER` | 14 |
-| `SIZE_BODY` | 11 |
-| `SIZE_SMALL` | 10 |
-
----
+`FontScale` is the proportional system used by the monitor windows — every
+size is an **offset from the user's chosen base size** (like `em`/`rem`):
+`TITLE` (+5), `SECTION` (+2), `SUBTITLE` (+1), `BODY` (0), `SMALL` (-1),
+`TINY` (-2), clamped to `MIN_SIZE` (6pt). `FontScale.size(base, offset)`
+computes the final pt size; `FontScale.row_height(base)` scales table row
+height proportionally (`28 * base / 11`, so the default 11pt base reproduces
+the original hardcoded 28px rows).
 
 ### Defaults
 
-Default application settings:
+`CURRENT_ROWS` (7), `HISTORY_ROWS` (4), `MAX_ROWS` (30), `REFRESH_RATE_MS`
+(1000), `RETENTION_MINUTES` (120), `MEMORY_UNIT` ("MB"), `NETWORK_UNIT`
+("MB/s"), `FONT_SIZE` (11), `NETWORK_MAX_DOWNLOAD_MBPS` / `NETWORK_MAX_UPLOAD_MBPS`
+(0 = auto-detect from link speed), `NETWORK_SORT_MODE` ("total"),
+`COLLECTOR_SLEEP_CHUNK_MS` (100 — see [Monitor](monitor.md)'s chunked-sleep
+design decision), `ROLLING_BUCKET_SECONDS` (60 — see [Monitor](monitor.md)'s
+`RollingWindow` bucketed-expiry design decision).
 
-| Setting | Default |
-|---------|---------|
-| Current rows | 7 |
-| History rows | 4 |
-| Refresh rate | 2000 ms |
-| Retention | 120 min |
-| Memory unit | MB |
+### MEMORY_UNITS / NETWORK_UNITS
 
----
+Byte-divisor lookup tables: `{"KB": 1024, "MB": 1024**2, "GB": 1024**3}` and
+`{"KB/s": 1024, "MB/s": 1024**2}`.
 
-### Memory Units
+### PROCESS_ALIASES
 
-```python
-MEMORY_UNITS = {
-    "KB": 1024,
-    "MB": 1024 ** 2,
-    "GB": 1024 ** 3,
-}
-```
+Prefix-match table used by `get_process_display_name()` to group related
+processes under one display name (e.g. `"Code"`/`"code"` →
+`"Visual Studio Code"`, `"chrome"` → `"Chrome"`, `"msedge"` → `"Microsoft Edge"`).
+
+### CONTEXT_MENU_STYLE
+
+Shared QSS string for every right-click/tray context menu, built from
+`Colors` so menus always match the dark theme.
 
 ---
 
 ## Functions
 
-### get_process_display_name
-
-Maps process names to display-friendly names.
-
-```python
-def get_process_display_name(name: str) -> str:
-    """
-    Convert process name to display-friendly name.
-
-    Args:
-        name: Original process name (e.g., "Code.exe")
-
-    Returns:
-        Display name (e.g., "Visual Studio Code")
-    """
-```
-
-#### Mappings
-
-| Prefix | Display Name |
-|--------|--------------|
-| Code | Visual Studio Code |
-| logi | Logi Options+ |
-| steam | Steam |
-| nv | NVIDIA |
-| msedge | Microsoft Edge |
-| chrome | Chrome |
-| firefox | Firefox |
+| Function | Description |
+|----------|-------------|
+| `format_speed(bytes_per_sec, unit)` | Formats a bytes/sec value in `"KB/s"` or `"MB/s"`, adaptive decimals for MB/s (`≥100` → 0 decimals, else 2). |
+| `format_bytes_total(total_bytes, unit)` | Formats a cumulative byte count, auto-picking GB (≥1 GB) or MB. |
+| `format_pct(value)` | Adaptive-precision percentage: `≥100` → integer, `≥10` → 1 decimal, `<10` → 2 decimals. Keeps output at ≤3 significant digits before `%`. |
+| `get_process_display_name(name)` | `@lru_cache`d: strips `.exe`, applies `PROCESS_ALIASES` prefix match. |

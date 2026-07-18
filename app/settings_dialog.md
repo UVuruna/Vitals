@@ -6,7 +6,15 @@
 
 ## Purpose
 
-Configuration dialog for Process Monitor settings. Allows user to select monitoring mode (CPU/Memory) and configure display options like refresh rate, number of rows, and memory units.
+Every dialog in the app: the startup launcher (`InitialSettingsDialog`) and
+the per-mode settings dialogs (`CPUSettingsDialog`, `MemorySettingsDialog`,
+`NetworkSettingsDialog`), plus the draggable color-scale widget and the
+Company Legend popup. `BaseSettingsDialog` centralizes the dark palette,
+window icon, and the row-builders duplicated across all four dialogs
+(current/history rows, refresh rate, retention, font size, network options).
+
+Also owns Windows autostart registration and the `last_setup.json` write for
+the initial launcher screen.
 
 ---
 
@@ -14,85 +22,99 @@ Configuration dialog for Process Monitor settings. Allows user to select monitor
 
 ### Uses
 
-- [ProcessMonitor](monitor.md) - For MonitorMode enum
-- [Styles](styles.md) - Colors, fonts, defaults
+- [Monitor](monitor.md) — `MonitorMode`, `get_commit_limit_bytes()` (Memory dialog's Commit color-scale max)
+- [Persistence](persistence.md) — `get_base_path()` (dialog icon), `load_last_setup()`/`save_last_setup()`
+- [Styles](styles.md) — `Colors`, `Defaults`, `FontScale`, `MEMORY_UNITS`, `NETWORK_UNITS`
+- [Color Management](color_management.md) — `ProcessColorManager` (thresholds, hue params, legend data)
+- [Network Monitor](network_monitor.md) — `get_link_speed_mbps()` (default max-speed spinbox value)
 
 ### Used by
 
-- [MainWindow](main_window.md) - Opens dialog on startup and from menu
+- [Main Window](main_window.md) — `CPUWindow`/`MemoryWindow`/`NetworkWindow` open `CPUSettingsDialog`/`MemorySettingsDialog`/`NetworkSettingsDialog` from `_create_settings_dialog()`
+- `main.py` — shows `InitialSettingsDialog` before any window is created
 
 ---
 
 ## Classes
 
-### MonitorSettings
+### ColorScaleWidget
 
-Dataclass containing all application settings.
+Paints a 5-color gradient bar with 4 draggable diamond handles marking zone
+boundaries. Emits `thresholds_changed(list[int])` while dragging; each
+settings dialog reads `.thresholds` on accept and persists it via
+`ProcessColorManager.update_value_thresholds()`.
 
-#### Attributes
+### CompanyLegendDialog
 
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `mode` | MonitorMode | CPU | CPU or MEMORY |
-| `current_rows` | int | 7 | Processes to show |
-| `history_rows` | int | 4 | History records |
-| `refresh_rate_ms` | int | 2000 | Update interval |
-| `retention_minutes` | int | 120 | History retention |
-| `memory_unit` | str | "MB" | KB, MB, or GB |
-| `cpu_threads` | int | auto | CPU thread count |
-| `ram_gb` | int | auto | RAM in GB |
+Shows every detected company with its assigned color and active process
+count (expandable to list the individual process names), plus hue
+saturation/lightness sliders. Self-refreshes every second
+(`QTimer`) so it stays live while the collector discovers new companies.
 
----
+### BaseSettingsDialog (QDialog)
 
-### SettingsDialog
+Shared scaffolding — not instantiated directly.
 
-Qt dialog for configuring settings.
+| Method | Description |
+|--------|-------------|
+| `_apply_dark_theme()` | Sets the window icon and the shared dark `QPalette`. |
+| `_make_label(text, size, bold, color)` / `_make_combo(items, default)` | Styled widget factories used by every dialog. |
+| `_build_common_settings_rows(layout)` | Builds the 5 rows shared by all 4 dialogs: current processes, history records, refresh rate, history retention, font size. Returns the widgets for the caller to store as attributes. |
+| `_build_network_settings_rows(layout, default_speed_mbps)` | Builds the network section (speed unit, sort mode, max download/upload spinboxes where `0` = auto) shared by `InitialSettingsDialog` and `NetworkSettingsDialog`. |
 
-#### Constructor
+### InitialSettings / CPUSettings / MemorySettings / NetworkSettings (dataclasses)
 
-```python
-SettingsDialog(
-    parent: Optional[QWidget] = None,
-    settings: Optional[MonitorSettings] = None,
-)
-```
+Per-scope settings containers passed into/out of each dialog.
+`InitialSettings` additionally exposes `cpu_threads`/`ram_gb` (auto-detected
+via `psutil`) and `commit_limit_bytes` (via [Monitor](monitor.md)'s
+`get_commit_limit_bytes()`) as computed properties.
 
-#### Methods
+### InitialSettingsDialog
 
-- `get_settings()` -> MonitorSettings: Get current UI values
+The launcher shown before any window opens. Mode buttons (CPU/Memory/Network,
+any combination) enable/disable the Start button and the network settings
+section; restores the previous session via `_apply_last_setup(load_last_setup())`;
+`_on_start()` registers/unregisters Windows autostart and calls
+`_save_last_setup()` before accepting.
 
----
+### CPUSettingsDialog / MemorySettingsDialog / NetworkSettingsDialog
 
-## UI Layout
-
-```
-┌───────────────────────────────────────┐
-│         Process Monitor - Settings     │
-├───────────────────────────────────────┤
-│  Monitor Mode                          │
-│  (●) CPU Usage  ( ) Memory Usage       │
-├───────────────────────────────────────┤
-│  Display Settings                      │
-│  Current processes:    [  7  ▼]        │
-│  History records:      [  4  ▼]        │
-│  Refresh rate:     ═══════○═══  2000ms │
-│  History retention: ═══○═══════  120min│
-├───────────────────────────────────────┤
-│  System Settings                       │
-│  Memory unit:     [ MB ▼]              │
-│  CPU threads:     [ 16 ▼]              │
-│  RAM (GB):        [ 32 ▼]              │
-├───────────────────────────────────────┤
-│                    [Start Monitoring]  │
-└───────────────────────────────────────┘
-```
+Per-mode dialogs built from the shared rows plus mode-specific color-scale
+sections (CPU: usage + Σ-total; Memory: usage + commit + their Σ-total
+variants; Network: download + upload). Each dialog's `accept()` persists its
+`ColorScaleWidget` thresholds via `ProcessColorManager.update_value_thresholds()`
+before calling `super().accept()`.
 
 ---
 
-## Auto-Detection
+## Functions
 
-On initialization, the dialog auto-detects:
-- CPU thread count via `psutil.cpu_count()`
-- RAM amount via `psutil.virtual_memory().total`
+| Function | Description |
+|----------|-------------|
+| `is_startup_registered()` | Frozen exe: queries the `PMUsage` Task Scheduler task. Dev mode: checks the HKCU `Run` registry value. |
+| `set_startup_registered(enabled)` | Frozen exe: creates/deletes the same Task Scheduler task the installer manages (`/rl highest`) and cleans up any legacy `Run` entry. Dev mode: sets/deletes the HKCU `Run` value. |
 
-These values are pre-selected but can be overridden.
+---
+
+## Design Decisions
+
+**Task Scheduler for the frozen exe, not Registry Run.** Windows silently
+skips `HKCU\...\Run` entries that point at a UAC-elevated executable, so a
+Registry-only toggle would appear to work but never actually autostart the
+installed app. `set_startup_registered()` instead creates a Task Scheduler
+task named `PMUsage` — the **same name** `setup/installer.nsi`'s optional
+autostart section creates — so the in-app toggle and the installer manage
+one shared task, not two competing autostart mechanisms.
+
+**Legacy Run-entry cleanup runs unconditionally.** `_delete_legacy_run_value()`
+removes any `PMUsage` value left by pre-2.0.214 versions every time
+`set_startup_registered()` runs on a frozen build, since that entry is dead
+weight at best (points at an elevated exe Windows won't launch via Run).
+
+**Color thresholds are read and persisted only on dialog `accept()`.**
+`ColorScaleWidget` tracks its own `_thresholds` locally while dragging
+(repainting and emitting `thresholds_changed` for a live view of the bar) —
+it never touches `ProcessColorManager` itself. Only `accept()` reads the
+widget's final `.thresholds` and calls
+`ProcessColorManager.update_value_thresholds()`, so canceling the dialog
+leaves the persisted (and in-memory) thresholds completely untouched.

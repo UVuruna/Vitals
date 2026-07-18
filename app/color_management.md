@@ -6,12 +6,19 @@
 
 ## Purpose
 
-Handles all color logic for the Process Monitor:
-- **Company-based coloring** — hues distributed dynamically as 360°/N where N grows as new companies are discovered; all named companies get a hue, no-company processes get a fixed gray.
-- **Value-based coloring** — per-mode thresholds (CPU and Memory are independent), maps 0–100% usage to a color.
-- **App color palette** — dark theme constants (`Colors` dataclass).
+Handles process-coloring logic only. The app chrome/dark-theme palette
+(`Colors`) lives in [Styles](styles.md), not here — this module owns:
 
-Config is read from `config/config.json` — edit that file to tune value color thresholds.
+- **Company-based coloring** — companies with more than one active process
+  name get an individual hue (`360°/N` evenly spaced); companies with
+  exactly one process name share a single "Other" color; processes with no
+  company info get a fixed near-white color.
+- **Value-based coloring** — eight independent threshold sets (CPU, CPU-Σ-total,
+  Memory, Memory-Commit, Memory-Σ-total, Memory-Commit-Σ-total, Network
+  download, Network upload) each map 0–100% to one of 5 colors.
+
+Default thresholds are read from `config/config.json`; user overrides
+persist to `config/last_setup.json` via [Persistence](persistence.md).
 
 ---
 
@@ -19,33 +26,15 @@ Config is read from `config/config.json` — edit that file to tune value color 
 
 ### Uses
 
-- `config/config.json` — `value_colors.ranges` for threshold/color pairs
-- `psutil` — reads exe path for company name resolution
-- Windows `version.dll` — reads `CompanyName` from PE version info
+- `config/config.json` — `value_colors.ranges` default thresholds
+- [Persistence](persistence.md) — `load_last_setup()`/`save_last_setup()` for hue params and saved thresholds
+- `psutil` — resolves an exe path per process for company lookup
+- Windows `version.dll` (via `ctypes`) — reads `CompanyName` from PE version info
 
 ### Used by
 
-- [MainWindow](main_window.md) — `get_value_color()`, `get_process_color()`
-- [SettingsDialog](settings_dialog.md) — `get_value_ranges()`, `update_value_thresholds()`, `get_legend()`
-
----
-
-## Constants
-
-### Colors
-
-Application color palette (dark theme). All values are CSS hex strings.
-
-| Attribute | Value | Description |
-|-----------|-------|-------------|
-| `BACKGROUND` | `#1e1e2e` | Main window background |
-| `CARD` | `#2a2a3e` | Card/panel background |
-| `HEADER` | `#3a3a4e` | Header row background |
-| `ACCENT` | `#e94560` | Accent/highlight color |
-| `TEXT` | `#ffffff` | Primary text |
-| `TEXT_MUTED` | `#aaaaaa` | Secondary text |
-| `CURRENT_BG` | `#2d2d42` | Current processes section |
-| `HISTORY_BG` | `#2a3a3e` | History section |
+- [Main Window](main_window.md) — `get_process_color()`, `get_value_color()`, `get_company_name()`, `lookup_company()`, `refresh_active_counts()` (called every tick by [Monitor](monitor.md)'s collector loop)
+- [Settings Dialog](settings_dialog.md) — `get_value_ranges()`, `update_value_thresholds()`, `get_legend()`, `get_hue_params()`, `update_hue_params()`, `get_singleton_companies()`, `get_company_processes()`
 
 ---
 
@@ -53,69 +42,57 @@ Application color palette (dark theme). All values are CSS hex strings.
 
 ### ProcessColorManager
 
-Thread-safe singleton. Manages color assignment for all processes.
-
-#### Constructor
-
-No parameters — access via `ProcessColorManager()`. Singleton is initialized on first call.
+Thread-safe singleton (`QMutex`-guarded `__new__`), accessed as
+`ProcessColorManager()` from any thread.
 
 #### Company-Based Coloring
 
-Each named company gets a hue computed as:
-
 ```
-hue = discovery_index / total_named_companies * 360°
+hue = multi_company_index / (multi_company_count + 1) * 360°
 ```
 
-Colors recalculate whenever a new company is discovered (N grows → all hues shift).
-Fixed HSL parameters: saturation = 0.35, lightness = 0.70 (pastel, readable on dark backgrounds).
-
-Processes with no company info at all get a fixed gray (`#999999`).
+The `+1` reserves the last hue slot for the shared "Other" color (singleton
+companies). Hue assignments are never revoked once granted
+(`_company_multi_idx`), so colors stay stable even if a company temporarily
+drops to a single active process. Saturation/lightness default to `0.84`/`0.84`
+(vivid pastel, readable on the dark background) and are user-tunable via the
+Company Legend dialog's sliders.
 
 #### Methods
 
 | Method | Thread | Description |
-|--------|--------|-------------|
-| `lookup_company(name, pid)` | Background | Register a process name and resolve its company via Windows PE version info. Fast no-op for already-cached names. |
-| `get_process_color(name)` | Main | Return `QColor` for a process name. `None` if not yet looked up. Gray if no company info. |
-| `get_value_color(pct, mode)` | Any | Return `QColor` for a usage percentage. `mode` = `"cpu"` or `"memory"`. |
-| `update_value_thresholds(thresholds, mode)` | Main | Update 4 threshold values in-memory (session only). `thresholds` = 4 ascending ints in 1–99. |
-| `get_value_ranges(mode)` | Main | Return `list[tuple[float, QColor]]` for UI display (ColorScaleWidget). |
-| `get_legend()` | Main | Return `list[tuple[str, QColor, int]]` — `(company, color, process_count)` sorted by count descending. Includes `"Unknown"` entry at end for no-company processes. |
+|--------|--------|--------------|
+| `lookup_company(name, pid)` | Background (collector) | Registers a process name and resolves its company via PE version info. Fast no-op for already-cached names. |
+| `refresh_active_counts(active_names)` | Background (collector) | Recomputes per-company counts from the current tick's active names every cycle. |
+| `get_process_color(name)` | Main | `QColor` for a process name, or `None` if not yet looked up. |
+| `get_company_name(name)` | Main | Resolved company name, or `None`. |
+| `get_value_color(pct, mode)` | Any | `QColor` for a 0–100 usage percentage under the given mode's thresholds. |
+| `get_value_ranges(mode)` | Main | `list[tuple[float, QColor]]` for `ColorScaleWidget` display. |
+| `update_value_thresholds(thresholds, mode)` | Main | Updates the 4 threshold values in-memory and persists them. |
+| `get_hue_params()` / `update_hue_params(sat, light)` | Main | Read/write the company-hue saturation and lightness. |
+| `get_legend()` | Main | `list[tuple[str, QColor, int]]` — `(label, color, process_count)` sorted by count descending; includes `"Other"` (singletons) and `"Unknown"` (no company info). |
+| `get_singleton_companies()` / `get_company_processes(company)` | Main | Drill-down lists for the Company Legend dialog's expandable rows. |
+
+`mode` is one of: `"cpu"`, `"cpu_all"`, `"memory"`, `"memory_total"`,
+`"memory_all"`, `"memory_all_total"`, `"net_dl"`, `"net_ul"`.
 
 ---
 
-## Value Color Config
+## Design Decisions
 
-Thresholds and colors are read from `config/config.json`:
+**Value thresholds are eight independent lists, not one shared scale.**
+The per-row color (e.g. one process's CPU %) and the Σ total-row color need
+different zone boundaries — a process using 20% CPU is high, but the
+system-wide total is normal at 20%. `_DEFAULT_VALUE_RANGES_CPU_ALL` and
+`_DEFAULT_VALUE_RANGES_MEM_ALL` give the Σ rows their own defaults; Memory
+additionally splits Usage vs. Commit.
 
-```json
-{
-  "value_colors": {
-    "ranges": [
-      {"max_pct": 3,   "color": "#5B9BD5"},
-      {"max_pct": 8,   "color": "#6AAF6A"},
-      {"max_pct": 20,  "color": "#C8B040"},
-      {"max_pct": 40,  "color": "#D4803A"},
-      {"max_pct": 100, "color": "#C85555"}
-    ]
-  }
-}
-```
+**Legacy shape guard on load.** `_load_config()` and `update_value_thresholds()`
+discard `color_thresholds` from `last_setup.json` if it isn't a `dict` —
+pre-2.0 versions stored it as a flat list. This is treated as stale
+hand-edited/legacy data to fall back from, not a fatal error.
 
-CPU and Memory start from the same config but can be tuned independently at runtime via `update_value_thresholds()`.
-
----
-
-## Data Flow
-
-```mermaid
-flowchart LR
-    BG[Background Thread] -->|lookup_company| PCM[ProcessColorManager]
-    PCM -->|reads| EXE[Windows PE Version Info]
-    PCM -->|caches| Cache[company_cache]
-
-    Main[Main Thread] -->|get_process_color| PCM
-    Main -->|get_value_color| PCM
-    PCM -->|dynamic hue| Color[QColor HSL]
-```
+**Config errors fall back to defaults, not a crash.** An unreadable or
+invalid `config/config.json` is reported to stderr and `_DEFAULT_VALUE_RANGES`
+is used instead — documented fallback behavior per [Persistence](persistence.md)'s
+corruption-recovery pattern.

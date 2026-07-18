@@ -1,12 +1,17 @@
 # App Module
 
-This folder contains the core application components for Process Monitor.
+This folder contains every GUI and business-logic component of Process
+Monitor, built with PySide6 (Qt6).
 
 ---
 
 ## Purpose
 
-The `app` module provides all GUI and business logic components for the Process Monitor application, built with PySide6 (Qt6).
+Process Monitor runs as a **desktop gadget**: up to three monitor windows
+(CPU, Memory, Network), each a taskbar-less `Qt.Tool` window, fed by one
+shared background collector thread and controlled through a single system
+tray icon. Closing a window hides it and pauses its data collection; the
+tray icon (or File > Exit) is the only way to actually quit.
 
 ---
 
@@ -14,68 +19,92 @@ The `app` module provides all GUI and business logic components for the Process 
 
 ```
 📁 app/
-  🐍 __init__.py           ← Package exports
-  🐍 main_window.py        ← Main application window (CPUWindow, MemoryWindow)
-  🐍 settings_dialog.py   ← Configuration dialogs (Initial, CPU, Memory)
-  🐍 monitor.py            ← Process monitoring logic
-  🐍 color_management.py  ← Company and value-based process coloring
-  🐍 styles.py             ← UI styling constants
+  🐍 __init__.py            ← Package exports
+  🐍 main_window.py         ← BaseMonitorWindow, CPUWindow, MemoryWindow, NetworkWindow
+  🐍 settings_dialog.py     ← InitialSettingsDialog, CPUSettingsDialog, MemorySettingsDialog, NetworkSettingsDialog
+  🐍 monitor.py             ← SharedDataCollector, ProcessMonitor, NetworkMonitor, RollingWindow
+  🐍 network_monitor.py     ← NetworkTracer (ETW kernel trace), get_link_speed_mbps
+  🐍 color_management.py    ← ProcessColorManager (company hues + value color zones)
+  🐍 persistence.py         ← last_setup.json load/save (atomic, corruption-safe), base/data path resolution
+  🐍 tray.py                ← TrayController (single tray icon, gadget-mode shell identity)
+  🐍 styles.py               ← Dark theme palette (Colors), dimensions, fonts, formatting helpers
+  🐍 process_actions.py     ← Kill / set priority / open file location (live psutil operations)
+  🐍 process_dialog.py      ← Kill-confirm and priority-selection dialogs
 ```
 
 ---
 
-## Components
+## Modules
 
-| Component | Documentation | Description |
-|-----------|---------------|-------------|
-| CPUWindow / MemoryWindow | [main_window.md](main_window.md) | Monitor windows with tables and controls |
-| Settings Dialogs | [settings_dialog.md](settings_dialog.md) | Initial, CPU, and Memory configuration dialogs |
-| ProcessMonitor | [monitor.md](monitor.md) | psutil integration for data collection |
-| ProcessColorManager | [color_management.md](color_management.md) | Company hue assignment and value color mapping |
-| Styles | [styles.md](styles.md) | Colors, fonts, dimensions |
+| Module | Documentation | Description |
+|--------|---------------|-------------|
+| Main Window | [Main Window](main_window.md) | The three gadget windows and their shared base class |
+| Settings Dialog | [Settings Dialog](settings_dialog.md) | Launcher and per-mode settings dialogs, color-scale widget, company legend |
+| Monitor | [Monitor](monitor.md) | Background collector thread, per-mode monitors, rolling averages |
+| Network Monitor | [Network Monitor](network_monitor.md) | ETW kernel trace for per-process network bytes |
+| Color Management | [Color Management](color_management.md) | Company hue assignment and value-threshold color mapping |
+| Persistence | [Persistence](persistence.md) | `last_setup.json` access point, bundled vs. writable paths |
+| Tray Controller | [Tray Controller](tray.md) | Single tray icon — the app's shell identity in gadget mode |
+| Styles | [Styles](styles.md) | Dark palette, dimensions, fonts, formatting functions |
 
----
-
-## Architecture
-
-```mermaid
-flowchart TB
-    subgraph APP["App Module"]
-        MW[CPUWindow / MemoryWindow]
-        SD[SettingsDialogs]
-        PM[ProcessMonitor]
-        CM[ProcessColorManager]
-        ST[Styles]
-    end
-
-    main.py --> MW
-    MW --> SD
-    MW --> PM
-    MW --> CM
-    SD --> CM
-    SD --> ST
-    MW --> ST
-    PM --> psutil[(psutil)]
-    CM --> version.dll[(version.dll)]
-```
+`process_actions.py` and `process_dialog.py` have no separate module doc —
+see their usage under [Main Window](main_window.md)'s Connections section.
 
 ---
 
 ## Data Flow
 
-1. **Startup**: `main.py` creates `MainWindow`
-2. **Configuration**: `SettingsDialog` collects user preferences
-3. **Monitoring**: `ProcessMonitor` queries psutil at intervals
-4. **Display**: Tables update with formatted data
+```mermaid
+%%{init: {'flowchart': {'subGraphTitleMargin': {'top': 0, 'bottom': 35}}}}%%
+flowchart TB
+    main["main.py"]
 
----
+    subgraph WINDOWS["Monitor windows (Qt.Tool gadgets)"]
+        CPU[CPUWindow]
+        MEM[MemoryWindow]
+        NET[NetworkWindow]
+    end
 
-## Usage
+    TRAY[TrayController]
 
-```python
-from app import MainWindow
+    subgraph COLLECT["SharedDataCollector — QThread singleton"]
+        PM_CPU[ProcessMonitor — CPU]
+        PM_MEM[ProcessMonitor — Memory]
+        NM[NetworkMonitor]
+        NT[NetworkTracer]
+    end
 
-# Create and show
-window = MainWindow()
-window.show()
+    subgraph SUPPORT["Shared services"]
+        PCM[ProcessColorManager]
+        PERSIST[(persistence.py)]
+        STYLES[styles.py]
+    end
+
+    main --> WINDOWS
+    main --> TRAY
+    main --> COLLECT
+    TRAY -->|show_from_tray / close| WINDOWS
+    WINDOWS -->|configure_*/disable_*| COLLECT
+    COLLECT -->|cpu/memory/network_data_ready| WINDOWS
+    PM_CPU --> NtQSI[(NtQuerySystemInformation)]
+    PM_MEM --> NtQSI
+    NM --> NT
+    NT --> ETW[(ETW kernel trace)]
+    WINDOWS --> PCM
+    WINDOWS --> PERSIST
+    WINDOWS --> STYLES
+    PCM --> PERSIST
 ```
+
+1. **Startup** — `main.py` shows `InitialSettingsDialog`, creates the enabled
+   windows, wires CPU/Memory as refresh-rate peers, and starts the one
+   `SharedDataCollector` thread and one `TrayController`.
+2. **Collection** — each tick, the collector makes a single bulk
+   `NtQuerySystemInformation` call (CPU/Memory) and reads the ETW tracer's
+   accumulated bytes (Network), then emits a data-ready signal per enabled mode.
+3. **Display** — each window's `_on_data_ready()` fills its current/history/
+   rolling tables, coloring cells via `ProcessColorManager`.
+4. **Gadget lifecycle** — closing a window (X, `Esc`, or unchecking it in the
+   tray menu) hides it and pauses its collector mode; the tray icon's
+   double-click or per-window checkbox brings it back via `show_from_tray()`.
+   Exit (File menu or tray menu) is the only path to `QApplication.quit()`.
