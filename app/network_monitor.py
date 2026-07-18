@@ -213,6 +213,13 @@ _EVENT_RECORD_CALLBACK = ctypes.WINFUNCTYPE(None, ctypes.POINTER(_EVENT_RECORD))
 
 _advapi32 = ctypes.windll.advapi32
 
+# kernel32 with use_last_error so GetLastError is read reliably (named mutex)
+_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+_kernel32.CreateMutexW.restype = ctypes.c_void_p   # HANDLE is 64-bit
+_kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+_ERROR_ALREADY_EXISTS = 183
+
 _StartTraceW = _advapi32.StartTraceW
 _StartTraceW.argtypes = [
     ctypes.POINTER(ctypes.c_uint64),   # TraceHandle out
@@ -285,10 +292,15 @@ class NetworkTracer:
     """
 
     _SESSION_NAME = "PMUsage_NetTrace"
+    # Named mutex marking a live instance that owns the ETW session — without
+    # it, a second PMUsage instance would silently kill the first one's trace
+    # (the session name is fixed system-wide).
+    _OWNER_MUTEX_NAME = "Global\\PMUsage_NetTrace_Owner"
 
     def __init__(self):
         self._session_handle = ctypes.c_uint64(0)
         self._trace_handle = ctypes.c_uint64(0)
+        self._owner_mutex = None
         self._thread: threading.Thread | None = None
         self._running = False
         # True once StartTraceW succeeded. Tracked separately from _running
@@ -335,7 +347,17 @@ class NetworkTracer:
             _log.error(self._error)
             return False
 
-        # Stop any leftover session from a previous crash
+        # Acquire the single-owner mutex: if another live PMUsage holds it,
+        # fail visibly instead of stealing that instance's trace session
+        self._owner_mutex = _kernel32.CreateMutexW(None, False, self._OWNER_MUTEX_NAME)
+        if ctypes.get_last_error() == _ERROR_ALREADY_EXISTS:
+            self._release_owner_mutex()
+            self._error = "Another PMUsage instance is already tracing the network"
+            _log.error(self._error)
+            return False
+
+        # With the mutex held, any pre-existing session with our name can
+        # only be a stale leftover from a crash — safe to stop
         self._stop_existing_session()
         _log.info("stopped existing session")
 
@@ -383,6 +405,7 @@ class NetworkTracer:
         if status != 0:
             self._error = f"StartTraceW failed: 0x{status:08X}"
             _log.error(self._error)
+            self._release_owner_mutex()
             return False
         self._session_started = True
 
@@ -430,6 +453,13 @@ class NetworkTracer:
             self._thread = None
 
         self._callback_ref = None
+        self._release_owner_mutex()
+
+    def _release_owner_mutex(self):
+        """Release the session-owner mutex so another instance may trace."""
+        if self._owner_mutex:
+            _kernel32.CloseHandle(self._owner_mutex)
+            self._owner_mutex = None
 
     def snapshot_and_reset(self) -> dict[int, tuple[int, int]]:
         """Get accumulated bytes per PID since last snapshot and reset counters.
