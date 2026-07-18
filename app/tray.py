@@ -35,16 +35,31 @@ class TrayController:
 
         self._menu.addSeparator()
         exit_action = self._menu.addAction("Exit")
-        exit_action.triggered.connect(QApplication.instance().quit)
+        exit_action.triggered.connect(self._exit_app)
 
         self._menu.aboutToShow.connect(self._refresh_checks)
         self._tray.setContextMenu(self._menu)
         self._tray.activated.connect(self._on_activated)
         self._tray.show()
 
-    def hide(self):
-        """Hide the tray icon (used on app exit so it vanishes instantly)."""
+    def prepare_exit(self):
+        """Save visible layouts, then hide the tray icon and ALL windows at once.
+
+        Runs synchronously in the Exit click handler (and again via
+        aboutToQuit for the File > Exit path — the second run is a no-op on
+        already-hidden windows), so every window vanishes together before
+        the slow teardown (collector stop, ETW session stop) begins.
+        """
         self._tray.hide()
+        for _action, window in self._window_actions:
+            if window.isVisible():
+                window._save_window_layout()
+            window.hide()
+
+    def _exit_app(self):
+        """Complete application exit: hide everything instantly, then quit."""
+        self.prepare_exit()
+        QApplication.instance().quit()
 
     def _toggle_window(self, window, visible: bool):
         """Show or hide a monitor window (close == hide + pause its monitor)."""
