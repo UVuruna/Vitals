@@ -274,6 +274,7 @@ except SpecificError as e:
     🐍 main_window.py     ← Main application window
     🐍 settings_dialog.py ← Settings configuration
     🐍 monitor.py         ← Process monitoring logic
+    🐍 persistence.py     ← last_setup.json load/save (atomic, corruption-safe)
     🐍 styles.py          ← UI styling constants
   📁 assets/
     🖼️ icon.ico           ← Application icon

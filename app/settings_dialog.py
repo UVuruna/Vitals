@@ -2,7 +2,6 @@
 Settings Dialog - Simple and Working
 """
 
-import json
 import sys
 import winreg
 from dataclasses import dataclass
@@ -26,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from .monitor import MonitorMode
+from .persistence import load_last_setup, save_last_setup
 from .styles import Defaults, FontScale, MEMORY_UNITS, NETWORK_UNITS
 from .color_management import ProcessColorManager
 
@@ -35,21 +35,6 @@ def get_base_path() -> Path:
     if getattr(sys, 'frozen', False):
         return Path(sys._MEIPASS)
     return Path(__file__).parent.parent
-
-
-def get_last_setup_path() -> Path:
-    """Resolve config/last_setup.json for user-writable storage.
-
-    Frozen exe: saves to %APPDATA%\PMUsage\ — always writable, no admin needed.
-    Dev mode:   saves to project root config\ folder.
-    """
-    if getattr(sys, 'frozen', False):
-        import os
-        appdata = os.environ.get('APPDATA') or os.environ.get('LOCALAPPDATA')
-        base = Path(appdata) / 'PMUsage' if appdata else Path(sys.executable).parent
-    else:
-        base = Path(__file__).parent.parent
-    return base / "config" / "last_setup.json"
 
 
 _STARTUP_APP_NAME = "PMUsage"
@@ -100,44 +85,23 @@ def set_startup_registered(enabled: bool) -> None:
 
 def _save_last_setup(settings: 'InitialSettings') -> None:
     """Persist the last-used login settings to config/last_setup.json."""
-    path = get_last_setup_path()
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        data: dict = {}
-        if path.exists():
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-        data.update({
-            "cpu_enabled": settings.cpu_enabled,
-            "memory_enabled": settings.memory_enabled,
-            "network_enabled": settings.network_enabled,
-            "current_rows": settings.current_rows,
-            "history_rows": settings.history_rows,
-            "refresh_rate_ms": settings.refresh_rate_ms,
-            "retention_minutes": settings.retention_minutes,
-            "memory_unit": settings.memory_unit,
-            "network_unit": settings.network_unit,
-            "network_sort_mode": settings.network_sort_mode,
-            "network_max_download_mbps": settings.network_max_download_mbps,
-            "network_max_upload_mbps": settings.network_max_upload_mbps,
-            "font_size": settings.font_size,
-        })
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-    except Exception:
-        pass  # Best-effort: don't break app if save fails
-
-
-def _load_last_setup() -> dict:
-    """Load last-used login settings from config/last_setup.json."""
-    path = get_last_setup_path()
-    if path.exists():
-        try:
-            with open(path, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+    data = load_last_setup()
+    data.update({
+        "cpu_enabled": settings.cpu_enabled,
+        "memory_enabled": settings.memory_enabled,
+        "network_enabled": settings.network_enabled,
+        "current_rows": settings.current_rows,
+        "history_rows": settings.history_rows,
+        "refresh_rate_ms": settings.refresh_rate_ms,
+        "retention_minutes": settings.retention_minutes,
+        "memory_unit": settings.memory_unit,
+        "network_unit": settings.network_unit,
+        "network_sort_mode": settings.network_sort_mode,
+        "network_max_download_mbps": settings.network_max_download_mbps,
+        "network_max_upload_mbps": settings.network_max_upload_mbps,
+        "font_size": settings.font_size,
+    })
+    save_last_setup(data)
 
 
 def _format_bytes_in_unit(total_bytes: int, unit: str) -> str:
@@ -987,7 +951,7 @@ class InitialSettingsDialog(QDialog):
         layout.addWidget(self.start_btn)
 
         # Restore last session settings (no-op if file doesn't exist)
-        self._apply_last_setup(_load_last_setup())
+        self._apply_last_setup(load_last_setup())
 
     def _update_mode_buttons(self):
         active_style = """

@@ -23,6 +23,8 @@ import psutil
 from PySide6.QtCore import QMutex, QMutexLocker
 from PySide6.QtGui import QColor
 
+from .persistence import load_last_setup, save_last_setup
+
 
 # ---------------------------------------------------------------------------
 # Application color palette (dark theme constants)
@@ -110,21 +112,6 @@ def _get_config_path() -> Path:
     else:
         base = Path(__file__).parent.parent
     return base / "config" / "config.json"
-
-
-def _get_last_setup_path() -> Path:
-    """Resolve config/last_setup.json for user-writable storage.
-
-    Frozen exe: saves to %APPDATA%\PMUsage\ — always writable, no admin needed.
-    Dev mode:   saves to project root config\ folder.
-    """
-    if getattr(sys, 'frozen', False):
-        import os
-        appdata = os.environ.get('APPDATA') or os.environ.get('LOCALAPPDATA')
-        base = Path(appdata) / 'PMUsage' if appdata else Path(sys.executable).parent
-    else:
-        base = Path(__file__).parent.parent
-    return base / "config" / "last_setup.json"
 
 
 try:
@@ -322,24 +309,18 @@ class ProcessColorManager:
         self._value_ranges_net_ul = list(parsed_ranges_net_ul)
 
         # Load user-set hue params and color thresholds from last_setup.json
-        setup_path = _get_last_setup_path()
-        if setup_path.exists():
-            try:
-                with open(setup_path, encoding="utf-8") as f:
-                    setup_data = json.load(f)
-                hue = setup_data.get("hue_params", {})
-                if "saturation" in hue:
-                    self._hue_saturation = float(hue["saturation"])
-                if "lightness" in hue:
-                    self._hue_lightness = float(hue["lightness"])
-                # Restore saved color thresholds (overrides defaults)
-                saved_thresholds = setup_data.get("color_thresholds", {})
-                for mode_key in ("cpu", "cpu_all", "memory", "memory_total", "memory_all", "memory_all_total", "net_dl", "net_ul"):
-                    saved = saved_thresholds.get(mode_key)
-                    if isinstance(saved, list) and len(saved) == 4:
-                        self._apply_threshold_values(mode_key, saved)
-            except Exception:
-                pass
+        setup_data = load_last_setup()
+        hue = setup_data.get("hue_params", {})
+        if "saturation" in hue:
+            self._hue_saturation = float(hue["saturation"])
+        if "lightness" in hue:
+            self._hue_lightness = float(hue["lightness"])
+        # Restore saved color thresholds (overrides defaults)
+        saved_thresholds = setup_data.get("color_thresholds", {})
+        for mode_key in ("cpu", "cpu_all", "memory", "memory_total", "memory_all", "memory_all_total", "net_dl", "net_ul"):
+            saved = saved_thresholds.get(mode_key)
+            if isinstance(saved, list) and len(saved) == 4:
+                self._apply_threshold_values(mode_key, saved)
 
     def lookup_company(self, name: str, pid: int):
         """
@@ -448,18 +429,9 @@ class ProcessColorManager:
             self._hue_saturation = saturation
             self._hue_lightness = lightness
 
-        path = _get_last_setup_path()
-        try:
-            data: dict = {}
-            if path.exists():
-                with open(path, encoding="utf-8") as f:
-                    data = json.load(f)
-            data["hue_params"] = {"saturation": saturation, "lightness": lightness}
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-        except Exception:
-            pass
+        data = load_last_setup()
+        data["hue_params"] = {"saturation": saturation, "lightness": lightness}
+        save_last_setup(data)
 
     def _get_ranges_ref(self, mode: str) -> list[tuple[float, QColor]]:
         """Return the range list for a given mode key."""
@@ -515,20 +487,11 @@ class ProcessColorManager:
         with QMutexLocker(self._mutex):
             self._apply_threshold_values(mode, thresholds)
 
-        path = _get_last_setup_path()
-        try:
-            data: dict = {}
-            if path.exists():
-                with open(path, encoding="utf-8") as f:
-                    data = json.load(f)
-            if "color_thresholds" not in data:
-                data["color_thresholds"] = {}
-            data["color_thresholds"][mode] = thresholds
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-        except Exception:
-            pass
+        data = load_last_setup()
+        if "color_thresholds" not in data:
+            data["color_thresholds"] = {}
+        data["color_thresholds"][mode] = thresholds
+        save_last_setup(data)
 
     def get_value_ranges(self, mode: str) -> list[tuple[float, QColor]]:
         """Return value color ranges for UI display (ColorScaleWidget).

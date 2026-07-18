@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 
 from .monitor import MonitorMode, MonitorData, NetworkMonitorData, SharedDataCollector
 from .color_management import ProcessColorManager
+from .persistence import load_last_setup, save_last_setup
 from .settings_dialog import (
     InitialSettings,
     CPUSettings,
@@ -47,7 +48,6 @@ from .settings_dialog import (
     CPUSettingsDialog,
     MemorySettingsDialog,
     NetworkSettingsDialog,
-    get_last_setup_path,
 )
 from .process_actions import (
     find_processes,
@@ -334,50 +334,34 @@ class BaseMonitorWindow(QMainWindow):
 
     def _save_window_layout(self):
         """Save window geometry, splitter sizes, and column widths to last_setup.json."""
-        path = get_last_setup_path()
-        try:
-            data = {}
-            if path.exists():
-                with open(path, encoding="utf-8") as f:
-                    data = json.load(f)
-            if "windows" not in data:
-                data["windows"] = {}
-            geo = self.geometry()
-            data["windows"][self._get_window_key()] = {
-                "x": geo.x(), "y": geo.y(),
-                "width": geo.width(), "height": geo.height(),
-                "font_size": self._font_base,
-                "splitter": self.splitter.sizes(),
-                "bottom_page": self._bottom_page,
-                "current_cols": [
-                    self.current_table.columnWidth(c)
-                    for c in range(2, self.current_table.columnCount())
-                ],
-                "history_cols": [
-                    self.history_table.columnWidth(c)
-                    for c in range(2, self.history_table.columnCount())
-                ],
-                "rolling_cols": [
-                    self.rolling_table.columnWidth(c)
-                    for c in range(2, self.rolling_table.columnCount())
-                ],
-            }
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-        except Exception:
-            pass
+        data = load_last_setup()
+        if "windows" not in data:
+            data["windows"] = {}
+        geo = self.geometry()
+        data["windows"][self._get_window_key()] = {
+            "x": geo.x(), "y": geo.y(),
+            "width": geo.width(), "height": geo.height(),
+            "font_size": self._font_base,
+            "splitter": self.splitter.sizes(),
+            "bottom_page": self._bottom_page,
+            "current_cols": [
+                self.current_table.columnWidth(c)
+                for c in range(2, self.current_table.columnCount())
+            ],
+            "history_cols": [
+                self.history_table.columnWidth(c)
+                for c in range(2, self.history_table.columnCount())
+            ],
+            "rolling_cols": [
+                self.rolling_table.columnWidth(c)
+                for c in range(2, self.rolling_table.columnCount())
+            ],
+        }
+        save_last_setup(data)
 
     def _restore_window_layout(self):
         """Restore window geometry, splitter sizes, and column widths from last_setup.json."""
-        path = get_last_setup_path()
-        if not path.exists():
-            return
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            return
+        data = load_last_setup()
         layout = data.get("windows", {}).get(self._get_window_key())
         if not layout:
             return

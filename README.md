@@ -179,6 +179,7 @@ sequenceDiagram
     🐍 settings_dialog.py   ← InitialSettingsDialog, CPUSettingsDialog, MemorySettingsDialog
     🐍 monitor.py           ← SharedDataCollector, ProcessMonitor
     🐍 color_management.py  ← ProcessColorManager (company hues + value color zones)
+    🐍 persistence.py       ← last_setup.json load/save (atomic, corruption-safe)
     🐍 styles.py            ← UI constants (colors, fonts, dimensions)
   📁 config/
     📄 config.json           ← Value color thresholds (editable)
