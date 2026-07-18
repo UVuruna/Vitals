@@ -276,6 +276,7 @@ except SpecificError as e:
     🐍 monitor.py         ← Process monitoring logic
     🐍 persistence.py     ← last_setup.json load/save (atomic, corruption-safe)
     🐍 styles.py          ← UI styling constants
+    🐍 tray.py            ← System tray icon (single app identity, gadget mode)
   📁 assets/
     🖼️ icon.ico           ← Application icon
     🖼️ icon.svg           ← SVG source

@@ -181,6 +181,7 @@ sequenceDiagram
     🐍 color_management.py  ← ProcessColorManager (company hues + value color zones)
     🐍 persistence.py       ← last_setup.json load/save (atomic, corruption-safe)
     🐍 styles.py            ← UI constants (colors, fonts, dimensions)
+    🐍 tray.py              ← System tray icon (single app identity, gadget mode)
   📁 config/
     📄 config.json           ← Value color thresholds (editable)
     📄 last_setup.json       ← Last-used settings (auto-generated)

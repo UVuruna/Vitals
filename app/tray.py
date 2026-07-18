@@ -1,0 +1,62 @@
+"""
+System Tray Controller
+
+Single tray icon representing the whole application (gadget mode).
+
+The monitor windows use Qt.Tool, so they have no taskbar button and no
+Alt-Tab entry — like desktop gadgets. This tray icon is the application's
+only shell identity: its menu shows/hides each monitor window, and Exit
+is the way to quit the application (closing a window only hides it).
+"""
+
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+
+from .styles import CONTEXT_MENU_STYLE
+
+
+class TrayController:
+    """Owns the tray icon and its menu. Keep a reference for the app lifetime."""
+
+    def __init__(self, icon, windows: list):
+        self._tray = QSystemTrayIcon(icon)
+        self._tray.setToolTip("PMUsage")
+
+        self._menu = QMenu()
+        self._menu.setStyleSheet(CONTEXT_MENU_STYLE)
+
+        self._window_actions = []
+        for window in windows:
+            action = self._menu.addAction(window.windowTitle())
+            action.setCheckable(True)
+            action.triggered.connect(
+                lambda checked, w=window: self._toggle_window(w, checked)
+            )
+            self._window_actions.append((action, window))
+
+        self._menu.addSeparator()
+        exit_action = self._menu.addAction("Exit")
+        exit_action.triggered.connect(QApplication.instance().quit)
+
+        self._menu.aboutToShow.connect(self._refresh_checks)
+        self._tray.setContextMenu(self._menu)
+        self._tray.activated.connect(self._on_activated)
+        self._tray.show()
+
+    def _toggle_window(self, window, visible: bool):
+        """Show or hide a monitor window (close == hide + pause its monitor)."""
+        if visible:
+            window.show_from_tray()
+        else:
+            window.close()
+
+    def _refresh_checks(self):
+        """Sync menu checkmarks with actual window visibility."""
+        for action, window in self._window_actions:
+            action.setChecked(window.isVisible())
+
+    def _on_activated(self, reason):
+        """Double-click on the tray icon re-shows all hidden windows."""
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            for _action, window in self._window_actions:
+                if not window.isVisible():
+                    window.show_from_tray()

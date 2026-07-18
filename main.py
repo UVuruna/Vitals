@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication
 from app.main_window import CPUWindow, MemoryWindow, NetworkWindow
 from app.monitor import SharedDataCollector
 from app.settings_dialog import InitialSettingsDialog
+from app.tray import TrayController
 
 
 def get_base_path() -> Path:
@@ -99,6 +100,19 @@ def main():
     if cpu_window is not None and memory_window is not None:
         cpu_window._peer_window = memory_window
         memory_window._peer_window = cpu_window
+
+    # Gadget mode: windows are Qt.Tool (no taskbar/Alt-Tab presence) and
+    # closing one only hides it — the tray icon is the app's single identity
+    # and its Exit action (or File > Exit) is the way to quit
+    app.setQuitOnLastWindowClosed(False)
+    tray = TrayController(app.windowIcon(), windows)  # noqa: F841 — must outlive app.exec()
+
+    # Hidden windows save their layout when closed; visible ones on exit
+    def save_visible_layouts():
+        for w in windows:
+            if w.isVisible():
+                w._save_window_layout()
+    app.aboutToQuit.connect(save_visible_layouts)
 
     # Start collector if not already running
     if not collector.isRunning():

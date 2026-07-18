@@ -151,6 +151,9 @@ class BaseMonitorWindow(QMainWindow):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Gadget mode: Tool windows have no taskbar button and no Alt-Tab
+        # entry — the tray icon (app/tray.py) is the app's single identity
+        self.setWindowFlag(Qt.WindowType.Tool, True)
         self.is_paused = False
         self._saved_col_widths_current: list[int] | None = None
         self._saved_col_widths_history: list[int] | None = None
@@ -654,8 +657,9 @@ class BaseMonitorWindow(QMainWindow):
         settings_action = QAction("Settings", self)
         settings_action.triggered.connect(self._show_settings)
         file_menu.addAction(settings_action)
+        # Exit quits the whole app — plain close() only hides to the tray
         exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(self.close)
+        exit_action.triggered.connect(QApplication.instance().quit)
         file_menu.addAction(exit_action)
 
         view_menu = menubar.addMenu("View")
@@ -915,15 +919,33 @@ class BaseMonitorWindow(QMainWindow):
                 table.clearSelection()
                 table._last_clicked_row = None
 
+    def _set_monitor_enabled(self, enabled: bool):
+        """Resume or pause this window's monitor. Must be overridden in subclasses."""
+        raise NotImplementedError("Subclasses must implement _set_monitor_enabled()")
+
+    def show_from_tray(self):
+        """Re-show a hidden window and resume its monitor."""
+        self._set_monitor_enabled(True)
+        if not self._collector.isRunning():
+            self._collector.start()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
     def closeEvent(self, event):
-        """Disconnect application state signal when window closes."""
-        app = QApplication.instance()
-        if app:
-            try:
-                app.applicationStateChanged.disconnect(self._on_app_state_changed)
-            except RuntimeError:
-                pass
-        super().closeEvent(event)
+        """Hide to the tray instead of exiting; the monitor pauses while hidden.
+
+        Real application exit goes through QApplication.quit() (File > Exit or
+        the tray menu). During OS session end (logoff/shutdown) the close is
+        accepted so Windows is not blocked by the ignored event.
+        """
+        self._save_window_layout()
+        self._set_monitor_enabled(False)
+        if QApplication.instance().isSavingSession():
+            super().closeEvent(event)
+            return
+        event.ignore()
+        self.hide()
 
     # -------------------------------------------------------------------------
     # Context menu — process actions
@@ -1112,7 +1134,13 @@ class CPUWindow(BaseMonitorWindow):
             if new_settings.font_size != prev.font_size:
                 self._font_base = new_settings.font_size
                 self._apply_fonts()
-            if self._peer_window and new_settings.refresh_rate_ms != prev.refresh_rate_ms:
+            # Sync only a visible peer — a hidden window's monitor is disabled
+            # and re-configuring it would re-enable collection for nothing
+            if (
+                self._peer_window is not None
+                and self._peer_window.isVisible()
+                and new_settings.refresh_rate_ms != prev.refresh_rate_ms
+            ):
                 self._peer_window._sync_refresh_rate(new_settings.refresh_rate_ms)
 
     def _sync_refresh_rate(self, refresh_rate_ms: int):
@@ -1280,12 +1308,12 @@ class CPUWindow(BaseMonitorWindow):
         self.rolling_table.setRowCount(len(data.rolling_average))
         self._fill_process_rows(self.rolling_table, data.rolling_average, self._fill_cpu_rolling_cols)
 
-    def closeEvent(self, event):
-        """Handle close - disable CPU monitoring."""
-        self._save_window_layout()
-        self._collector.cpu_data_ready.disconnect(self._on_data_ready)
-        self._collector.disable_cpu()
-        super().closeEvent(event)
+    def _set_monitor_enabled(self, enabled: bool):
+        """Resume or pause CPU collection when the window is shown/hidden."""
+        if enabled:
+            self._apply_settings(self._cpu_settings)
+        else:
+            self._collector.disable_cpu()
 
 
 class MemoryWindow(BaseMonitorWindow):
@@ -1338,7 +1366,13 @@ class MemoryWindow(BaseMonitorWindow):
             if new_settings.font_size != prev.font_size:
                 self._font_base = new_settings.font_size
                 self._apply_fonts()
-            if self._peer_window and new_settings.refresh_rate_ms != prev.refresh_rate_ms:
+            # Sync only a visible peer — a hidden window's monitor is disabled
+            # and re-configuring it would re-enable collection for nothing
+            if (
+                self._peer_window is not None
+                and self._peer_window.isVisible()
+                and new_settings.refresh_rate_ms != prev.refresh_rate_ms
+            ):
                 self._peer_window._sync_refresh_rate(new_settings.refresh_rate_ms)
 
     def _sync_refresh_rate(self, refresh_rate_ms: int):
@@ -1521,12 +1555,12 @@ class MemoryWindow(BaseMonitorWindow):
         self.rolling_table.setRowCount(len(data.rolling_average))
         self._fill_process_rows(self.rolling_table, data.rolling_average, self._fill_memory_rolling_cols)
 
-    def closeEvent(self, event):
-        """Handle close - disable Memory monitoring."""
-        self._save_window_layout()
-        self._collector.memory_data_ready.disconnect(self._on_data_ready)
-        self._collector.disable_memory()
-        super().closeEvent(event)
+    def _set_monitor_enabled(self, enabled: bool):
+        """Resume or pause Memory collection when the window is shown/hidden."""
+        if enabled:
+            self._apply_settings(self._memory_settings)
+        else:
+            self._collector.disable_memory()
 
 
 class NetworkWindow(BaseMonitorWindow):
@@ -1547,8 +1581,8 @@ class NetworkWindow(BaseMonitorWindow):
             font_size=initial_settings.font_size,
         )
         # Max speed in bytes/sec for color scale percentage calculation
-        self._max_dl_bytes = initial_settings.network_max_download_mbps * 1_000_000 / 8
-        self._max_ul_bytes = initial_settings.network_max_upload_mbps * 1_000_000 / 8
+        self._max_dl_bytes = self._resolve_max_bytes(initial_settings.network_max_download_mbps)
+        self._max_ul_bytes = self._resolve_max_bytes(initial_settings.network_max_upload_mbps)
         super().__init__(parent)
 
         # Connect to collector signal
@@ -1558,6 +1592,17 @@ class NetworkWindow(BaseMonitorWindow):
         self._apply_settings()
         if not self._collector.isRunning():
             self._collector.start()
+
+    @staticmethod
+    def _resolve_max_bytes(mbps: int) -> float:
+        """Convert a max-speed setting (Mbps) to bytes/sec.
+
+        0 means "auto" in the settings UI — resolve it to the detected link
+        speed so color coding keeps working instead of silently turning off.
+        """
+        from .network_monitor import get_link_speed_mbps
+        resolved = mbps or get_link_speed_mbps()
+        return resolved * 1_000_000 / 8
 
     def _get_mode(self) -> MonitorMode:
         return MonitorMode.NETWORK
@@ -1580,8 +1625,8 @@ class NetworkWindow(BaseMonitorWindow):
                 return
             prev = self._network_settings
             self._network_settings = new_settings
-            self._max_dl_bytes = new_settings.max_download_mbps * 1_000_000 / 8
-            self._max_ul_bytes = new_settings.max_upload_mbps * 1_000_000 / 8
+            self._max_dl_bytes = self._resolve_max_bytes(new_settings.max_download_mbps)
+            self._max_ul_bytes = self._resolve_max_bytes(new_settings.max_upload_mbps)
             self._apply_settings(prev)
             if new_settings.font_size != prev.font_size:
                 self._font_base = new_settings.font_size
@@ -1693,6 +1738,13 @@ class NetworkWindow(BaseMonitorWindow):
         if self.is_paused:
             return
 
+        # ETW tracer unavailable — show the reason instead of zeros
+        if data.error:
+            self.total_label.setText("↓ --")
+            self.peak_label.setText(data.error)
+            self.sensor_widget.setVisible(False)
+            return
+
         unit = self._network_settings.network_unit
 
         # Update header — big number = current download speed
@@ -1726,9 +1778,9 @@ class NetworkWindow(BaseMonitorWindow):
         self.rolling_table.setRowCount(len(data.rolling_average))
         self._fill_process_rows(self.rolling_table, data.rolling_average, self._fill_net_rolling_cols)
 
-    def closeEvent(self, event):
-        """Handle close - disable Network monitoring."""
-        self._save_window_layout()
-        self._collector.network_data_ready.disconnect(self._on_data_ready)
-        self._collector.disable_network()
-        super().closeEvent(event)
+    def _set_monitor_enabled(self, enabled: bool):
+        """Resume or pause Network collection when the window is shown/hidden."""
+        if enabled:
+            self._apply_settings(self._network_settings)
+        else:
+            self._collector.disable_network()
