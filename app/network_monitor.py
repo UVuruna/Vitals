@@ -11,23 +11,28 @@ Data flow:
 """
 
 import ctypes
-import ctypes.wintypes as wt
 import logging
+import os
 import struct
 import sys
 import threading
 from collections import defaultdict
-from pathlib import Path
 
-# File logger for ETW diagnostics (visible even from frozen EXE without console)
+from .persistence import get_data_dir
+
+
+# File logger for ETW diagnostics. Opt-in via PMUSAGE_DEBUG=1 because the log
+# is DEBUG-level and truncated on every launch — not a production default.
+# When enabled it writes to the user-writable data dir (never Program Files).
 def _setup_etw_logger():
     logger = logging.getLogger("etw_net")
+    if os.environ.get("PMUSAGE_DEBUG") != "1":
+        logger.addHandler(logging.NullHandler())
+        return logger
     logger.setLevel(logging.DEBUG)
-    if getattr(sys, 'frozen', False):
-        log_path = Path(sys.executable).parent / "network_debug.log"
-    else:
-        log_path = Path(__file__).parent.parent / "network_debug.log"
-    handler = logging.FileHandler(str(log_path), mode='w', encoding='utf-8')
+    log_dir = get_data_dir() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(str(log_dir / "network_debug.log"), mode='w', encoding='utf-8')
     handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
     logger.addHandler(handler)
     return logger
@@ -286,6 +291,10 @@ class NetworkTracer:
         self._trace_handle = ctypes.c_uint64(0)
         self._thread: threading.Thread | None = None
         self._running = False
+        # True once StartTraceW succeeded. Tracked separately from _running
+        # because ETW kernel sessions outlive the process: the session must be
+        # stopped even when the consumer thread has already died.
+        self._session_started = False
         self._lock = threading.Lock()
         self._error: str | None = None
 
@@ -375,6 +384,7 @@ class NetworkTracer:
             self._error = f"StartTraceW failed: 0x{status:08X}"
             _log.error(self._error)
             return False
+        self._session_started = True
 
         # Create callback (prevent GC)
         self._callback_ref = _EVENT_RECORD_CALLBACK(self._event_callback)
@@ -387,14 +397,16 @@ class NetworkTracer:
         return True
 
     def stop(self):
-        """Stop ETW trace session and wait for consumer thread."""
-        if not self._running:
-            return
+        """Stop the ETW kernel session and wait for the consumer thread.
 
+        Runs the session teardown even when the consumer thread already died
+        (e.g. ProcessTrace failed) — the kernel session outlives the process
+        and would otherwise keep tracing system-wide until reboot.
+        """
         self._running = False
 
-        # Stop the trace session — this causes ProcessTrace() to return
-        if self._props_buf is not None:
+        # Stop the trace session — this also causes ProcessTrace() to return
+        if self._session_started:
             stop_props_size = ctypes.sizeof(_EVENT_TRACE_PROPERTIES) + (len(self._SESSION_NAME) + 1) * 2
             stop_buf = ctypes.create_string_buffer(stop_props_size)
             stop_props = _EVENT_TRACE_PROPERTIES.from_buffer(stop_buf)
@@ -406,10 +418,12 @@ class NetworkTracer:
                 stop_buf,
                 _EVENT_TRACE_CONTROL_STOP,
             )
+            self._session_started = False
 
         # Close the consumer trace handle
         if self._trace_handle.value != 0 and self._trace_handle.value != _INVALID_PROCESSTRACE_HANDLE:
             _CloseTrace(self._trace_handle.value)
+            self._trace_handle = ctypes.c_uint64(0)
 
         if self._thread is not None:
             self._thread.join(timeout=5)

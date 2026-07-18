@@ -18,18 +18,21 @@ import sys
 from pathlib import Path
 
 
-def get_last_setup_path() -> Path:
-    """Resolve config/last_setup.json for user-writable storage.
+def get_data_dir() -> Path:
+    """Root folder for user-writable app data (settings, logs).
 
-    Frozen exe: saves to %APPDATA%\\PMUsage\\ - always writable, no admin needed.
-    Dev mode:   saves to project root config\\ folder.
+    Frozen exe: %APPDATA%\\PMUsage - always writable, no admin needed.
+    Dev mode:   the project root.
     """
     if getattr(sys, 'frozen', False):
         appdata = os.environ.get('APPDATA') or os.environ.get('LOCALAPPDATA')
-        base = Path(appdata) / 'PMUsage' if appdata else Path(sys.executable).parent
-    else:
-        base = Path(__file__).parent.parent
-    return base / "config" / "last_setup.json"
+        return Path(appdata) / 'PMUsage' if appdata else Path(sys.executable).parent
+    return Path(__file__).parent.parent
+
+
+def get_last_setup_path() -> Path:
+    """Resolve config/last_setup.json for user-writable storage."""
+    return get_data_dir() / "config" / "last_setup.json"
 
 
 def load_last_setup() -> dict:

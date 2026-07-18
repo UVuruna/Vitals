@@ -307,7 +307,7 @@ class HWiNFOSharedMemory:
 # Global HWiNFO reader instance
 _hwinfo_reader: Optional[HWiNFOSharedMemory] = None
 
-from .styles import MEMORY_UNITS, format_pct, format_speed, get_process_display_name
+from .styles import Defaults, MEMORY_UNITS, format_pct, format_speed, get_process_display_name
 from .color_management import ProcessColorManager
 
 
@@ -1020,6 +1020,7 @@ class NetworkMonitorData:
     cumulative_upload: int    # total bytes uploaded since start
     peak_display: str
     sort_mode: str            # "total", "download", or "upload"
+    error: str = ""           # Non-empty when the ETW tracer is unavailable
 
 
 class NetworkMonitor:
@@ -1253,6 +1254,7 @@ class SharedDataCollector(QThread):
         self._memory_monitor: Optional[ProcessMonitor] = None
         self._network_monitor: Optional[NetworkMonitor] = None
         self._network_tracer = None  # NetworkTracer (lazy import)
+        self._network_tracer_error: Optional[str] = None  # Why the tracer failed to start
         self._running = False
         self._interval_ms = 1000
         self._cpu_refresh_ms = 1000
@@ -1359,36 +1361,48 @@ class SharedDataCollector(QThread):
             self._network_enabled = True
             self._interval_ms = self._compute_interval()
 
-            # Start ETW tracer if not already running
+            # Start ETW tracer if not already running. On failure the tracer is
+            # discarded and the error surfaces in the Network window header.
             if self._network_tracer is None:
                 from .network_monitor import NetworkTracer, _log as _net_log
-                self._network_tracer = NetworkTracer()
-                ok = self._network_tracer.start()
-                _net_log.info("configure_network: tracer.start() returned %s, error=%s", ok, self._network_tracer.error)
+                tracer = NetworkTracer()
+                if tracer.start():
+                    self._network_tracer = tracer
+                    self._network_tracer_error = None
+                else:
+                    self._network_tracer_error = tracer.error or "ETW trace failed to start"
+                    _net_log.info("configure_network: tracer.start() failed, error=%s", tracer.error)
 
     def disable_cpu(self):
-        """Disable CPU monitoring."""
+        """Disable CPU monitoring. Stops the thread if no mode remains enabled."""
         with QMutexLocker(self._mutex):
             self._cpu_enabled = False
-            if not self._memory_enabled and not self._network_enabled:
-                self.stop()
+            should_stop = not self._memory_enabled and not self._network_enabled
+        # stop() blocks on the collector thread — never call it while holding the mutex
+        if should_stop:
+            self.stop()
 
     def disable_memory(self):
-        """Disable Memory monitoring."""
+        """Disable Memory monitoring. Stops the thread if no mode remains enabled."""
         with QMutexLocker(self._mutex):
             self._memory_enabled = False
-            if not self._cpu_enabled and not self._network_enabled:
-                self.stop()
+            should_stop = not self._cpu_enabled and not self._network_enabled
+        if should_stop:
+            self.stop()
 
     def disable_network(self):
-        """Disable Network monitoring."""
+        """Disable Network monitoring. Stops the thread if no mode remains enabled."""
         with QMutexLocker(self._mutex):
             self._network_enabled = False
-            if self._network_tracer is not None:
-                self._network_tracer.stop()
-                self._network_tracer = None
-            if not self._cpu_enabled and not self._memory_enabled:
-                self.stop()
+            tracer = self._network_tracer
+            self._network_tracer = None
+            self._network_tracer_error = None
+            should_stop = not self._cpu_enabled and not self._memory_enabled
+        # Tracer stop joins the ETW consumer thread — must run outside the mutex
+        if tracer is not None:
+            tracer.stop()
+        if should_stop:
+            self.stop()
 
     def _compute_interval(self) -> int:
         """Compute interval as min of all enabled modes. Must be called within mutex."""
@@ -1417,12 +1431,25 @@ class SharedDataCollector(QThread):
                 net_enabled = self._network_enabled
                 net_monitor = self._network_monitor
                 net_tracer = self._network_tracer
+                net_tracer_error = self._network_tracer_error
                 net_settings = self._network_settings.copy() if self._network_settings else None
                 interval = self._interval_ms
 
             need_cpu = bool(cpu_enabled and cpu_monitor and cpu_settings)
             need_mem = bool(mem_enabled and mem_monitor and mem_settings)
             need_net = bool(net_enabled and net_monitor and net_tracer and net_settings)
+
+            # Network enabled but tracer failed to start: surface the error in
+            # the Network window instead of silently showing zeros forever
+            if net_enabled and net_settings and net_tracer is None:
+                self.network_data_ready.emit(NetworkMonitorData(
+                    processes=[], history=[], rolling_average=[],
+                    current_download=0.0, current_upload=0.0,
+                    cumulative_download=0, cumulative_upload=0,
+                    peak_display="--",
+                    sort_mode=net_settings.get('sort_mode', 'total'),
+                    error=net_tracer_error or "ETW trace not running",
+                ))
 
             if need_cpu or need_mem or need_net:
                 # Single NtQuerySystemInformation call (replaces ~300 per-process psutil calls)
@@ -1515,7 +1542,12 @@ class SharedDataCollector(QThread):
                         sort_mode=net_monitor.sort_mode,
                     ))
 
-            self.msleep(interval)
+            # Sleep in chunks so stop() interrupts promptly at slow refresh rates
+            slept = 0
+            while self._running and slept < interval:
+                chunk = min(Defaults.COLLECTOR_SLEEP_CHUNK_MS, interval - slept)
+                self.msleep(chunk)
+                slept += chunk
 
     def stop(self):
         """Stop the collector."""

@@ -90,6 +90,10 @@ class Defaults:
     NETWORK_MAX_UPLOAD_MBPS = 0    # 0 = auto-detect from link speed
     NETWORK_SORT_MODE = "total"    # "total", "download", or "upload"
 
+    # Collector sleeps in chunks of this size so stop() interrupts promptly
+    # even at slow refresh rates (max wait = one chunk, not one full interval)
+    COLLECTOR_SLEEP_CHUNK_MS = 100
+
 
 # Memory unit conversions
 MEMORY_UNITS = {

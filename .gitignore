@@ -25,3 +25,7 @@ __pycache__/
 # Virtual environment
 venv/
 .venv/
+
+# Debug logs (opt-in via PMUSAGE_DEBUG=1)
+logs/
+network_debug.log
