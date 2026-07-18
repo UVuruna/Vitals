@@ -18,11 +18,29 @@ import sys
 from pathlib import Path
 
 
+def get_base_path() -> Path:
+    """Root folder for bundled, read-only resources (icons, config defaults, app_info.json).
+
+    Frozen exe: the PyInstaller temp extraction dir (sys._MEIPASS) - read-only,
+                recreated on every launch.
+    Dev mode:   the project root.
+
+    Contrast with get_data_dir(): this resolves resources shipped with the
+    app itself, not the user's writable settings.
+    """
+    if getattr(sys, 'frozen', False):
+        return Path(sys._MEIPASS)
+    return Path(__file__).parent.parent
+
+
 def get_data_dir() -> Path:
     """Root folder for user-writable app data (settings, logs).
 
     Frozen exe: %APPDATA%\\PMUsage - always writable, no admin needed.
     Dev mode:   the project root.
+
+    Contrast with get_base_path(): this resolves the user's writable settings
+    dir, not the bundled read-only resources shipped with the app.
     """
     if getattr(sys, 'frozen', False):
         appdata = os.environ.get('APPDATA') or os.environ.get('LOCALAPPDATA')

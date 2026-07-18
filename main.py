@@ -7,22 +7,15 @@ Real-time CPU and Memory usage monitoring for Windows processes.
 
 import json
 import sys
-from pathlib import Path
 
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from app.main_window import CPUWindow, MemoryWindow, NetworkWindow
 from app.monitor import SharedDataCollector
+from app.persistence import get_base_path
 from app.settings_dialog import InitialSettingsDialog
 from app.tray import TrayController
-
-
-def get_base_path() -> Path:
-    """Get base path for resources (handles PyInstaller frozen exe)."""
-    if getattr(sys, 'frozen', False):
-        return Path(sys._MEIPASS)
-    return Path(__file__).parent
 
 
 def main():

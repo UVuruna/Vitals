@@ -25,16 +25,9 @@ from PySide6.QtWidgets import (
 )
 
 from .monitor import MonitorMode
-from .persistence import load_last_setup, save_last_setup
-from .styles import Defaults, FontScale, MEMORY_UNITS, NETWORK_UNITS
+from .persistence import get_base_path, load_last_setup, save_last_setup
+from .styles import Colors, Defaults, FontScale, MEMORY_UNITS, NETWORK_UNITS
 from .color_management import ProcessColorManager
-
-
-def get_base_path() -> Path:
-    """Get base path for resources (handles PyInstaller frozen exe)."""
-    if getattr(sys, 'frozen', False):
-        return Path(sys._MEIPASS)
-    return Path(__file__).parent.parent
 
 
 # Name of both the HKCU Run value (dev mode) and the Task Scheduler task
@@ -173,13 +166,13 @@ def _format_bytes_in_unit(total_bytes: int, unit: str) -> str:
     return f"{round(value):,} {unit}"
 
 
-_SPINBOX_STYLE = """
-    QSpinBox {
-        background-color: #3a3a4e; color: #ffffff;
-        border: 1px solid #4a4a5e; border-radius: 4px;
+_SPINBOX_STYLE = f"""
+    QSpinBox {{
+        background-color: {Colors.HEADER}; color: {Colors.TEXT};
+        border: 1px solid {Colors.BORDER}; border-radius: 4px;
         padding: 4px 8px;
-    }
-    QSpinBox::up-button, QSpinBox::down-button { width: 0px; }
+    }}
+    QSpinBox::up-button, QSpinBox::down-button {{ width: 0px; }}
 """
 
 
@@ -196,10 +189,10 @@ def _make_spinbox(default: int = 1) -> QSpinBox:
     return sb
 
 
-_SLIDER_STYLE = """
-    QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
-    QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
-    QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
+_SLIDER_STYLE = f"""
+    QSlider::groove:horizontal {{ height: 6px; background: {Colors.HEADER}; border-radius: 3px; }}
+    QSlider::handle:horizontal {{ background: {Colors.ACCENT}; width: 16px; margin: -5px 0; border-radius: 8px; }}
+    QSlider::sub-page:horizontal {{ background: {Colors.ACCENT}; border-radius: 3px; }}
 """
 
 
@@ -279,7 +272,7 @@ class ColorScaleWidget(QWidget):
             r = float(self._HANDLE_R)
             zone_color = self._colors[i].lighter(150)
             painter.setBrush(QBrush(zone_color))
-            painter.setPen(QPen(QColor("#ffffff"), 1.0))
+            painter.setPen(QPen(QColor(Colors.TEXT), 1.0))
             painter.drawConvexPolygon([
                 QPointF(x,     cy - r),
                 QPointF(x + r, cy),
@@ -288,7 +281,7 @@ class ColorScaleWidget(QWidget):
             ])
 
         # Percentage labels below handles
-        painter.setPen(QColor("#aaaaaa"))
+        painter.setPen(QColor(Colors.TEXT_MUTED))
         painter.setFont(QFont("Segoe UI", 9))
         fm = painter.fontMetrics()
         for t in self._thresholds:
@@ -357,10 +350,10 @@ class CompanyLegendDialog(QDialog):
             self.setWindowIcon(QIcon(str(icon_path)))
 
         palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e2e"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Base, QColor("#2a2a3e"))
-        palette.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Window, QColor(Colors.BACKGROUND))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(Colors.TEXT))
+        palette.setColor(QPalette.ColorRole.Base, QColor(Colors.CARD))
+        palette.setColor(QPalette.ColorRole.Text, QColor(Colors.TEXT))
         self.setPalette(palette)
         self.setAutoFillBackground(True)
 
@@ -380,38 +373,38 @@ class CompanyLegendDialog(QDialog):
 
         title = QLabel("Company Color Legend")
         title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
-        title.setStyleSheet("color: #ffffff; background: transparent;")
+        title.setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
-        self._scroll.setStyleSheet("""
-            QScrollArea { border: none; background: transparent; }
-            QScrollBar:vertical { background: #2a2a3e; width: 8px; border-radius: 4px; }
-            QScrollBar::handle:vertical { background: #4a4a5e; border-radius: 4px; }
+        self._scroll.setStyleSheet(f"""
+            QScrollArea {{ border: none; background: transparent; }}
+            QScrollBar:vertical {{ background: {Colors.CARD}; width: 8px; border-radius: 4px; }}
+            QScrollBar::handle:vertical {{ background: {Colors.BORDER}; border-radius: 4px; }}
         """)
         self._rebuild_legend_content()
         layout.addWidget(self._scroll)
 
         note = QLabel("Colored = named company  ·  White = no company info")
         note.setFont(QFont("Segoe UI", 8))
-        note.setStyleSheet("color: #555555; background: transparent;")
+        note.setStyleSheet(f"color: {Colors.TEXT_DISABLED}; background: transparent;")
         note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(note)
 
         # Hue color sliders
         sat_init, light_init = ProcessColorManager().get_hue_params()
 
-        slider_style = """
-            QSlider::groove:horizontal {
-                height: 4px; background: #3a3a4e; border-radius: 2px;
-            }
-            QSlider::handle:horizontal {
+        slider_style = f"""
+            QSlider::groove:horizontal {{
+                height: 4px; background: {Colors.HEADER}; border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
                 width: 14px; height: 14px; margin: -5px 0;
-                background: #e94560; border-radius: 7px;
-            }
-            QSlider::sub-page:horizontal { background: #e94560; border-radius: 2px; }
+                background: {Colors.ACCENT}; border-radius: 7px;
+            }}
+            QSlider::sub-page:horizontal {{ background: {Colors.ACCENT}; border-radius: 2px; }}
         """
 
         for label_text, attr_slider, attr_val, init_val in [
@@ -426,7 +419,7 @@ class CompanyLegendDialog(QDialog):
 
             lbl = QLabel(label_text)
             lbl.setFont(QFont("Segoe UI", 9))
-            lbl.setStyleSheet("color: #aaaaaa; background: transparent;")
+            lbl.setStyleSheet(f"color: {Colors.TEXT_MUTED}; background: transparent;")
             lbl.setFixedWidth(70)
             row.addWidget(lbl)
 
@@ -439,7 +432,7 @@ class CompanyLegendDialog(QDialog):
 
             val_lbl = QLabel(f"{int(init_val * 100)}%")
             val_lbl.setFont(QFont("Segoe UI", 9))
-            val_lbl.setStyleSheet("color: #aaaaaa; background: transparent;")
+            val_lbl.setStyleSheet(f"color: {Colors.TEXT_MUTED}; background: transparent;")
             val_lbl.setFixedWidth(34)
             val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             row.addWidget(val_lbl)
@@ -452,9 +445,9 @@ class CompanyLegendDialog(QDialog):
         close_btn.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
         close_btn.setFixedHeight(36)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setStyleSheet("""
-            QPushButton { background-color: #3a3a4e; color: #ffffff; border: none; border-radius: 6px; }
-            QPushButton:hover { background-color: #4a4a5e; }
+        close_btn.setStyleSheet(f"""
+            QPushButton {{ background-color: {Colors.HEADER}; color: {Colors.TEXT}; border: none; border-radius: 6px; }}
+            QPushButton:hover {{ background-color: {Colors.BORDER}; }}
         """)
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
@@ -471,16 +464,16 @@ class CompanyLegendDialog(QDialog):
         if not legend:
             empty = QLabel("No companies detected yet.\nStart monitoring to populate.")
             empty.setFont(QFont("Segoe UI", 10))
-            empty.setStyleSheet("color: #888888; background: transparent;")
+            empty.setStyleSheet(f"color: {Colors.TEXT_DIM}; background: transparent;")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             content_layout.addWidget(empty)
         else:
-            toggle_style = """
-                QPushButton {
-                    background: transparent; color: #888888;
+            toggle_style = f"""
+                QPushButton {{
+                    background: transparent; color: {Colors.TEXT_DIM};
                     border: none; padding: 0;
-                }
-                QPushButton:hover { color: #ffffff; }
+                }}
+                QPushButton:hover {{ color: {Colors.TEXT}; }}
             """
             for company, color, proc_count in legend:
                 is_expanded = company in self._expanded
@@ -500,12 +493,12 @@ class CompanyLegendDialog(QDialog):
 
                 name_lbl = QLabel(company)
                 name_lbl.setFont(QFont("Segoe UI", 10))
-                name_lbl.setStyleSheet("color: #ffffff; background: transparent;")
+                name_lbl.setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
                 row.addWidget(name_lbl, 1)
 
                 count_lbl = QLabel(str(proc_count))
                 count_lbl.setFont(QFont("Segoe UI", 10))
-                count_lbl.setStyleSheet("color: #666666; background: transparent;")
+                count_lbl.setStyleSheet(f"color: {Colors.TEXT_FAINT}; background: transparent;")
                 count_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 row.addWidget(count_lbl)
 
@@ -535,7 +528,7 @@ class CompanyLegendDialog(QDialog):
 
                         sub_lbl = QLabel(item_name)
                         sub_lbl.setFont(QFont("Segoe UI", 9))
-                        sub_lbl.setStyleSheet("color: #aaaaaa; background: transparent;")
+                        sub_lbl.setStyleSheet(f"color: {Colors.TEXT_MUTED}; background: transparent;")
                         sub_row.addWidget(sub_lbl, 1)
 
                         content_layout.addWidget(sub_w)
@@ -577,12 +570,12 @@ def _make_legend_btn() -> QPushButton:
     btn.setFont(QFont("Segoe UI", 10))
     btn.setFixedHeight(28)
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    btn.setStyleSheet("""
-        QPushButton {
-            background-color: #2a2a3e; color: #888888;
-            border: 1px solid #3a3a4e; border-radius: 4px; padding: 0 12px;
-        }
-        QPushButton:hover { background-color: #3a3a4e; color: #ffffff; }
+    btn.setStyleSheet(f"""
+        QPushButton {{
+            background-color: {Colors.CARD}; color: {Colors.TEXT_DIM};
+            border: 1px solid {Colors.HEADER}; border-radius: 4px; padding: 0 12px;
+        }}
+        QPushButton:hover {{ background-color: {Colors.HEADER}; color: {Colors.TEXT}; }}
     """)
     return btn
 
@@ -610,7 +603,7 @@ def _build_color_section(
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.addWidget(make_label(title, 12, bold=True))
         title_row.addStretch()
-        title_row.addWidget(make_label(f"100% = {max_info}", 9, color="#666666"))
+        title_row.addWidget(make_label(f"100% = {max_info}", 9, color=Colors.TEXT_FAINT))
         layout.addLayout(title_row)
     else:
         layout.addWidget(make_label(title, 12, bold=True))
@@ -656,17 +649,17 @@ class BaseSettingsDialog(QDialog):
             self.setWindowIcon(QIcon(str(icon_path)))
 
         palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e2e"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Base, QColor("#2a2a3e"))
-        palette.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Button, QColor("#3a3a4e"))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor("#e94560"))
+        palette.setColor(QPalette.ColorRole.Window, QColor(Colors.BACKGROUND))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(Colors.TEXT))
+        palette.setColor(QPalette.ColorRole.Base, QColor(Colors.CARD))
+        palette.setColor(QPalette.ColorRole.Text, QColor(Colors.TEXT))
+        palette.setColor(QPalette.ColorRole.Button, QColor(Colors.HEADER))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(Colors.TEXT))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(Colors.ACCENT))
         self.setPalette(palette)
         self.setAutoFillBackground(True)
 
-    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: str = "#ffffff") -> QLabel:
+    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: str = Colors.TEXT) -> QLabel:
         label = QLabel(text)
         weight = QFont.Weight.Bold if bold else QFont.Weight.Normal
         label.setFont(QFont("Segoe UI", size, weight))
@@ -681,21 +674,21 @@ class BaseSettingsDialog(QDialog):
         combo.setMinimumContentsLength(max(len(item) for item in items))
         combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         combo.setFixedHeight(32)
-        combo.setStyleSheet("""
-            QComboBox {
-                background-color: #3a3a4e; color: #ffffff;
-                border: 1px solid #4a4a5e; border-radius: 4px; padding: 4px 8px;
-            }
-            QComboBox::drop-down { border: none; width: 24px; }
-            QComboBox::down-arrow {
+        combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {Colors.HEADER}; color: {Colors.TEXT};
+                border: 1px solid {Colors.BORDER}; border-radius: 4px; padding: 4px 8px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 24px; }}
+            QComboBox::down-arrow {{
                 border-left: 5px solid transparent;
                 border-right: 5px solid transparent;
-                border-top: 5px solid #ffffff;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #3a3a4e; color: #ffffff;
-                selection-background-color: #e94560;
-            }
+                border-top: 5px solid {Colors.TEXT};
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {Colors.HEADER}; color: {Colors.TEXT};
+                selection-background-color: {Colors.ACCENT};
+            }}
         """)
         return combo
 
@@ -710,21 +703,21 @@ class BaseSettingsDialog(QDialog):
         retention_slider, retention_label, font_slider, font_label).
         """
         row1 = QHBoxLayout()
-        row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
+        row1.addWidget(self._make_label("Current processes:", 11, color=Colors.TEXT_MUTED))
         row1.addStretch()
         current_spin = _make_spinbox(Defaults.CURRENT_ROWS)
         row1.addWidget(current_spin)
         layout.addLayout(row1)
 
         row2 = QHBoxLayout()
-        row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
+        row2.addWidget(self._make_label("History records:", 11, color=Colors.TEXT_MUTED))
         row2.addStretch()
         history_spin = _make_spinbox(Defaults.HISTORY_ROWS)
         row2.addWidget(history_spin)
         layout.addLayout(row2)
 
         row3 = QHBoxLayout()
-        row3.addWidget(self._make_label("Refresh rate:", 11, color="#aaaaaa"))
+        row3.addWidget(self._make_label("Refresh rate:", 11, color=Colors.TEXT_MUTED))
         row3.addStretch()
         refresh_slider = QSlider(Qt.Orientation.Horizontal)
         refresh_slider.setRange(1, 10)
@@ -740,7 +733,7 @@ class BaseSettingsDialog(QDialog):
         layout.addLayout(row3)
 
         row4 = QHBoxLayout()
-        row4.addWidget(self._make_label("History retention:", 11, color="#aaaaaa"))
+        row4.addWidget(self._make_label("History retention:", 11, color=Colors.TEXT_MUTED))
         row4.addStretch()
         retention_slider = QSlider(Qt.Orientation.Horizontal)
         retention_slider.setRange(1, 36)
@@ -757,7 +750,7 @@ class BaseSettingsDialog(QDialog):
 
         # Font size
         row_font = QHBoxLayout()
-        row_font.addWidget(self._make_label("Font size:", 11, color="#aaaaaa"))
+        row_font.addWidget(self._make_label("Font size:", 11, color=Colors.TEXT_MUTED))
         row_font.addStretch()
         font_slider = QSlider(Qt.Orientation.Horizontal)
         font_slider.setRange(8, 18)
@@ -790,21 +783,21 @@ class BaseSettingsDialog(QDialog):
         layout.addWidget(self._make_label("Network Settings", 12, bold=True))
 
         row_unit = QHBoxLayout()
-        row_unit.addWidget(self._make_label("Speed unit:", 11, color="#aaaaaa"))
+        row_unit.addWidget(self._make_label("Speed unit:", 11, color=Colors.TEXT_MUTED))
         row_unit.addStretch()
         unit_combo = self._make_combo(["KB/s", "MB/s"], Defaults.NETWORK_UNIT)
         row_unit.addWidget(unit_combo)
         layout.addLayout(row_unit)
 
         row_sort = QHBoxLayout()
-        row_sort.addWidget(self._make_label("Sort by:", 11, color="#aaaaaa"))
+        row_sort.addWidget(self._make_label("Sort by:", 11, color=Colors.TEXT_MUTED))
         row_sort.addStretch()
         sort_combo = self._make_combo(["total", "download", "upload"], Defaults.NETWORK_SORT_MODE)
         row_sort.addWidget(sort_combo)
         layout.addLayout(row_sort)
 
         row_dl = QHBoxLayout()
-        row_dl.addWidget(self._make_label("Max download (Mbps):", 11, color="#aaaaaa"))
+        row_dl.addWidget(self._make_label("Max download (Mbps):", 11, color=Colors.TEXT_MUTED))
         row_dl.addStretch()
         dl_spin = QSpinBox()
         dl_spin.setRange(0, 100000)
@@ -819,7 +812,7 @@ class BaseSettingsDialog(QDialog):
         layout.addLayout(row_dl)
 
         row_ul = QHBoxLayout()
-        row_ul.addWidget(self._make_label("Max upload (Mbps):", 11, color="#aaaaaa"))
+        row_ul.addWidget(self._make_label("Max upload (Mbps):", 11, color=Colors.TEXT_MUTED))
         row_ul.addStretch()
         ul_spin = QSpinBox()
         ul_spin.setRange(0, 100000)
@@ -834,7 +827,7 @@ class BaseSettingsDialog(QDialog):
         layout.addLayout(row_ul)
 
         speed_hint = self._make_label(
-            "0 = auto-detect from link speed. Test yours at speedtest.net", 9, color="#666666"
+            "0 = auto-detect from link speed. Test yours at speedtest.net", 9, color=Colors.TEXT_FAINT
         )
         layout.addWidget(speed_hint)
 
@@ -920,7 +913,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
-        subtitle = self._make_label("Select monitors to open", 10, color="#888888")
+        subtitle = self._make_label("Select monitors to open", 10, color=Colors.TEXT_DIM)
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
 
@@ -956,14 +949,14 @@ class InitialSettingsDialog(BaseSettingsDialog):
         self.net_btn.clicked.connect(self._update_mode_buttons)
         mode_row.addWidget(self.net_btn)
 
-        active_style = """
-            QPushButton { background-color: #e94560; color: white; border: none; border-radius: 6px; }
+        active_style = f"""
+            QPushButton {{ background-color: {Colors.ACCENT}; color: white; border: none; border-radius: 6px; }}
         """
-        inactive_style = """
-            QPushButton {
-                background-color: #3a3a4e; color: #888888; border: none; border-radius: 6px;
-            }
-            QPushButton:hover { background-color: #4a4a5e; }
+        inactive_style = f"""
+            QPushButton {{
+                background-color: {Colors.HEADER}; color: {Colors.TEXT_DIM}; border: none; border-radius: 6px;
+            }}
+            QPushButton:hover {{ background-color: {Colors.BORDER}; }}
         """
         self.cpu_btn.setStyleSheet(active_style)
         self.mem_btn.setStyleSheet(inactive_style)
@@ -971,7 +964,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
 
         layout.addLayout(mode_row)
 
-        hint = self._make_label("Select one or more monitors", 9, color="#666666")
+        hint = self._make_label("Select one or more monitors", 9, color=Colors.TEXT_FAINT)
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
 
@@ -991,7 +984,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
         layout.addWidget(self._make_label("Memory Settings", 12, bold=True))
 
         row5 = QHBoxLayout()
-        row5.addWidget(self._make_label("Display unit:", 11, color="#aaaaaa"))
+        row5.addWidget(self._make_label("Display unit:", 11, color=Colors.TEXT_MUTED))
         row5.addStretch()
         self.unit_combo = self._make_combo(["KB", "MB", "GB"], Defaults.MEMORY_UNIT)
         row5.addWidget(self.unit_combo)
@@ -1017,7 +1010,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
 
         # Start with Windows toggle
         startup_row = QHBoxLayout()
-        startup_row.addWidget(self._make_label("Start with Windows:", 11, color="#aaaaaa"))
+        startup_row.addWidget(self._make_label("Start with Windows:", 11, color=Colors.TEXT_MUTED))
         startup_row.addStretch()
         self.startup_toggle = QPushButton()
         self.startup_toggle.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
@@ -1036,7 +1029,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
         cpu_threads = psutil.cpu_count()
         ram_gb = round(psutil.virtual_memory().total / (1024 ** 3))
         info_label = self._make_label(
-            f"Detected: {cpu_threads} CPU threads, {ram_gb} GB RAM", 10, color="#666666"
+            f"Detected: {cpu_threads} CPU threads, {ram_gb} GB RAM", 10, color=Colors.TEXT_FAINT
         )
         info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(info_label)
@@ -1047,10 +1040,10 @@ class InitialSettingsDialog(BaseSettingsDialog):
         self.start_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         self.start_btn.setFixedHeight(44)
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.start_btn.setStyleSheet("""
-            QPushButton { background-color: #e94560; color: white; border: none; border-radius: 8px; }
-            QPushButton:hover { background-color: #ff6b6b; }
-            QPushButton:disabled { background-color: #555555; color: #888888; }
+        self.start_btn.setStyleSheet(f"""
+            QPushButton {{ background-color: {Colors.ACCENT}; color: white; border: none; border-radius: 8px; }}
+            QPushButton:hover {{ background-color: {Colors.ACCENT_HOVER}; }}
+            QPushButton:disabled {{ background-color: {Colors.TEXT_DISABLED}; color: {Colors.TEXT_DIM}; }}
         """)
         self.start_btn.clicked.connect(self._on_start)
         layout.addWidget(self.start_btn)
@@ -1059,14 +1052,14 @@ class InitialSettingsDialog(BaseSettingsDialog):
         self._apply_last_setup(load_last_setup())
 
     def _update_mode_buttons(self):
-        active_style = """
-            QPushButton { background-color: #e94560; color: white; border: none; border-radius: 6px; }
+        active_style = f"""
+            QPushButton {{ background-color: {Colors.ACCENT}; color: white; border: none; border-radius: 6px; }}
         """
-        inactive_style = """
-            QPushButton {
-                background-color: #3a3a4e; color: #888888; border: none; border-radius: 6px;
-            }
-            QPushButton:hover { background-color: #4a4a5e; }
+        inactive_style = f"""
+            QPushButton {{
+                background-color: {Colors.HEADER}; color: {Colors.TEXT_DIM}; border: none; border-radius: 6px;
+            }}
+            QPushButton:hover {{ background-color: {Colors.BORDER}; }}
         """
         self.cpu_btn.setStyleSheet(active_style if self.cpu_btn.isChecked() else inactive_style)
         self.mem_btn.setStyleSheet(active_style if self.mem_btn.isChecked() else inactive_style)
@@ -1080,14 +1073,14 @@ class InitialSettingsDialog(BaseSettingsDialog):
         """Refresh startup toggle button style to match its checked state."""
         if self.startup_toggle.isChecked():
             self.startup_toggle.setText("ON")
-            self.startup_toggle.setStyleSheet("""
-                QPushButton { background-color: #e94560; color: white; border: none; border-radius: 6px; }
+            self.startup_toggle.setStyleSheet(f"""
+                QPushButton {{ background-color: {Colors.ACCENT}; color: white; border: none; border-radius: 6px; }}
             """)
         else:
             self.startup_toggle.setText("OFF")
-            self.startup_toggle.setStyleSheet("""
-                QPushButton { background-color: #3a3a4e; color: #888888; border: none; border-radius: 6px; }
-                QPushButton:hover { background-color: #4a4a5e; }
+            self.startup_toggle.setStyleSheet(f"""
+                QPushButton {{ background-color: {Colors.HEADER}; color: {Colors.TEXT_DIM}; border: none; border-radius: 6px; }}
+                QPushButton:hover {{ background-color: {Colors.BORDER}; }}
             """)
 
     def _on_start(self):
@@ -1233,9 +1226,9 @@ class CPUSettingsDialog(BaseSettingsDialog):
         self.apply_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         self.apply_btn.setFixedHeight(44)
         self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.apply_btn.setStyleSheet("""
-            QPushButton { background-color: #e94560; color: white; border: none; border-radius: 8px; }
-            QPushButton:hover { background-color: #ff6b6b; }
+        self.apply_btn.setStyleSheet(f"""
+            QPushButton {{ background-color: {Colors.ACCENT}; color: white; border: none; border-radius: 8px; }}
+            QPushButton:hover {{ background-color: {Colors.ACCENT_HOVER}; }}
         """)
         self.apply_btn.clicked.connect(self.accept)
         layout.addWidget(self.apply_btn)
@@ -1300,7 +1293,7 @@ class MemorySettingsDialog(BaseSettingsDialog):
 
         layout.addWidget(self._make_label("Memory Settings", 12, bold=True))
         row5 = QHBoxLayout()
-        row5.addWidget(self._make_label("Display unit:", 11, color="#aaaaaa"))
+        row5.addWidget(self._make_label("Display unit:", 11, color=Colors.TEXT_MUTED))
         row5.addStretch()
         self.unit_combo = self._make_combo(["KB", "MB", "GB"], "MB")
         row5.addWidget(self.unit_combo)
@@ -1351,9 +1344,9 @@ class MemorySettingsDialog(BaseSettingsDialog):
         self.apply_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         self.apply_btn.setFixedHeight(44)
         self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.apply_btn.setStyleSheet("""
-            QPushButton { background-color: #e94560; color: white; border: none; border-radius: 8px; }
-            QPushButton:hover { background-color: #ff6b6b; }
+        self.apply_btn.setStyleSheet(f"""
+            QPushButton {{ background-color: {Colors.ACCENT}; color: white; border: none; border-radius: 8px; }}
+            QPushButton:hover {{ background-color: {Colors.ACCENT_HOVER}; }}
         """)
         self.apply_btn.clicked.connect(self.accept)
         layout.addWidget(self.apply_btn)
@@ -1470,9 +1463,9 @@ class NetworkSettingsDialog(BaseSettingsDialog):
         self.apply_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         self.apply_btn.setFixedHeight(44)
         self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.apply_btn.setStyleSheet("""
-            QPushButton { background-color: #e94560; color: white; border: none; border-radius: 8px; }
-            QPushButton:hover { background-color: #ff6b6b; }
+        self.apply_btn.setStyleSheet(f"""
+            QPushButton {{ background-color: {Colors.ACCENT}; color: white; border: none; border-radius: 8px; }}
+            QPushButton:hover {{ background-color: {Colors.ACCENT_HOVER}; }}
         """)
         self.apply_btn.clicked.connect(self.accept)
         layout.addWidget(self.apply_btn)

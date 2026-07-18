@@ -8,15 +8,6 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QTimer, QEvent, QRect
-
-
-def get_base_path() -> Path:
-    """Get base path for resources (handles PyInstaller frozen exe)."""
-    if getattr(sys, 'frozen', False):
-        return Path(sys._MEIPASS)
-    return Path(__file__).parent.parent
-
-
 from PySide6.QtGui import QAction, QFont, QIcon, QPalette, QColor
 from PySide6.QtWidgets import (
     QApplication,
@@ -39,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from .monitor import MonitorMode, MonitorData, NetworkMonitorData, SharedDataCollector
 from .color_management import ProcessColorManager
-from .persistence import load_last_setup, save_last_setup
+from .persistence import get_base_path, load_last_setup, save_last_setup
 from .settings_dialog import (
     InitialSettings,
     CPUSettings,
@@ -58,7 +49,7 @@ from .process_actions import (
     set_priority,
 )
 from .process_dialog import KillConfirmDialog, PriorityDialog
-from .styles import CONTEXT_MENU_STYLE, Defaults, Fonts, FontScale, format_speed, format_bytes_total
+from .styles import CONTEXT_MENU_STYLE, Colors, Defaults, Fonts, FontScale, format_speed, format_bytes_total
 
 
 class TotalRowDelegate(QStyledItemDelegate):
@@ -127,24 +118,11 @@ class DoubleClickSplitter(QSplitter):
 class BaseMonitorWindow(QMainWindow):
     """Base class for monitor windows (CPU and Memory)."""
 
-    # Colors matching settings dialog
-    BG_COLOR = "#1e1e2e"
-    CARD_COLOR = "#2a2a3e"
-    HEADER_COLOR = "#3a3a4e"
-    ACCENT = "#e94560"
-    TEXT = "#ffffff"
-    TEXT_MUTED = "#aaaaaa"
-
-    # Different colors for current vs history vs rolling average
-    CURRENT_BG = "#2d2d42"  # Slightly purple tint
-    HISTORY_BG = "#2a3a3e"  # Slightly teal tint
-    ROLLING_BG = "#2a382e"  # Slightly green tint
-
     # Default temperature thresholds
     DEFAULT_TEMP_CONFIG = {
-        "normal": "#ffffff",
-        "warning": "#ffa500",
-        "critical": "#ff4444",
+        "normal": Colors.TEXT,
+        "warning": Colors.TEMP_WARNING,
+        "critical": Colors.TEMP_CRITICAL,
         "warning_threshold": 60,
         "critical_threshold": 75,
     }
@@ -493,7 +471,7 @@ class BaseMonitorWindow(QMainWindow):
     def _get_temp_color(self, temp: Optional[float]) -> str:
         """Get color for temperature value based on config thresholds."""
         if temp is None:
-            return self.TEXT
+            return Colors.TEXT
 
         if temp >= self.temp_config["critical_threshold"]:
             return self.temp_config["critical"]
@@ -505,12 +483,12 @@ class BaseMonitorWindow(QMainWindow):
     def _apply_dark_theme(self):
         """Apply dark theme to window."""
         palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(self.BG_COLOR))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(self.TEXT))
-        palette.setColor(QPalette.ColorRole.Base, QColor(self.CARD_COLOR))
-        palette.setColor(QPalette.ColorRole.Text, QColor(self.TEXT))
-        palette.setColor(QPalette.ColorRole.Button, QColor(self.HEADER_COLOR))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor(self.TEXT))
+        palette.setColor(QPalette.ColorRole.Window, QColor(Colors.BACKGROUND))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(Colors.TEXT))
+        palette.setColor(QPalette.ColorRole.Base, QColor(Colors.CARD))
+        palette.setColor(QPalette.ColorRole.Text, QColor(Colors.TEXT))
+        palette.setColor(QPalette.ColorRole.Button, QColor(Colors.HEADER))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(Colors.TEXT))
         self.setPalette(palette)
 
     def _font(self, offset: int, bold: bool = False) -> QFont:
@@ -538,8 +516,8 @@ class BaseMonitorWindow(QMainWindow):
         row_h = FontScale.row_height(self._font_base)
         header_css = f"""
             QHeaderView::section {{
-                background-color: {self.HEADER_COLOR};
-                color: {self.TEXT};
+                background-color: {Colors.HEADER};
+                color: {Colors.TEXT};
                 font-family: {Fonts.FAMILY};
                 font-size: {FontScale.size(self._font_base, FontScale.SMALL)}pt;
                 font-weight: bold;
@@ -569,7 +547,7 @@ class BaseMonitorWindow(QMainWindow):
         # Header
         self.header_widget = QWidget()
         self.header_widget.setStyleSheet(f"""
-            background-color: {self.CARD_COLOR};
+            background-color: {Colors.CARD};
             border-radius: 8px;
         """)
         header_layout = QVBoxLayout(self.header_widget)
@@ -581,14 +559,14 @@ class BaseMonitorWindow(QMainWindow):
 
         self.title_label = QLabel(self._get_title())
         self.title_label.setFont(self._font(FontScale.TITLE, bold=True))
-        self.title_label.setStyleSheet(f"color: {self.TEXT}; background: transparent;")
+        self.title_label.setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
         title_row.addWidget(self.title_label)
 
         title_row.addStretch()
 
         self.total_label = QLabel("")
         self.total_label.setFont(self._font(FontScale.SUBTITLE))
-        self.total_label.setStyleSheet(f"color: {self.TEXT}; background: transparent;")
+        self.total_label.setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
         self.total_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         title_row.addWidget(self.total_label)
 
@@ -613,13 +591,13 @@ class BaseMonitorWindow(QMainWindow):
 
             name_lbl = QLabel("")
             name_lbl.setFont(self._font(FontScale.TINY))
-            name_lbl.setStyleSheet(f"color: {self.TEXT_MUTED}; background: transparent;")
+            name_lbl.setStyleSheet(f"color: {Colors.TEXT_MUTED}; background: transparent;")
             name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             col_layout.addWidget(name_lbl)
 
             value_lbl = QLabel("")
             value_lbl.setFont(self._font(FontScale.BODY))
-            value_lbl.setStyleSheet(f"color: {self.TEXT}; background: transparent;")
+            value_lbl.setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
             value_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             col_layout.addWidget(value_lbl)
 
@@ -635,11 +613,11 @@ class BaseMonitorWindow(QMainWindow):
         self.splitter = DoubleClickSplitter(Qt.Orientation.Vertical)
         self.splitter.setStyleSheet(f"""
             QSplitter::handle {{
-                background-color: {self.HEADER_COLOR};
+                background-color: {Colors.HEADER};
                 height: 4px;
             }}
             QSplitter::handle:hover {{
-                background-color: {self.ACCENT};
+                background-color: {Colors.ACCENT};
             }}
         """)
 
@@ -651,10 +629,10 @@ class BaseMonitorWindow(QMainWindow):
 
         self.current_title = QLabel("Current Processes")
         self.current_title.setFont(self._font(FontScale.SECTION, bold=True))
-        self.current_title.setStyleSheet(f"color: {self.TEXT};")
+        self.current_title.setStyleSheet(f"color: {Colors.TEXT};")
         current_layout.addWidget(self.current_title)
 
-        self.current_table = self._create_table(7, mode_cols=self._get_mode_cols(), bg_color=self.CURRENT_BG)
+        self.current_table = self._create_table(7, mode_cols=self._get_mode_cols(), bg_color=Colors.CURRENT_BG)
         current_layout.addWidget(self.current_table)
 
         self.splitter.addWidget(self.current_section)
@@ -673,13 +651,13 @@ class BaseMonitorWindow(QMainWindow):
         self.bottom_toggle_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
-                color: {self.TEXT};
+                color: {Colors.TEXT};
                 border: none;
                 padding: 0;
                 text-align: left;
             }}
             QPushButton:hover {{
-                color: {self.ACCENT};
+                color: {Colors.ACCENT};
             }}
         """)
         self.bottom_toggle_btn.clicked.connect(self._toggle_bottom_table)
@@ -688,13 +666,13 @@ class BaseMonitorWindow(QMainWindow):
 
         self.peak_label = QLabel("Peak: --")
         self.peak_label.setFont(self._font(FontScale.SMALL))
-        self.peak_label.setStyleSheet(f"color: {self.TEXT_MUTED}; background: transparent;")
+        self.peak_label.setStyleSheet(f"color: {Colors.TEXT_MUTED}; background: transparent;")
         bottom_header_row.addWidget(self.peak_label)
         history_layout.addLayout(bottom_header_row)
 
         self.bottom_stack = QStackedWidget()
-        self.history_table = self._create_table(4, mode_cols=self._get_mode_cols(), has_time=True, bg_color=self.HISTORY_BG)
-        self.rolling_table = self._create_table(0, mode_cols=self._get_mode_cols(), has_time=False, bg_color=self.ROLLING_BG, has_uptime=True)
+        self.history_table = self._create_table(4, mode_cols=self._get_mode_cols(), has_time=True, bg_color=Colors.HISTORY_BG)
+        self.rolling_table = self._create_table(0, mode_cols=self._get_mode_cols(), has_time=False, bg_color=Colors.ROLLING_BG, has_uptime=True)
         self.bottom_stack.addWidget(self.history_table)   # index 0 = Peak Usage
         self.bottom_stack.addWidget(self.rolling_table)   # index 1 = Rolling Average
         history_layout.addWidget(self.bottom_stack)
@@ -710,11 +688,11 @@ class BaseMonitorWindow(QMainWindow):
         menubar = self.menuBar()
         menubar.setStyleSheet(f"""
             QMenuBar {{
-                background-color: {self.BG_COLOR};
-                color: {self.TEXT};
+                background-color: {Colors.BACKGROUND};
+                color: {Colors.TEXT};
             }}
             QMenuBar::item:selected {{
-                background-color: {self.HEADER_COLOR};
+                background-color: {Colors.HEADER};
             }}
         """)
 
@@ -751,7 +729,7 @@ class BaseMonitorWindow(QMainWindow):
         """Create a styled QTableWidgetItem for the Σ total row."""
         item = QTableWidgetItem(text)
         item.setData(TotalRowDelegate.ROLE, True)
-        item.setForeground(QColor(self.TEXT))
+        item.setForeground(QColor(Colors.TEXT))
         item.setFont(self._font(FontScale.SMALL, bold=True))
         return item
 
@@ -800,7 +778,7 @@ class BaseMonitorWindow(QMainWindow):
             has_uptime: Add Uptime column (rolling average table only)
         """
         if bg_color is None:
-            bg_color = self.CARD_COLOR
+            bg_color = Colors.CARD
 
         cols = 3  # #, Process, Usage
         headers = ["#", "Process", "Usage"]
@@ -862,22 +840,22 @@ class BaseMonitorWindow(QMainWindow):
         table.setStyleSheet(f"""
             QTableWidget {{
                 background-color: {bg_color};
-                color: {self.TEXT};
+                color: {Colors.TEXT};
                 border: none;
                 border-radius: 6px;
                 outline: none;
             }}
             QTableWidget::item {{
                 padding: 4px 8px;
-                border-bottom: 1px solid {self.HEADER_COLOR};
+                border-bottom: 1px solid {Colors.HEADER};
             }}
             QTableWidget::item:selected {{
-                background-color: {self.HEADER_COLOR};
-                color: {self.TEXT};
+                background-color: {Colors.HEADER};
+                color: {Colors.TEXT};
             }}
             QHeaderView::section {{
-                background-color: {self.HEADER_COLOR};
-                color: {self.TEXT};
+                background-color: {Colors.HEADER};
+                color: {Colors.TEXT};
                 font-family: {Fonts.FAMILY};
                 font-size: {FontScale.size(self._font_base, FontScale.SMALL)}pt;
                 font-weight: bold;
@@ -917,7 +895,7 @@ class BaseMonitorWindow(QMainWindow):
 
         # Enable hover events for tooltips and install delegate for total row background
         table.viewport().setMouseTracking(True)
-        table.setItemDelegate(TotalRowDelegate(self.HEADER_COLOR, self.TEXT, table))
+        table.setItemDelegate(TotalRowDelegate(Colors.HEADER, Colors.TEXT, table))
 
         return table
 
@@ -941,20 +919,20 @@ class BaseMonitorWindow(QMainWindow):
             self._settings.current_rows,
             mode_cols=mode_cols,
             has_time=False,
-            bg_color=self.CURRENT_BG,
+            bg_color=Colors.CURRENT_BG,
             has_total_row=self._has_total_row(),
         )
         self.history_table = self._create_table(
             self._settings.history_rows,
             mode_cols=mode_cols,
             has_time=True,
-            bg_color=self.HISTORY_BG,
+            bg_color=Colors.HISTORY_BG,
         )
         self.rolling_table = self._create_table(
             0,
             mode_cols=mode_cols,
             has_time=False,
-            bg_color=self.ROLLING_BG,
+            bg_color=Colors.ROLLING_BG,
             has_uptime=True,
         )
 
@@ -1280,7 +1258,7 @@ class CPUWindow(BaseMonitorWindow):
         uptime_min = round(item.uptime_seconds / 60)
         uptime_item = QTableWidgetItem(f"{uptime_min}m")
         if uptime_min >= self._settings.retention_minutes:
-            uptime_item.setForeground(QColor(self.TEXT_MUTED))
+            uptime_item.setForeground(QColor(Colors.TEXT_MUTED))
         table.setItem(row, 5, uptime_item)
 
     def _on_data_ready(self, data: MonitorData):
@@ -1425,7 +1403,7 @@ class MemoryWindow(BaseMonitorWindow):
         uptime_min = round(item.uptime_seconds / 60)
         uptime_item = QTableWidgetItem(f"{uptime_min}m")
         if uptime_min >= self._settings.retention_minutes:
-            uptime_item.setForeground(QColor(self.TEXT_MUTED))
+            uptime_item.setForeground(QColor(Colors.TEXT_MUTED))
         table.setItem(row, 4, uptime_item)
 
     def _on_data_ready(self, data: MonitorData):
@@ -1461,7 +1439,7 @@ class MemoryWindow(BaseMonitorWindow):
             for i, (name, value_text) in enumerate(zip(sensor_names, sensor_values)):
                 self.sensor_name_labels[i].setText(name)
                 self.sensor_value_labels[i].setText(value_text)
-                self.sensor_value_labels[i].setStyleSheet(f"color: {self.TEXT}; background: transparent;")
+                self.sensor_value_labels[i].setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
 
         # Update current table
         total_row = self.current_table.rowCount() - 1
@@ -1604,7 +1582,7 @@ class NetworkWindow(BaseMonitorWindow):
         uptime_min = round(item.uptime_seconds / 60)
         uptime_item = QTableWidgetItem(f"{uptime_min}m")
         if uptime_min >= self._settings.retention_minutes:
-            uptime_item.setForeground(QColor(self.TEXT_MUTED))
+            uptime_item.setForeground(QColor(Colors.TEXT_MUTED))
         table.setItem(row, 4, uptime_item)
 
     def _on_data_ready(self, data: NetworkMonitorData):
@@ -1629,15 +1607,15 @@ class NetworkWindow(BaseMonitorWindow):
         self.sensor_widget.setVisible(True)
         self.sensor_name_labels[0].setText("Upload")
         self.sensor_value_labels[0].setText(f"↑ {format_speed(data.current_upload, unit)}")
-        self.sensor_value_labels[0].setStyleSheet(f"color: {self.TEXT}; background: transparent;")
+        self.sensor_value_labels[0].setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
 
         self.sensor_name_labels[1].setText("Total ↓")
         self.sensor_value_labels[1].setText(format_bytes_total(data.cumulative_download, unit))
-        self.sensor_value_labels[1].setStyleSheet(f"color: {self.TEXT}; background: transparent;")
+        self.sensor_value_labels[1].setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
 
         self.sensor_name_labels[2].setText("Total ↑")
         self.sensor_value_labels[2].setText(format_bytes_total(data.cumulative_upload, unit))
-        self.sensor_value_labels[2].setStyleSheet(f"color: {self.TEXT}; background: transparent;")
+        self.sensor_value_labels[2].setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
 
         # Update current table (no total row for network)
         self._fill_process_rows(

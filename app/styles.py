@@ -1,12 +1,48 @@
 """
 UI Styling Constants
 
-Fonts, dimensions, and layout constants for the Process Monitor application.
-Color management has been moved to color_management.py.
+Colors, fonts, dimensions, and layout constants for the Process Monitor
+application. This is the single source of truth for the dark theme palette
+(Colors) — color_management.py only holds value-based threshold defaults
+and process-coloring logic, not the app chrome palette.
 """
 
 from dataclasses import dataclass
 from functools import lru_cache
+
+
+@dataclass(frozen=True)
+class Colors:
+    """Application color palette (dark theme).
+
+    Single source of truth for every palette hex value used across the UI —
+    window chrome, settings dialogs, and the shared context menu. Threshold
+    gradient colors (value-based process coloring) are data, not palette,
+    and stay in color_management.py's _DEFAULT_VALUE_RANGES* tables.
+    """
+
+    BACKGROUND = "#1e1e2e"
+    CARD = "#2a2a3e"
+    HEADER = "#3a3a4e"
+    BORDER = "#4a4a5e"
+
+    ACCENT = "#e94560"
+    ACCENT_HOVER = "#ff6b6b"
+
+    TEXT = "#ffffff"
+    TEXT_MUTED = "#aaaaaa"
+    TEXT_DIM = "#888888"
+    TEXT_FAINT = "#666666"
+    TEXT_DISABLED = "#555555"
+
+    # Per-section table backgrounds (current / history / rolling average)
+    CURRENT_BG = "#2d2d42"
+    HISTORY_BG = "#2a3a3e"
+    ROLLING_BG = "#2a382e"
+
+    # Temperature thresholds (HWiNFO sensor readout)
+    TEMP_WARNING = "#ffa500"
+    TEMP_CRITICAL = "#ff4444"
 
 
 @dataclass(frozen=True)
@@ -128,28 +164,28 @@ PROCESS_ALIASES = {
 }
 
 
-CONTEXT_MENU_STYLE = """
-    QMenu {
-        background-color: #2a2a3e;
-        color: #ffffff;
-        border: 1px solid #3a3a4e;
+CONTEXT_MENU_STYLE = f"""
+    QMenu {{
+        background-color: {Colors.CARD};
+        color: {Colors.TEXT};
+        border: 1px solid {Colors.HEADER};
         padding: 4px;
-    }
-    QMenu::item {
+    }}
+    QMenu::item {{
         padding: 6px 24px;
         border-radius: 3px;
-    }
-    QMenu::item:selected {
-        background-color: #3a3a4e;
-    }
-    QMenu::item:disabled {
-        color: #666666;
-    }
-    QMenu::separator {
+    }}
+    QMenu::item:selected {{
+        background-color: {Colors.HEADER};
+    }}
+    QMenu::item:disabled {{
+        color: {Colors.TEXT_FAINT};
+    }}
+    QMenu::separator {{
         height: 1px;
-        background-color: #3a3a4e;
+        background-color: {Colors.HEADER};
         margin: 4px 0;
-    }
+    }}
 """
 
 

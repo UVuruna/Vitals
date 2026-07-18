@@ -7,42 +7,24 @@ Handles all color logic for the Process Monitor:
     Companies with exactly 1 process name share a single "Other" color.
     Processes with no company info at all get a fixed near-white color.
 - Value-based usage coloring (per-monitor-mode thresholds: CPU and Memory are independent)
-- Application color palette (moved from styles.py)
+
+The app chrome/dark-theme palette (Colors) lives in styles.py, not here — this
+module only owns the value-threshold gradient defaults (_DEFAULT_VALUE_RANGES*)
+and the fixed near-white color for processes with no company info, which are
+config-tunable data rather than UI palette constants.
 
 Config is read from config/config.json — edit that file to tune value color thresholds.
 """
 
 import ctypes
 import json
-import sys
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
 
 import psutil
 from PySide6.QtCore import QMutex, QMutexLocker
 from PySide6.QtGui import QColor
 
-from .persistence import load_last_setup, save_last_setup
-
-
-# ---------------------------------------------------------------------------
-# Application color palette (dark theme constants)
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class Colors:
-    """Application color palette (dark theme)."""
-
-    BACKGROUND = "#1e1e2e"
-    CARD = "#2a2a3e"
-    HEADER = "#3a3a4e"
-    ACCENT = "#e94560"
-    TEXT = "#ffffff"
-    TEXT_MUTED = "#aaaaaa"
-
-    CURRENT_BG = "#2d2d42"
-    HISTORY_BG = "#2a3a3e"
+from .persistence import get_base_path, load_last_setup, save_last_setup
 
 
 # ---------------------------------------------------------------------------
@@ -104,15 +86,6 @@ _COMPANY_HUE_LIGHTNESS = 0.84
 # ---------------------------------------------------------------------------
 # Windows Version API — reads CompanyName from PE version info
 # ---------------------------------------------------------------------------
-
-def _get_config_path() -> Path:
-    """Resolve config/config.json path for both dev and frozen (PyInstaller) env."""
-    if getattr(sys, 'frozen', False):
-        base = Path(sys._MEIPASS)
-    else:
-        base = Path(__file__).parent.parent
-    return base / "config" / "config.json"
-
 
 try:
     _ver_dll = ctypes.windll.version
@@ -258,7 +231,7 @@ class ProcessColorManager:
 
     def _load_config(self):
         """Load color configuration from config/config.json."""
-        config_path = _get_config_path()
+        config_path = get_base_path() / "config" / "config.json"
 
         value_ranges_data = _DEFAULT_VALUE_RANGES
 
