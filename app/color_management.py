@@ -308,19 +308,23 @@ class ProcessColorManager:
         self._value_ranges_net_dl = list(parsed_ranges_net_dl)
         self._value_ranges_net_ul = list(parsed_ranges_net_ul)
 
-        # Load user-set hue params and color thresholds from last_setup.json
+        # Load user-set hue params and color thresholds from last_setup.json.
+        # Shape checks are required: pre-2.0 versions stored color_thresholds
+        # as a flat list — legacy or hand-edited data is discarded, not fatal.
         setup_data = load_last_setup()
         hue = setup_data.get("hue_params", {})
-        if "saturation" in hue:
-            self._hue_saturation = float(hue["saturation"])
-        if "lightness" in hue:
-            self._hue_lightness = float(hue["lightness"])
+        if isinstance(hue, dict):
+            if "saturation" in hue:
+                self._hue_saturation = float(hue["saturation"])
+            if "lightness" in hue:
+                self._hue_lightness = float(hue["lightness"])
         # Restore saved color thresholds (overrides defaults)
         saved_thresholds = setup_data.get("color_thresholds", {})
-        for mode_key in ("cpu", "cpu_all", "memory", "memory_total", "memory_all", "memory_all_total", "net_dl", "net_ul"):
-            saved = saved_thresholds.get(mode_key)
-            if isinstance(saved, list) and len(saved) == 4:
-                self._apply_threshold_values(mode_key, saved)
+        if isinstance(saved_thresholds, dict):
+            for mode_key in ("cpu", "cpu_all", "memory", "memory_total", "memory_all", "memory_all_total", "net_dl", "net_ul"):
+                saved = saved_thresholds.get(mode_key)
+                if isinstance(saved, list) and len(saved) == 4:
+                    self._apply_threshold_values(mode_key, saved)
 
     def lookup_company(self, name: str, pid: int):
         """
@@ -488,7 +492,8 @@ class ProcessColorManager:
             self._apply_threshold_values(mode, thresholds)
 
         data = load_last_setup()
-        if "color_thresholds" not in data:
+        # Replace legacy list-shaped color_thresholds (pre-2.0 format) outright
+        if not isinstance(data.get("color_thresholds"), dict):
             data["color_thresholds"] = {}
         data["color_thresholds"][mode] = thresholds
         save_last_setup(data)
