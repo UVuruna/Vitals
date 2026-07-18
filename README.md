@@ -1,6 +1,6 @@
-# 🖥️ Process Monitor
+# 🖥️ Vitals
 
-> Real-time CPU, Memory, and Network usage monitoring for Windows — lightweight desktop gadget windows controlled from a single tray icon, with company-based coloring and historical peak tracking.
+> Real-time CPU, Memory, and Network usage monitoring for Windows — lightweight desktop gadget windows controlled from a single tray icon, with company-based coloring and historical peak tracking. Formerly named PMUsage.
 
 ---
 
@@ -40,7 +40,7 @@ python main.py
 
 ## 🖱️ Usage
 
-1. **Launch** — `python main.py` (or run the installed `PMUsage.exe`)
+1. **Launch** — `python main.py` (or run the installed `Vitals.exe`)
 2. **Select monitors** — choose CPU, Memory, and/or Network (any combination)
 3. **Adjust settings** — rows, refresh rate, retention time, memory/network units, color thresholds
 4. **Click "Start Monitoring"** — settings are saved and restored next launch
@@ -123,7 +123,7 @@ The **Company Legend** button (in the CPU/Memory/Network settings dialogs) shows
 
 ## 🏗️ Architecture
 
-Process Monitor runs as a **desktop gadget**: each monitor window is a
+Vitals runs as a **desktop gadget**: each monitor window is a
 `Qt.Tool` window (no taskbar button, no Alt-Tab entry), and a single system
 tray icon is the app's only persistent shell identity. Closing a window
 hides it and pauses its data collection; the tray icon's menu (or a
@@ -248,7 +248,7 @@ python setup/build.py
 - [NSIS](https://nsis.sourceforge.io/) installed and on PATH
 - Optional: run `python setup/create_cert.py` once for code signing
 
-Output: `dist/PMUsage_Setup.exe`
+Output: `dist/Vitals_Setup.exe`
 
 ---
 

@@ -1,7 +1,7 @@
 {
     "version": "2.0.231",
-    "name": "PMUsage",
-    "description": "Real-time CPU and Memory usage monitor",
-    "exe_name": "PMUsage.exe",
-    "installer_name": "PMUsage_Setup.exe"
+    "name": "Vitals",
+    "description": "Real-time CPU, Memory, and Network usage monitor",
+    "exe_name": "Vitals.exe",
+    "installer_name": "Vitals_Setup.exe"
 }

@@ -1,10 +1,10 @@
 Unicode true
 
 ; =================================================================
-; PMUsage Installer -- NSIS Script
+; Vitals Installer -- NSIS Script
 ;
 ; Creates a standard Windows installer:
-;   - Choose install location (default: Program Files\PMUsage)
+;   - Choose install location (default: Program Files\Vitals)
 ;   - Start Menu + Desktop shortcuts
 ;   - Optional autostart with Windows
 ;   - Uninstaller in Add/Remove Programs
@@ -14,15 +14,15 @@ Unicode true
 !include "FileFunc.nsh"
 
 ; -- App Info -----------------------------------------------------
-!define APP_NAME "PMUsage"
-!define APP_EXE "PMUsage.exe"
-!define APP_DESCRIPTION "Real-time CPU and Memory usage monitor"
+!define APP_NAME "Vitals"
+!define APP_EXE "Vitals.exe"
+!define APP_DESCRIPTION "Real-time CPU, Memory, and Network usage monitor"
 
 ; Registry key for uninstall info
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
 
 ; -- Paths and company info (passed from build.py via /D flags) ---
-; DIST_DIR      -- PyInstaller output (dist\PMUsage\)
+; DIST_DIR      -- PyInstaller output (dist\Vitals\)
 ; SETUP_DIR     -- setup folder (for icon reference)
 ; APP_VERSION   -- version string (reads setup/app_info.json)
 ; APP_PUBLISHER -- company name (reads root company.json)
@@ -99,6 +99,25 @@ FunctionEnd
 
 Section "!${APP_NAME} (required)" SecMain
     SectionIn RO  ; Cannot be deselected
+
+    ; -------------------------------------------------------------
+    ; Legacy PMUsage cleanup
+    ;
+    ; The app was previously named PMUsage. These steps remove every
+    ; trace of an old PMUsage install so upgrading over PMUsage 2.0.x
+    ; leaves nothing behind (old exe, autostart task, shortcuts,
+    ; Program Files folder, uninstall registry entry). Safe to run
+    ; even when no PMUsage install exists -- every command here is a
+    ; no-op on a fresh machine.
+    ; -------------------------------------------------------------
+    nsExec::ExecToLog 'taskkill /im "PMUsage.exe" /f'
+    nsExec::ExecToLog 'schtasks /delete /tn "PMUsage" /f'
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "PMUsage"
+    Delete "$DESKTOP\PMUsage.lnk"
+    RMDir /r "$SMPROGRAMS\PMUsage"
+    RMDir /r "$PROGRAMFILES64\PMUsage"
+    RMDir /r "$PROGRAMFILES\PMUsage"      ; pre-2.0.221 installs went to x86 Program Files
+    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\PMUsage"
 
     ; Close a running instance so locked files can be replaced on upgrade
     nsExec::ExecToLog 'taskkill /im "${APP_EXE}" /f'

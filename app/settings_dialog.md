@@ -91,7 +91,7 @@ before calling `super().accept()`.
 
 | Function | Description |
 |----------|-------------|
-| `is_startup_registered()` | Frozen exe: queries the `PMUsage` Task Scheduler task. Dev mode: checks the HKCU `Run` registry value. |
+| `is_startup_registered()` | Frozen exe: queries the `Vitals` Task Scheduler task. Dev mode: checks the HKCU `Run` registry value. |
 | `set_startup_registered(enabled)` | Frozen exe: creates/deletes the same Task Scheduler task the installer manages (`/rl highest`) and cleans up any legacy `Run` entry. Dev mode: sets/deletes the HKCU `Run` value. |
 
 ---
@@ -102,12 +102,12 @@ before calling `super().accept()`.
 skips `HKCU\...\Run` entries that point at a UAC-elevated executable, so a
 Registry-only toggle would appear to work but never actually autostart the
 installed app. `set_startup_registered()` instead creates a Task Scheduler
-task named `PMUsage` — the **same name** `setup/installer.nsi`'s optional
+task named `Vitals` — the **same name** `setup/installer.nsi`'s optional
 autostart section creates — so the in-app toggle and the installer manage
 one shared task, not two competing autostart mechanisms.
 
 **Legacy Run-entry cleanup runs unconditionally.** `_delete_legacy_run_value()`
-removes any `PMUsage` value left by pre-2.0.214 versions every time
+removes any `Vitals` value left by pre-2.0.214 versions every time
 `set_startup_registered()` runs on a frozen build, since that entry is dead
 weight at best (points at an elevated exe Windows won't launch via Run).
 

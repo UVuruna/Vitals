@@ -32,7 +32,7 @@ from .color_management import ProcessColorManager
 # Name of both the HKCU Run value (dev mode) and the Task Scheduler task
 # created by the installer (setup/installer.nsi APP_NAME) — they must match
 # so the in-app toggle controls the same task the installer creates.
-_STARTUP_APP_NAME = "PMUsage"
+_STARTUP_APP_NAME = "Vitals"
 _STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
@@ -74,7 +74,7 @@ def _delete_legacy_run_value() -> None:
             pass
         winreg.CloseKey(key)
     except OSError as e:
-        print(f"[PMUsage] Legacy Run cleanup failed: {e}", file=sys.stderr)
+        print(f"[Vitals] Legacy Run cleanup failed: {e}", file=sys.stderr)
 
 
 def is_startup_registered() -> bool:
@@ -112,11 +112,11 @@ def set_startup_registered(enabled: bool) -> None:
                 "/sc", "onlogon", "/rl", "highest", "/f",
             )
             if rc != 0:
-                print(f"[PMUsage] schtasks /create failed (exit {rc})", file=sys.stderr)
+                print(f"[Vitals] schtasks /create failed (exit {rc})", file=sys.stderr)
         elif is_startup_registered():
             rc = _run_schtasks("/delete", "/tn", _STARTUP_APP_NAME, "/f")
             if rc != 0:
-                print(f"[PMUsage] schtasks /delete failed (exit {rc})", file=sys.stderr)
+                print(f"[Vitals] schtasks /delete failed (exit {rc})", file=sys.stderr)
         return
     try:
         key = winreg.OpenKey(
@@ -132,7 +132,7 @@ def set_startup_registered(enabled: bool) -> None:
                 pass
         winreg.CloseKey(key)
     except OSError as e:
-        print(f"[PMUsage] Startup registry update failed: {e}", file=sys.stderr)
+        print(f"[Vitals] Startup registry update failed: {e}", file=sys.stderr)
 
 
 def _save_last_setup(settings: 'InitialSettings') -> None:
@@ -877,7 +877,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.setWindowTitle("Process Monitor - Setup")
+        self.setWindowTitle("Vitals - Setup")
         self.resize(480, 560)
 
         self._apply_dark_theme()
@@ -889,7 +889,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
         layout.setSpacing(16)
         layout.setContentsMargins(32, 24, 32, 24)
 
-        title = self._make_label("Process Monitor", 20, bold=True)
+        title = self._make_label("Vitals", 20, bold=True)
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 

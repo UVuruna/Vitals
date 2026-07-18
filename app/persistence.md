@@ -38,7 +38,7 @@ bundled read-only resources vs. user-writable data.
 | Function | Description |
 |----------|-------------|
 | `get_base_path()` | Root for bundled, read-only resources. Frozen exe: PyInstaller's `sys._MEIPASS` (temp extraction dir, recreated every launch). Dev mode: project root. |
-| `get_data_dir()` | Root for user-writable app data. Frozen exe: `%APPDATA%\PMUsage`. Dev mode: project root (same as `get_base_path()` — no separate writable dir needed when running from source). |
+| `get_data_dir()` | Root for user-writable app data. Frozen exe: `%APPDATA%\Vitals` (one-time migration from `%APPDATA%\PMUsage` if present — see Design Decisions). Dev mode: project root (same as `get_base_path()` — no separate writable dir needed when running from source). |
 | `get_last_setup_path()` | `get_data_dir() / "config" / "last_setup.json"`. |
 | `load_last_setup()` | Returns the saved setup dict, or `{}` if the file is missing or invalid. |
 | `save_last_setup(data)` | Atomically writes the full setup dict. |
@@ -48,12 +48,20 @@ bundled read-only resources vs. user-writable data.
 ## Design Decisions
 
 **`get_base_path()` vs. `get_data_dir()`.** A frozen exe's install directory
-(`Program Files\PMUsage`) is not writable without elevation, and PyInstaller's
+(`Program Files\Vitals`) is not writable without elevation, and PyInstaller's
 `sys._MEIPASS` extraction directory is wiped on every launch. Bundled assets
 (icons, `app_info.json`, `config.json` defaults) must be read from
 `get_base_path()`; anything the app writes (`last_setup.json`, opt-in debug
-logs) must go to `get_data_dir()` (`%APPDATA%\PMUsage`) instead. In dev mode
+logs) must go to `get_data_dir()` (`%APPDATA%\Vitals`) instead. In dev mode
 both resolve to the project root, so the distinction is invisible until build.
+
+**One-time `PMUsage` → `Vitals` settings migration.** The app was previously
+named PMUsage. On a frozen exe, if `%APPDATA%\PMUsage` exists and
+`%APPDATA%\Vitals` does not, `get_data_dir()` renames the old folder in place
+(`Path.rename` — same volume, so it's a fast metadata-only move) so existing
+users keep their settings across the rename instead of silently starting
+fresh. A failed rename (e.g. a locked file inside) is reported to stderr and
+the app proceeds with a new, empty `Vitals` folder rather than crashing.
 
 **Atomic writes.** `save_last_setup()` writes to a `.tmp` file first, then
 swaps it in with `os.replace()`. A crash or forced shutdown mid-write can

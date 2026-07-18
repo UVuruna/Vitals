@@ -1,5 +1,5 @@
 """
-Main Window - Process Monitor Display
+Main Window - Vitals Display
 """
 
 import json
@@ -264,7 +264,7 @@ class BaseMonitorWindow(QMainWindow):
                         pv.ptr = ctypes.cast(buf, c_void_p)
                         SetValue(pps, byref(key), byref(pv))
 
-                    _set_prop(PK_ID, "PCGadgets.PMUsage")
+                    _set_prop(PK_ID, "PCGadgets.Vitals")
 
                     # Icon resource: exe when frozen, ico file from source
                     if getattr(sys, 'frozen', False):
@@ -289,7 +289,7 @@ class BaseMonitorWindow(QMainWindow):
                 if hsmall:
                     ctypes.windll.user32.SendMessageW(hwnd, 0x0080, 0, hsmall)
         except Exception as e:
-            print(f"[PMUsage] _set_native_taskbar_icon failed (cosmetic): {e}", file=sys.stderr)
+            print(f"[Vitals] _set_native_taskbar_icon failed (cosmetic): {e}", file=sys.stderr)
 
     def _get_mode(self) -> MonitorMode:
         """Get the monitor mode. Must be overridden in subclasses."""
@@ -475,7 +475,7 @@ class BaseMonitorWindow(QMainWindow):
                     if "temp_colors" in data:
                         self.temp_config.update(data["temp_colors"])
             except (OSError, ValueError) as e:
-                print(f"[PMUsage] Invalid {config_path}: {e} - using default temp config", file=sys.stderr)
+                print(f"[Vitals] Invalid {config_path}: {e} - using default temp config", file=sys.stderr)
 
     def _get_temp_color(self, temp: Optional[float]) -> str:
         """Get color for temperature value based on config thresholds."""

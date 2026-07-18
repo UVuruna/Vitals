@@ -1,7 +1,7 @@
 """
 Color Management
 
-Handles all color logic for the Process Monitor:
+Handles all color logic for Vitals:
 - Company-based process name coloring:
     Companies with >1 process name get an individual hue (360°/N evenly spaced).
     Companies with exactly 1 process name share a single "Other" color.
@@ -249,7 +249,7 @@ class ProcessColorManager:
                     value_ranges_data = data["value_colors"]["ranges"]
 
             except (OSError, ValueError) as e:
-                print(f"[PMUsage] Invalid {config_path}: {e} - using default value colors", file=sys.stderr)
+                print(f"[Vitals] Invalid {config_path}: {e} - using default value colors", file=sys.stderr)
 
         parsed_ranges = [
             (float(entry["max_pct"]), QColor(entry["color"]))

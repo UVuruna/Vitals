@@ -1,5 +1,5 @@
 """
-Create a self-signed code signing certificate for PMUsage.
+Create a self-signed code signing certificate for the app.
 
 Run once to generate the certificate. The .pfx file is used by
 build.py to sign the exe. Keep the .pfx file private — do NOT
@@ -9,12 +9,16 @@ Usage:
     python setup/create_cert.py
 """
 
+import json
 import subprocess
 import sys
 from pathlib import Path
 
-CERT_DIR = Path(__file__).parent / "cert"
-PFX_PATH = CERT_DIR / "PMUsage.pfx"
+SETUP_DIR = Path(__file__).parent
+CERT_DIR = SETUP_DIR / "cert"
+APP_INFO_PATH = SETUP_DIR / "app_info.json"
+APP_NAME = json.loads(APP_INFO_PATH.read_text(encoding="utf-8"))["name"]
+PFX_PATH = CERT_DIR / f"{APP_NAME}.pfx"
 PASSWORD_PATH = CERT_DIR / "password.txt"
 PUBLISHER = "UVuruna"
 

@@ -1,4 +1,4 @@
-"""Process Monitor Application."""
+"""Vitals Application."""
 
 from .main_window import CPUWindow, MemoryWindow, NetworkWindow, BaseMonitorWindow
 from .monitor import MonitorMode, ProcessMonitor, SharedDataCollector

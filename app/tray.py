@@ -19,7 +19,7 @@ class TrayController:
 
     def __init__(self, icon, windows: list):
         self._tray = QSystemTrayIcon(icon)
-        self._tray.setToolTip("PMUsage")
+        self._tray.setToolTip("Vitals")
 
         self._menu = QMenu()
         self._menu.setStyleSheet(CONTEXT_MENU_STYLE)

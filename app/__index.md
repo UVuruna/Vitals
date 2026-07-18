@@ -7,7 +7,7 @@ Monitor, built with PySide6 (Qt6).
 
 ## Purpose
 
-Process Monitor runs as a **desktop gadget**: up to three monitor windows
+Vitals runs as a **desktop gadget**: up to three monitor windows
 (CPU, Memory, Network), each a taskbar-less `Qt.Tool` window, fed by one
 shared background collector thread and controlled through a single system
 tray icon. Closing a window hides it and pauses its data collection; the

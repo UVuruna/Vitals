@@ -36,15 +36,32 @@ def get_base_path() -> Path:
 def get_data_dir() -> Path:
     """Root folder for user-writable app data (settings, logs).
 
-    Frozen exe: %APPDATA%\\PMUsage - always writable, no admin needed.
+    Frozen exe: %APPDATA%\\Vitals - always writable, no admin needed.
     Dev mode:   the project root.
+
+    One-time migration: the app was previously named PMUsage. If
+    %APPDATA%\\PMUsage exists and %APPDATA%\\Vitals does not, the old
+    folder is renamed in place (Path.rename - same volume, so this is a
+    fast metadata-only move, not a copy) so existing settings survive the
+    rename instead of the user silently losing them. A failed rename
+    (e.g. a file inside is locked) is reported to stderr and the app
+    proceeds with a fresh, empty Vitals folder rather than crashing.
 
     Contrast with get_base_path(): this resolves the user's writable settings
     dir, not the bundled read-only resources shipped with the app.
     """
     if getattr(sys, 'frozen', False):
         appdata = os.environ.get('APPDATA') or os.environ.get('LOCALAPPDATA')
-        return Path(appdata) / 'PMUsage' if appdata else Path(sys.executable).parent
+        if not appdata:
+            return Path(sys.executable).parent
+        new_dir = Path(appdata) / 'Vitals'
+        old_dir = Path(appdata) / 'PMUsage'
+        if old_dir.exists() and not new_dir.exists():
+            try:
+                old_dir.rename(new_dir)
+            except OSError as e:
+                print(f"[Vitals] Settings migration failed: {e}", file=sys.stderr)
+        return new_dir
     return Path(__file__).parent.parent
 
 
@@ -67,7 +84,7 @@ def load_last_setup() -> dict:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError) as e:
-        print(f"[PMUsage] Invalid {path}: {e} - treating as empty", file=sys.stderr)
+        print(f"[Vitals] Invalid {path}: {e} - treating as empty", file=sys.stderr)
         return {}
 
 
@@ -87,4 +104,4 @@ def save_last_setup(data: dict) -> None:
             json.dump(data, f, indent=2)
         os.replace(tmp, path)
     except OSError as e:
-        print(f"[PMUsage] Failed to save {path}: {e}", file=sys.stderr)
+        print(f"[Vitals] Failed to save {path}: {e}", file=sys.stderr)

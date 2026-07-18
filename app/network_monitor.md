@@ -38,7 +38,7 @@ Administrator privileges — the kernel logger cannot be started otherwise.
 
 ### NetworkTracer
 
-Owns one ETW kernel trace session (`PMUsage_NetTrace`) and its consumer thread.
+Owns one ETW kernel trace session (`Vitals_NetTrace`) and its consumer thread.
 
 #### Attributes
 
@@ -64,11 +64,11 @@ Owns one ETW kernel trace session (`PMUsage_NetTrace`) and its consumer thread.
 
 ## Design Decisions
 
-**Single-owner named mutex (`Global\PMUsage_NetTrace_Owner`).** The ETW
-session name (`PMUsage_NetTrace`) is fixed system-wide, so a second PMUsage
+**Single-owner named mutex (`Global\Vitals_NetTrace_Owner`).** The ETW
+session name (`Vitals_NetTrace`) is fixed system-wide, so a second Vitals
 instance calling `StartTraceW` with the same name would silently steal or
 kill the first instance's session. `start()` acquires this mutex first and
-fails visibly (`self._error = "Another PMUsage instance is already tracing
+fails visibly (`self._error = "Another Vitals instance is already tracing
 the network"`) instead of stealing it.
 
 **`_session_started` is tracked separately from `_running`.** ETW kernel
@@ -78,7 +78,7 @@ kernel session is still live. `stop()` checks `_session_started` (not
 `_running`) to guarantee `ControlTraceW(..., STOP)` always runs, so a crash
 in the consumer can never leave a system-wide trace running until reboot.
 
-**Debug logging is opt-in via `PMUSAGE_DEBUG=1`.** The `etw_net` logger is a
+**Debug logging is opt-in via `VITALS_DEBUG=1`.** The `etw_net` logger is a
 `NullHandler` by default; only when the env var is set does it open
 `get_data_dir()/logs/network_debug.log` in truncate mode. This keeps
 production runs silent (no log spam, no risk of writing to a read-only

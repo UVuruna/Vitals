@@ -21,12 +21,12 @@ from collections import defaultdict
 from .persistence import get_data_dir
 
 
-# File logger for ETW diagnostics. Opt-in via PMUSAGE_DEBUG=1 because the log
+# File logger for ETW diagnostics. Opt-in via VITALS_DEBUG=1 because the log
 # is DEBUG-level and truncated on every launch — not a production default.
 # When enabled it writes to the user-writable data dir (never Program Files).
 def _setup_etw_logger():
     logger = logging.getLogger("etw_net")
-    if os.environ.get("PMUSAGE_DEBUG") != "1":
+    if os.environ.get("VITALS_DEBUG") != "1":
         logger.addHandler(logging.NullHandler())
         return logger
     logger.setLevel(logging.DEBUG)
@@ -56,10 +56,12 @@ class _GUID(ctypes.Structure):
 # Custom session GUID for our SystemTraceProvider session.
 # When using EVENT_TRACE_SYSTEM_LOGGER_MODE with a custom session name,
 # Wnode.Guid must NOT be SystemTraceControlGuid — it must be a unique GUID.
-# Generated via uuid.uuid4() and fixed for this application.
-_PMUsageNetTraceGuid = _GUID(
-    0x7B3A1F2E, 0x4D5C, 0x6E7F,
-    (ctypes.c_ubyte * 8)(0x8A, 0x9B, 0x0C, 0x1D, 0x2E, 0x3F, 0x40, 0x51),
+# Windows keys the extra system-logger slots off this GUID, so it was
+# regenerated for Vitals: a still-running legacy PMUsage instance (old
+# GUID) can no longer occupy our slot during the rename transition.
+_VitalsNetTraceGuid = _GUID(
+    0xA7C4D9E2, 0x31B8, 0x4E5D,
+    (ctypes.c_ubyte * 8)(0x96, 0xF0, 0x5A, 0x2C, 0x8B, 0x1D, 0x7E, 0x43),
 )
 
 # Provider GUIDs for kernel TCP/IP and UDP/IP events
@@ -291,11 +293,11 @@ class NetworkTracer:
     accumulated bytes and compute rates.
     """
 
-    _SESSION_NAME = "PMUsage_NetTrace"
+    _SESSION_NAME = "Vitals_NetTrace"
     # Named mutex marking a live instance that owns the ETW session — without
-    # it, a second PMUsage instance would silently kill the first one's trace
+    # it, a second Vitals instance would silently kill the first one's trace
     # (the session name is fixed system-wide).
-    _OWNER_MUTEX_NAME = "Global\\PMUsage_NetTrace_Owner"
+    _OWNER_MUTEX_NAME = "Global\\Vitals_NetTrace_Owner"
 
     def __init__(self):
         self._session_handle = ctypes.c_uint64(0)
@@ -350,12 +352,12 @@ class NetworkTracer:
             _log.error(self._error)
             return False
 
-        # Acquire the single-owner mutex: if another live PMUsage holds it,
+        # Acquire the single-owner mutex: if another live Vitals holds it,
         # fail visibly instead of stealing that instance's trace session
         self._owner_mutex = _kernel32.CreateMutexW(None, False, self._OWNER_MUTEX_NAME)
         if ctypes.get_last_error() == _ERROR_ALREADY_EXISTS:
             self._release_owner_mutex()
-            self._error = "Another PMUsage instance is already tracing the network"
+            self._error = "Another Vitals instance is already tracing the network"
             _log.error(self._error)
             return False
 
@@ -372,8 +374,8 @@ class NetworkTracer:
         self._props_buf = ctypes.create_string_buffer(props_size)
 
         # Custom session GUID as bytes (NOT SystemTraceControlGuid — that causes 0x57)
-        guid_bytes = struct.pack('<IHH8s', 0x7B3A1F2E, 0x4D5C, 0x6E7F,
-                                 bytes([0x8A, 0x9B, 0x0C, 0x1D, 0x2E, 0x3F, 0x40, 0x51]))
+        g = _VitalsNetTraceGuid
+        guid_bytes = struct.pack('<IHH8s', g.Data1, g.Data2, g.Data3, bytes(g.Data4))
 
         # WNODE_HEADER (offsets 0-47)
         struct.pack_into('<I', self._props_buf, 0, props_size)           # Wnode.BufferSize

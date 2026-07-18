@@ -1,5 +1,5 @@
 """
-Build PMUsage into a distributable package.
+Build the app into a distributable package (name/version read from app_info.json).
 
 Steps:
   1. Generate ICO from SVG (svg_to_ico — supersampled multi-resolution)

@@ -1,7 +1,7 @@
 """
 UI Styling Constants
 
-Colors, fonts, dimensions, and layout constants for the Process Monitor
+Colors, fonts, dimensions, and layout constants for the Vitals
 application. This is the single source of truth for the dark theme palette
 (Colors) — color_management.py only holds value-based threshold defaults
 and process-coloring logic, not the app chrome palette.

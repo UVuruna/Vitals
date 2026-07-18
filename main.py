@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Process Monitor - Entry Point
+Vitals - Entry Point
 
 Real-time CPU and Memory usage monitoring for Windows processes.
 """
@@ -23,9 +23,9 @@ def main():
     # Set Windows taskbar icon (must be before QApplication)
     try:
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("PCGadgets.PMUsage")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("PCGadgets.Vitals")
     except Exception as e:
-        print(f"[PMUsage] Failed to set AppUserModelID (cosmetic, taskbar grouping may be affected): {e}", file=sys.stderr)
+        print(f"[Vitals] Failed to set AppUserModelID (cosmetic, taskbar grouping may be affected): {e}", file=sys.stderr)
 
     app = QApplication(sys.argv)
 

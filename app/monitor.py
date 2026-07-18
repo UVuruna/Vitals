@@ -1,5 +1,5 @@
 """
-Process Monitor
+Vitals - Process Data Collection
 
 Handles process data collection using psutil.
 Supports CPU and Memory monitoring modes.
@@ -43,11 +43,11 @@ def get_commit_limit_bytes() -> int:
         pi = _PERFORMANCE_INFORMATION()
         pi.cb = ctypes.sizeof(pi)
         if not ctypes.windll.psapi.GetPerformanceInfo(ctypes.byref(pi), pi.cb):
-            print("[PMUsage] get_commit_limit_bytes: GetPerformanceInfo failed", file=sys.stderr)
+            print("[Vitals] get_commit_limit_bytes: GetPerformanceInfo failed", file=sys.stderr)
             return 0
         return pi.CommitLimit * pi.PageSize
     except OSError as e:
-        print(f"[PMUsage] get_commit_limit_bytes: WinAPI call failed: {e} - using physical RAM total", file=sys.stderr)
+        print(f"[Vitals] get_commit_limit_bytes: WinAPI call failed: {e} - using physical RAM total", file=sys.stderr)
         return psutil.virtual_memory().total
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -306,7 +306,7 @@ class HWiNFOSharedMemory:
         except Exception as e:
             if not self._error_reported:
                 self._error_reported = True
-                print(f"[PMUsage] HWiNFO shared memory read failed: {e}", file=sys.stderr)
+                print(f"[Vitals] HWiNFO shared memory read failed: {e}", file=sys.stderr)
         finally:
             if base:
                 _UnmapViewOfFile(base)

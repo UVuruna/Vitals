@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## PROJECT OVERVIEW
 
-**Process Monitor** is a Windows desktop gadget for real-time monitoring of CPU and Memory usage per process.
+**Vitals** (formerly PMUsage) is a Windows desktop gadget for real-time monitoring of CPU and Memory usage per process.
 
 **Key Features:**
 - Real-time process monitoring (CPU % and Memory usage)
