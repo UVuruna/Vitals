@@ -6,6 +6,7 @@ Steps:
   2. Run PyInstaller (--onedir mode) to create the exe
   3. Sign the exe with self-signed certificate (optional)
   4. Call NSIS to create the installer
+  5. Sign the installer with the same certificate (optional)
 
 Prerequisites:
   - pip install pyinstaller pillow
@@ -54,7 +55,6 @@ def _load_company() -> dict:
     return json.loads(COMPANY_JSON_PATH.read_text(encoding="utf-8"))
 
 
-CERT_PASSWORD = _load_password()
 APP_INFO = _load_app_info()
 COMPANY = _load_company()
 APP_NAME = APP_INFO["name"]
@@ -71,7 +71,7 @@ def _version_tuple(version: str) -> tuple[int, int, int, int]:
 
 
 def generate_version_info():
-    step("0/4  Generating version_info.txt from app_info.json")
+    step("0/5  Generating version_info.txt from app_info.json")
 
     v = APP_INFO["version"]
     vt = _version_tuple(v)
@@ -116,10 +116,20 @@ def step(msg: str):
     print(f"{'='*60}")
 
 
-def run(cmd: list[str], **kwargs):
-    """Run a command, print it, and check for errors."""
-    print(f"  > {' '.join(str(c) for c in cmd)}")
-    result = subprocess.run(cmd, **kwargs)
+def run(cmd: list[str], mask: str | None = None, **kwargs):
+    """Run a command, print it, and check for errors.
+
+    stdout is left inherited so long-running tools (PyInstaller, NSIS)
+    still stream their progress live to the console. stderr is captured
+    so a failure can print the real error instead of a silent None.
+
+    If `mask` is given, any cmd argument equal to it (e.g. a certificate
+    password) is replaced with '***' in the printed command line — the
+    real value is still passed to the process.
+    """
+    printable = ["***" if mask is not None and str(c) == mask else str(c) for c in cmd]
+    print(f"  > {' '.join(printable)}")
+    result = subprocess.run(cmd, stderr=subprocess.PIPE, text=True, **kwargs)
     if result.returncode != 0:
         print(f"  FAILED (exit code {result.returncode})")
         if result.stderr:
@@ -129,12 +139,12 @@ def run(cmd: list[str], **kwargs):
 
 
 def generate_ico():
-    step("1/4  Generating ICO from SVG")
+    step("1/5  Generating ICO from SVG")
     run([sys.executable, str(SETUP_DIR / "svg_to_ico.py")])
 
 
 def build_pyinstaller():
-    step("2/4  Building exe with PyInstaller")
+    step("2/5  Building exe with PyInstaller")
 
     # Clean previous build
     for d in [DIST_DIR, BUILD_DIR]:
@@ -215,14 +225,25 @@ def build_pyinstaller():
     return exe_path
 
 
-def sign_exe(exe_path: Path):
-    step("3/4  Signing exe with certificate")
+def sign_file(file_path: Path) -> bool:
+    """Sign a single file with the project's self-signed certificate.
 
+    Shared by both the exe-signing and installer-signing steps so the
+    signtool lookup / invocation logic exists in exactly one place.
+
+    The certificate password is only read here — i.e. lazily, at the
+    moment a signature is actually needed — so a missing setup/cert/
+    folder does not abort the build before PyInstaller/NSIS even run;
+    it just means the build proceeds unsigned (with a warning below).
+
+    Returns True if signing succeeded, False if it was skipped because
+    the certificate or signtool.exe could not be found.
+    """
     if not CERT_PATH.exists():
         print(f"  WARNING: Certificate not found: {CERT_PATH}")
         print("  Run 'python setup/create_cert.py' first.")
         print("  Skipping signing...")
-        return
+        return False
 
     # Use signtool from Windows SDK
     signtool = shutil.which("signtool")
@@ -243,23 +264,32 @@ def sign_exe(exe_path: Path):
         print("  WARNING: signtool.exe not found.")
         print("  Install Windows SDK or add signtool to PATH.")
         print("  Skipping signing...")
-        return
+        return False
+
+    cert_password = _load_password()
 
     cmd = [
         signtool, "sign",
         "/f", str(CERT_PATH),
-        "/p", CERT_PASSWORD,
+        "/p", cert_password,
         "/fd", "SHA256",
-        "/t", "http://timestamp.digicert.com",
-        str(exe_path),
+        "/tr", "http://timestamp.digicert.com",
+        "/td", "SHA256",
+        str(file_path),
     ]
 
-    run(cmd)
-    print("  Exe signed successfully.")
+    run(cmd, mask=cert_password)
+    print(f"  Signed successfully: {file_path.name}")
+    return True
+
+
+def sign_exe(exe_path: Path):
+    step("3/5  Signing exe with certificate")
+    sign_file(exe_path)
 
 
 def build_installer():
-    step("4/4  Building installer with NSIS")
+    step("4/5  Building installer with NSIS")
 
     makensis = shutil.which("makensis")
     if not makensis:
@@ -292,12 +322,16 @@ def build_installer():
     run(cmd)
 
     installer_path = DIST_DIR / APP_INFO["installer_name"]
-    if installer_path.exists():
-        print(f"  Installer: {installer_path}")
-        size_mb = installer_path.stat().st_size / (1024 * 1024)
-        print(f"  Size: {size_mb:.1f} MB")
-    else:
+    if not installer_path.exists():
         print("  WARNING: Installer exe not found at expected location.")
+        return
+
+    print(f"  Installer: {installer_path}")
+    size_mb = installer_path.stat().st_size / (1024 * 1024)
+    print(f"  Size: {size_mb:.1f} MB")
+
+    step("5/5  Signing installer with certificate")
+    sign_file(installer_path)
 
 
 def main():

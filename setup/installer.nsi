@@ -31,10 +31,22 @@ Unicode true
 ; -- General Settings ---------------------------------------------
 Name "${APP_NAME}"
 OutFile "${DIST_DIR}\${APP_NAME}_Setup.exe"
-InstallDir "$PROGRAMFILES\${APP_NAME}"
+InstallDir "$PROGRAMFILES64\${APP_NAME}"
 InstallDirRegKey HKLM "${UNINST_KEY}" "InstallLocation"
 RequestExecutionLevel admin
 SetCompressor /SOLID lzma
+
+; -- Version Info (embeds a VERSIONINFO resource into the Setup.exe) --
+; APP_VERSION is passed as three components (e.g. "2.0.220"); the VI*
+; directives require four, hence the trailing ".0".
+VIProductVersion "${APP_VERSION}.0"
+VIFileVersion "${APP_VERSION}.0"
+VIAddVersionKey "ProductName" "${APP_NAME}"
+VIAddVersionKey "ProductVersion" "${APP_VERSION}"
+VIAddVersionKey "CompanyName" "${APP_PUBLISHER}"
+VIAddVersionKey "FileDescription" "${APP_NAME} Installer"
+VIAddVersionKey "FileVersion" "${APP_VERSION}"
+VIAddVersionKey "LegalCopyright" "Copyright (C) ${APP_PUBLISHER}"
 
 ; -- Icon ---------------------------------------------------------
 !define MUI_ICON "${PROJECT_DIR}\assets\icon.ico"
@@ -60,6 +72,26 @@ SetCompressor /SOLID lzma
 
 ; -- Language -----------------------------------------------------
 !insertmacro MUI_LANGUAGE "English"
+
+; =================================================================
+; INITIALIZATION -- force the 64-bit registry view
+;
+; This is a 64-bit-only app (InstallDir already points at
+; $PROGRAMFILES64). Without SetRegView 64 a 32-bit NSIS installer
+; reads/writes HKLM under the WOW6432Node redirection, so the
+; uninstall keys written in SecMain would land in the 32-bit view
+; and never be seen by Add/Remove Programs or by a 64-bit process.
+; Must run in .onInit / un.onInit — before InstallDirRegKey is
+; resolved and before any registry access in either direction.
+; =================================================================
+
+Function .onInit
+    SetRegView 64
+FunctionEnd
+
+Function un.onInit
+    SetRegView 64
+FunctionEnd
 
 ; =================================================================
 ; INSTALLER SECTIONS
