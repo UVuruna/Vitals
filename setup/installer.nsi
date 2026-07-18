@@ -81,7 +81,7 @@ VIAddVersionKey "LegalCopyright" "Copyright (C) ${APP_PUBLISHER}"
 ; reads/writes HKLM under the WOW6432Node redirection, so the
 ; uninstall keys written in SecMain would land in the 32-bit view
 ; and never be seen by Add/Remove Programs or by a 64-bit process.
-; Must run in .onInit / un.onInit — before InstallDirRegKey is
+; Must run in .onInit / un.onInit -- before InstallDirRegKey is
 ; resolved and before any registry access in either direction.
 ; =================================================================
 
@@ -104,7 +104,7 @@ Section "!${APP_NAME} (required)" SecMain
     nsExec::ExecToLog 'taskkill /im "${APP_EXE}" /f'
     Sleep 500
 
-    ; Remove any previous autostart unconditionally — SecAutostart recreates
+    ; Remove any previous autostart unconditionally -- SecAutostart recreates
     ; it only when selected, so unchecking it on upgrade actually disables it
     nsExec::ExecToLog 'schtasks /delete /tn "${APP_NAME}" /f'
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_NAME}"
