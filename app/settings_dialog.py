@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .monitor import MonitorMode
 from .persistence import get_base_path, load_last_setup, save_last_setup
 from .styles import Colors, Defaults, FontScale, MEMORY_UNITS, NETWORK_UNITS
 from .color_management import ProcessColorManager
@@ -835,27 +834,8 @@ class BaseSettingsDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
-# MonitorSettings / InitialSettings dataclasses
+# Settings dataclasses
 # ---------------------------------------------------------------------------
-
-@dataclass
-class MonitorSettings:
-    """Application settings container."""
-    mode: MonitorMode = MonitorMode.CPU
-    current_rows: int = Defaults.CURRENT_ROWS
-    history_rows: int = Defaults.HISTORY_ROWS
-    refresh_rate_ms: int = Defaults.REFRESH_RATE_MS
-    retention_minutes: int = Defaults.RETENTION_MINUTES
-    memory_unit: str = Defaults.MEMORY_UNIT
-
-    @property
-    def cpu_threads(self) -> int:
-        return psutil.cpu_count()
-
-    @property
-    def ram_gb(self) -> int:
-        return round(psutil.virtual_memory().total / (1024 ** 3))
-
 
 @dataclass
 class InitialSettings:
