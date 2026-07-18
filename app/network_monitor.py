@@ -309,6 +309,9 @@ class NetworkTracer:
         self._session_started = False
         self._lock = threading.Lock()
         self._error: str | None = None
+        # Guards the one-time _log.exception() call in _event_callback so a
+        # parsing bug is discoverable without flooding the log on every event
+        self._callback_error_reported = False
 
         # Per-PID counters: {pid: [bytes_received, bytes_sent]}
         self._counters: dict[int, list[int]] = defaultdict(lambda: [0, 0])
@@ -477,7 +480,11 @@ class NetworkTracer:
             return result
 
     def _stop_existing_session(self):
-        """Stop any leftover session from a previous crash."""
+        """Stop any leftover session from a previous crash.
+
+        Intentional best-effort: failure here only means there was no stale
+        session to stop or it is already gone — never a reason to abort startup.
+        """
         try:
             buf_size = ctypes.sizeof(_EVENT_TRACE_PROPERTIES) + (len(self._SESSION_NAME) + 1) * 2
             buf = ctypes.create_string_buffer(buf_size)
@@ -526,6 +533,12 @@ class NetworkTracer:
         Extracts PID and transfer size from TCP/UDP send/receive events.
         The first 8 bytes of UserData are always [PID: uint32, size: uint32]
         for send/receive opcodes.
+
+        Must never raise — an unhandled exception here would propagate into
+        native ETW code. The first exception is logged via _log.exception()
+        (guarded by self._callback_error_reported) so a parsing bug is
+        discoverable; subsequent ones are suppressed to keep this hot path
+        fast and avoid flooding the log.
         """
         try:
             event = event_ptr.contents
@@ -564,4 +577,6 @@ class NetworkTracer:
                     counters[1] += size
 
         except Exception:
-            pass  # Callback errors are silently ignored to avoid flooding
+            if not self._callback_error_reported:
+                self._callback_error_reported = True
+                _log.exception("_event_callback: unexpected error (suppressing further occurrences)")

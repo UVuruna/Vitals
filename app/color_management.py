@@ -18,6 +18,7 @@ Config is read from config/config.json — edit that file to tune value color th
 
 import ctypes
 import json
+import sys
 from typing import Optional
 
 import psutil
@@ -230,7 +231,11 @@ class ProcessColorManager:
         self._load_config()
 
     def _load_config(self):
-        """Load color configuration from config/config.json."""
+        """Load color configuration from config/config.json.
+
+        An unreadable or invalid config.json is reported to stderr and the
+        _DEFAULT_VALUE_RANGES fallback is kept (documented behavior).
+        """
         config_path = get_base_path() / "config" / "config.json"
 
         value_ranges_data = _DEFAULT_VALUE_RANGES
@@ -243,8 +248,8 @@ class ProcessColorManager:
                 if "value_colors" in data and "ranges" in data["value_colors"]:
                     value_ranges_data = data["value_colors"]["ranges"]
 
-            except Exception:
-                pass
+            except (OSError, ValueError) as e:
+                print(f"[PMUsage] Invalid {config_path}: {e} - using default value colors", file=sys.stderr)
 
         parsed_ranges = [
             (float(entry["max_pct"]), QColor(entry["color"]))

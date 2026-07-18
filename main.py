@@ -24,8 +24,8 @@ def main():
     try:
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("PCGadgets.PMUsage")
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[PMUsage] Failed to set AppUserModelID (cosmetic, taskbar grouping may be affected): {e}", file=sys.stderr)
 
     app = QApplication(sys.argv)
 

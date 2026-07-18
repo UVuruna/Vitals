@@ -193,6 +193,11 @@ class BaseMonitorWindow(QMainWindow):
         uses the group icon (from the exe) instead of per-window icons.
         Setting PKEY_AppUserModel_ID and PKEY_AppUserModel_RelaunchIconResource
         per-window via IPropertyStore tells the shell exactly which icon to use.
+
+        Intentional best-effort: icon cosmetics must never crash the app, so any
+        failure here is reported to stderr and swallowed. This runs once per
+        window (guarded by _native_icon_set in showEvent), so a plain print is
+        enough — it can never spam the log.
         """
         try:
             import ctypes
@@ -283,8 +288,8 @@ class BaseMonitorWindow(QMainWindow):
                     ctypes.windll.user32.SendMessageW(hwnd, 0x0080, 1, hbig)
                 if hsmall:
                     ctypes.windll.user32.SendMessageW(hwnd, 0x0080, 0, hsmall)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[PMUsage] _set_native_taskbar_icon failed (cosmetic): {e}", file=sys.stderr)
 
     def _get_mode(self) -> MonitorMode:
         """Get the monitor mode. Must be overridden in subclasses."""
@@ -455,7 +460,11 @@ class BaseMonitorWindow(QMainWindow):
             self._apply_col_widths(self.rolling_table, rolling_cols)
 
     def _load_config(self):
-        """Load temperature color config from JSON."""
+        """Load temperature color config from JSON.
+
+        An unreadable or invalid config.json is reported to stderr and the
+        DEFAULT_TEMP_CONFIG fallback is kept (documented behavior).
+        """
         config_path = get_base_path() / "config" / "config.json"
         self.temp_config = self.DEFAULT_TEMP_CONFIG.copy()
 
@@ -465,8 +474,8 @@ class BaseMonitorWindow(QMainWindow):
                     data = json.load(f)
                     if "temp_colors" in data:
                         self.temp_config.update(data["temp_colors"])
-            except Exception:
-                pass
+            except (OSError, ValueError) as e:
+                print(f"[PMUsage] Invalid {config_path}: {e} - using default temp config", file=sys.stderr)
 
     def _get_temp_color(self, temp: Optional[float]) -> str:
         """Get color for temperature value based on config thresholds."""

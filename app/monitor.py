@@ -35,16 +35,19 @@ class _PERFORMANCE_INFORMATION(ctypes.Structure):
 def get_commit_limit_bytes() -> int:
     """Return system commit limit (RAM + all page files) in bytes via GetPerformanceInfo.
 
-    Returns 0 if the WinAPI call fails (documented fallback: commit coloring disabled).
+    Returns 0 if GetPerformanceInfo reports failure (documented fallback: commit
+    coloring disabled). Falls back to physical RAM total if the ctypes call itself
+    raises OSError (documented fallback: commit limit approximated by RAM size).
     """
     try:
         pi = _PERFORMANCE_INFORMATION()
         pi.cb = ctypes.sizeof(pi)
         if not ctypes.windll.psapi.GetPerformanceInfo(ctypes.byref(pi), pi.cb):
-            print("get_commit_limit_bytes: GetPerformanceInfo failed", file=sys.stderr)
+            print("[PMUsage] get_commit_limit_bytes: GetPerformanceInfo failed", file=sys.stderr)
             return 0
         return pi.CommitLimit * pi.PageSize
-    except Exception:
+    except OSError as e:
+        print(f"[PMUsage] get_commit_limit_bytes: WinAPI call failed: {e} - using physical RAM total", file=sys.stderr)
         return psutil.virtual_memory().total
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -222,6 +225,9 @@ class HWiNFOSharedMemory:
         self._sensor_units: Optional[dict[str, str]] = None
         self._reading_offset: int = 0
         self._reading_size: int = 0
+        # Guards the one-time stderr report in get_sensors() for unexpected
+        # parsing failures (HWiNFO not running is a separate, unlogged case)
+        self._error_reported: bool = False
 
     def _find_sensor_indices(self, base: int, header: _HWiNFOHeader) -> tuple[dict[str, int], dict[str, str]]:
         """Scan once to find indices and units of target sensors."""
@@ -245,21 +251,29 @@ class HWiNFOSharedMemory:
         return indices, units
 
     def get_sensors(self) -> HWiNFOData:
-        """Get sensor values from HWiNFO (fast - only reads cached indices)."""
+        """Get sensor values from HWiNFO (fast - only reads cached indices).
+
+        HWiNFO not running (OpenFileMappingW returns NULL) is a normal condition
+        and is not logged. Unexpected failures while parsing the shared memory
+        are logged to stderr once per process (self._error_reported) rather than
+        every tick, and any opened handles are always released via finally so a
+        parsing exception can never leak the file-mapping handle.
+        """
         now = time.time()
         if now - self._last_read < self._cache_seconds and self._cache is not None:
             return self._cache
 
         data = HWiNFOData()
 
-        try:
-            handle = _OpenFileMapping(_FILE_MAP_READ, False, self.HWINFO_SENSORS_SM)
-            if not handle:
-                return data
+        handle = _OpenFileMapping(_FILE_MAP_READ, False, self.HWINFO_SENSORS_SM)
+        if not handle:
+            # HWiNFO not running - normal condition, nothing to log
+            return data
 
+        base = None
+        try:
             base = _MapViewOfFile(handle, _FILE_MAP_READ, 0, 0, 0)
             if not base:
-                _CloseHandle(handle)
                 return data
 
             header = _HWiNFOHeader.from_address(base)
@@ -286,14 +300,17 @@ class HWiNFOSharedMemory:
                         value *= 1024
                 setattr(data, attr_name, value)
 
-            _UnmapViewOfFile(base)
-            _CloseHandle(handle)
-
             self._cache = data
             self._last_read = now
 
-        except Exception:
-            pass
+        except Exception as e:
+            if not self._error_reported:
+                self._error_reported = True
+                print(f"[PMUsage] HWiNFO shared memory read failed: {e}", file=sys.stderr)
+        finally:
+            if base:
+                _UnmapViewOfFile(base)
+            _CloseHandle(handle)
 
         return data
 
