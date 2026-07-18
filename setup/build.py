@@ -176,9 +176,11 @@ def build_pyinstaller():
         "--windowed",
         "--uac-admin",
         "--version-file", str(VERSION_INFO_PATH),
-        # Bundle assets, config, and app metadata
+        # Bundle assets, config, and app metadata.
+        # Only config.json — the config/ folder also holds the developer's
+        # personal last_setup.json in dev mode, which must never ship.
         "--add-data", f"{PROJECT_DIR / 'assets'};assets",
-        "--add-data", f"{PROJECT_DIR / 'config'};config",
+        "--add-data", f"{PROJECT_DIR / 'config' / 'config.json'};config",
         "--add-data", f"{APP_INFO_PATH};setup",
         "--add-data", f"{COMPANY_JSON_PATH};.",
     ]

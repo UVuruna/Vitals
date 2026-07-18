@@ -68,6 +68,15 @@ SetCompressor /SOLID lzma
 Section "!${APP_NAME} (required)" SecMain
     SectionIn RO  ; Cannot be deselected
 
+    ; Close a running instance so locked files can be replaced on upgrade
+    nsExec::ExecToLog 'taskkill /im "${APP_EXE}" /f'
+    Sleep 500
+
+    ; Remove any previous autostart unconditionally — SecAutostart recreates
+    ; it only when selected, so unchecking it on upgrade actually disables it
+    nsExec::ExecToLog 'schtasks /delete /tn "${APP_NAME}" /f'
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_NAME}"
+
     ; Copy application files
     SetOutPath "$INSTDIR"
     File /r "${DIST_DIR}\${APP_NAME}\*.*"
@@ -102,10 +111,8 @@ Section "Desktop Shortcut" SecDesktop
 SectionEnd
 
 Section "Start with Windows" SecAutostart
-    ; Remove legacy Registry Run entry (UAC-elevated apps are silently skipped)
-    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_NAME}"
-
     ; Use Task Scheduler with /rl highest to autostart elevated apps
+    ; (legacy Run entry and stale tasks are cleaned unconditionally in SecMain)
     ExecWait 'schtasks /create /tn "${APP_NAME}" /tr "\"$INSTDIR\${APP_EXE}\"" /sc onlogon /rl highest /f'
 SectionEnd
 
@@ -121,6 +128,10 @@ SectionEnd
 ; =================================================================
 
 Section "Uninstall"
+    ; Close a running instance so program files are not locked during removal
+    nsExec::ExecToLog 'taskkill /im "${APP_EXE}" /f'
+    Sleep 500
+
     ; Remove autostart scheduled task and legacy registry key
     nsExec::ExecToLog 'schtasks /delete /tn "${APP_NAME}" /f'
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_NAME}"
