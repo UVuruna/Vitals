@@ -196,6 +196,13 @@ def _make_spinbox(default: int = 1) -> QSpinBox:
     return sb
 
 
+_SLIDER_STYLE = """
+    QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
+    QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
+    QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
+"""
+
+
 # ---------------------------------------------------------------------------
 # ColorScaleWidget — 4 draggable threshold handles on 5-color gradient bar
 # ---------------------------------------------------------------------------
@@ -630,6 +637,211 @@ def _build_color_section(
 
 
 # ---------------------------------------------------------------------------
+# BaseSettingsDialog — shared scaffolding for all settings dialogs
+# ---------------------------------------------------------------------------
+
+class BaseSettingsDialog(QDialog):
+    """
+    Shared base for InitialSettingsDialog, CPUSettingsDialog,
+    MemorySettingsDialog, and NetworkSettingsDialog.
+
+    Provides the dark theme + window icon setup, label/combo factories, and
+    builders for the settings rows duplicated across all four dialogs.
+    """
+
+    def _apply_dark_theme(self) -> None:
+        """Load the window icon and apply the shared dark QPalette."""
+        icon_path = get_base_path() / "assets" / "icon.ico"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e2e"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#2a2a3e"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Button, QColor("#3a3a4e"))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#e94560"))
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
+
+    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: str = "#ffffff") -> QLabel:
+        label = QLabel(text)
+        weight = QFont.Weight.Bold if bold else QFont.Weight.Normal
+        label.setFont(QFont("Segoe UI", size, weight))
+        label.setStyleSheet(f"color: {color}; background: transparent;")
+        return label
+
+    def _make_combo(self, items: list, default: str) -> QComboBox:
+        combo = QComboBox()
+        combo.addItems(items)
+        combo.setCurrentText(default)
+        combo.setFont(QFont("Segoe UI", 11))
+        combo.setMinimumContentsLength(max(len(item) for item in items))
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        combo.setFixedHeight(32)
+        combo.setStyleSheet("""
+            QComboBox {
+                background-color: #3a3a4e; color: #ffffff;
+                border: 1px solid #4a4a5e; border-radius: 4px; padding: 4px 8px;
+            }
+            QComboBox::drop-down { border: none; width: 24px; }
+            QComboBox::down-arrow {
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #ffffff;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #3a3a4e; color: #ffffff;
+                selection-background-color: #e94560;
+            }
+        """)
+        return combo
+
+    def _build_common_settings_rows(
+        self, layout: QVBoxLayout
+    ) -> tuple[QSpinBox, QSpinBox, QSlider, QLabel, QSlider, QLabel, QSlider, QLabel]:
+        """
+        Build the 5 common settings rows shared by all dialogs: current
+        processes, history records, refresh rate, history retention, and
+        font size. Returns the widgets so the caller can attach them as
+        attributes (current_spin, history_spin, refresh_slider, refresh_label,
+        retention_slider, retention_label, font_slider, font_label).
+        """
+        row1 = QHBoxLayout()
+        row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
+        row1.addStretch()
+        current_spin = _make_spinbox(Defaults.CURRENT_ROWS)
+        row1.addWidget(current_spin)
+        layout.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
+        row2.addStretch()
+        history_spin = _make_spinbox(Defaults.HISTORY_ROWS)
+        row2.addWidget(history_spin)
+        layout.addLayout(row2)
+
+        row3 = QHBoxLayout()
+        row3.addWidget(self._make_label("Refresh rate:", 11, color="#aaaaaa"))
+        row3.addStretch()
+        refresh_slider = QSlider(Qt.Orientation.Horizontal)
+        refresh_slider.setRange(1, 10)
+        refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 500)
+        refresh_slider.setFixedWidth(140)
+        refresh_slider.setStyleSheet(_SLIDER_STYLE)
+        row3.addWidget(refresh_slider)
+        refresh_label = self._make_label(f"{Defaults.REFRESH_RATE_MS} ms", 11)
+        refresh_label.setFixedWidth(65)
+        refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        refresh_slider.valueChanged.connect(lambda v: refresh_label.setText(f"{v * 500} ms"))
+        row3.addWidget(refresh_label)
+        layout.addLayout(row3)
+
+        row4 = QHBoxLayout()
+        row4.addWidget(self._make_label("History retention:", 11, color="#aaaaaa"))
+        row4.addStretch()
+        retention_slider = QSlider(Qt.Orientation.Horizontal)
+        retention_slider.setRange(1, 36)
+        retention_slider.setValue(Defaults.RETENTION_MINUTES // 10)
+        retention_slider.setFixedWidth(140)
+        retention_slider.setStyleSheet(_SLIDER_STYLE)
+        row4.addWidget(retention_slider)
+        retention_label = self._make_label(f"{Defaults.RETENTION_MINUTES} min", 11)
+        retention_label.setFixedWidth(65)
+        retention_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        retention_slider.valueChanged.connect(lambda v: retention_label.setText(f"{v * 10} min"))
+        row4.addWidget(retention_label)
+        layout.addLayout(row4)
+
+        # Font size
+        row_font = QHBoxLayout()
+        row_font.addWidget(self._make_label("Font size:", 11, color="#aaaaaa"))
+        row_font.addStretch()
+        font_slider = QSlider(Qt.Orientation.Horizontal)
+        font_slider.setRange(8, 18)
+        font_slider.setValue(Defaults.FONT_SIZE)
+        font_slider.setFixedWidth(140)
+        font_slider.setStyleSheet(_SLIDER_STYLE)
+        row_font.addWidget(font_slider)
+        font_label = self._make_label(f"{Defaults.FONT_SIZE} pt", 11)
+        font_label.setFixedWidth(65)
+        font_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        font_slider.valueChanged.connect(lambda v: font_label.setText(f"{v} pt"))
+        row_font.addWidget(font_label)
+        layout.addLayout(row_font)
+
+        return (
+            current_spin, history_spin, refresh_slider, refresh_label,
+            retention_slider, retention_label, font_slider, font_label,
+        )
+
+    def _build_network_settings_rows(
+        self, layout: QVBoxLayout, default_speed_mbps: int = 0
+    ) -> tuple[QComboBox, QComboBox, QSpinBox, QSpinBox]:
+        """
+        Build the network settings section shared by InitialSettingsDialog and
+        NetworkSettingsDialog: title, speed unit combo, sort combo, and max
+        download/upload spinboxes (0 = auto-detect from link speed). Returns
+        (unit_combo, sort_combo, dl_spin, ul_spin) for the caller to attach
+        as attributes.
+        """
+        layout.addWidget(self._make_label("Network Settings", 12, bold=True))
+
+        row_unit = QHBoxLayout()
+        row_unit.addWidget(self._make_label("Speed unit:", 11, color="#aaaaaa"))
+        row_unit.addStretch()
+        unit_combo = self._make_combo(["KB/s", "MB/s"], Defaults.NETWORK_UNIT)
+        row_unit.addWidget(unit_combo)
+        layout.addLayout(row_unit)
+
+        row_sort = QHBoxLayout()
+        row_sort.addWidget(self._make_label("Sort by:", 11, color="#aaaaaa"))
+        row_sort.addStretch()
+        sort_combo = self._make_combo(["total", "download", "upload"], Defaults.NETWORK_SORT_MODE)
+        row_sort.addWidget(sort_combo)
+        layout.addLayout(row_sort)
+
+        row_dl = QHBoxLayout()
+        row_dl.addWidget(self._make_label("Max download (Mbps):", 11, color="#aaaaaa"))
+        row_dl.addStretch()
+        dl_spin = QSpinBox()
+        dl_spin.setRange(0, 100000)
+        dl_spin.setValue(default_speed_mbps)
+        dl_spin.setSpecialValueText("auto")
+        dl_spin.setFont(QFont("Segoe UI", 11))
+        dl_spin.setFixedHeight(32)
+        dl_spin.setFixedWidth(100)
+        dl_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        dl_spin.setStyleSheet(_SPINBOX_STYLE)
+        row_dl.addWidget(dl_spin)
+        layout.addLayout(row_dl)
+
+        row_ul = QHBoxLayout()
+        row_ul.addWidget(self._make_label("Max upload (Mbps):", 11, color="#aaaaaa"))
+        row_ul.addStretch()
+        ul_spin = QSpinBox()
+        ul_spin.setRange(0, 100000)
+        ul_spin.setValue(default_speed_mbps)
+        ul_spin.setSpecialValueText("auto")
+        ul_spin.setFont(QFont("Segoe UI", 11))
+        ul_spin.setFixedHeight(32)
+        ul_spin.setFixedWidth(100)
+        ul_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ul_spin.setStyleSheet(_SPINBOX_STYLE)
+        row_ul.addWidget(ul_spin)
+        layout.addLayout(row_ul)
+
+        speed_hint = self._make_label(
+            "0 = auto-detect from link speed. Test yours at speedtest.net", 9, color="#666666"
+        )
+        layout.addWidget(speed_hint)
+
+        return unit_combo, sort_combo, dl_spin, ul_spin
+
+
+# ---------------------------------------------------------------------------
 # MonitorSettings / InitialSettings dataclasses
 # ---------------------------------------------------------------------------
 
@@ -687,7 +899,7 @@ class InitialSettings:
 # InitialSettingsDialog  (login screen)
 # ---------------------------------------------------------------------------
 
-class InitialSettingsDialog(QDialog):
+class InitialSettingsDialog(BaseSettingsDialog):
     """Initial settings dialog with checkbox mode selection."""
 
     def __init__(self, parent: Optional[QWidget] = None):
@@ -695,59 +907,9 @@ class InitialSettingsDialog(QDialog):
         self.setWindowTitle("Process Monitor - Setup")
         self.resize(480, 560)
 
-        icon_path = get_base_path() / "assets" / "icon.ico"
-        if icon_path.exists():
-            self.setWindowIcon(QIcon(str(icon_path)))
-
-        palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e2e"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Base, QColor("#2a2a3e"))
-        palette.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Button, QColor("#3a3a4e"))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor("#e94560"))
-        self.setPalette(palette)
-        self.setAutoFillBackground(True)
+        self._apply_dark_theme()
 
         self._setup_ui()
-
-    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: str = "#ffffff") -> QLabel:
-        label = QLabel(text)
-        weight = QFont.Weight.Bold if bold else QFont.Weight.Normal
-        label.setFont(QFont("Segoe UI", size, weight))
-        label.setStyleSheet(f"color: {color}; background: transparent;")
-        return label
-
-    def _make_combo(self, items: list, default: str) -> QComboBox:
-        combo = QComboBox()
-        combo.addItems(items)
-        combo.setCurrentText(default)
-        combo.setFont(QFont("Segoe UI", 11))
-        combo.setMinimumContentsLength(max(len(item) for item in items))
-        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        combo.setFixedHeight(32)
-        combo.setStyleSheet("""
-            QComboBox {
-                background-color: #3a3a4e;
-                color: #ffffff;
-                border: 1px solid #4a4a5e;
-                border-radius: 4px;
-                padding: 4px 8px;
-            }
-            QComboBox::drop-down { border: none; width: 24px; }
-            QComboBox::down-arrow {
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid #ffffff;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #3a3a4e;
-                color: #ffffff;
-                selection-background-color: #e94560;
-            }
-        """)
-        return combo
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -818,80 +980,10 @@ class InitialSettingsDialog(QDialog):
         # Display Settings
         layout.addWidget(self._make_label("Display Settings", 12, bold=True))
 
-        row1 = QHBoxLayout()
-        row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
-        row1.addStretch()
-        self.current_spin = _make_spinbox(Defaults.CURRENT_ROWS)
-        row1.addWidget(self.current_spin)
-        layout.addLayout(row1)
-
-        row2 = QHBoxLayout()
-        row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
-        row2.addStretch()
-        self.history_spin = _make_spinbox(Defaults.HISTORY_ROWS)
-        row2.addWidget(self.history_spin)
-        layout.addLayout(row2)
-
-        row3 = QHBoxLayout()
-        row3.addWidget(self._make_label("Refresh rate:", 11, color="#aaaaaa"))
-        row3.addStretch()
-        self.refresh_slider = QSlider(Qt.Orientation.Horizontal)
-        self.refresh_slider.setRange(1, 10)
-        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 500)
-        self.refresh_slider.setFixedWidth(140)
-        self.refresh_slider.setStyleSheet("""
-            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
-            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
-        """)
-        row3.addWidget(self.refresh_slider)
-        self.refresh_label = self._make_label(f"{Defaults.REFRESH_RATE_MS} ms", 11)
-        self.refresh_label.setFixedWidth(65)
-        self.refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 500} ms"))
-        row3.addWidget(self.refresh_label)
-        layout.addLayout(row3)
-
-        row4 = QHBoxLayout()
-        row4.addWidget(self._make_label("History retention:", 11, color="#aaaaaa"))
-        row4.addStretch()
-        self.retention_slider = QSlider(Qt.Orientation.Horizontal)
-        self.retention_slider.setRange(1, 36)
-        self.retention_slider.setValue(Defaults.RETENTION_MINUTES // 10)
-        self.retention_slider.setFixedWidth(140)
-        self.retention_slider.setStyleSheet("""
-            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
-            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
-        """)
-        row4.addWidget(self.retention_slider)
-        self.retention_label = self._make_label(f"{Defaults.RETENTION_MINUTES} min", 11)
-        self.retention_label.setFixedWidth(65)
-        self.retention_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.retention_slider.valueChanged.connect(lambda v: self.retention_label.setText(f"{v * 10} min"))
-        row4.addWidget(self.retention_label)
-        layout.addLayout(row4)
-
-        # Font size
-        row_font = QHBoxLayout()
-        row_font.addWidget(self._make_label("Font size:", 11, color="#aaaaaa"))
-        row_font.addStretch()
-        self.font_slider = QSlider(Qt.Orientation.Horizontal)
-        self.font_slider.setRange(8, 18)
-        self.font_slider.setValue(Defaults.FONT_SIZE)
-        self.font_slider.setFixedWidth(140)
-        self.font_slider.setStyleSheet("""
-            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
-            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
-        """)
-        row_font.addWidget(self.font_slider)
-        self.font_label = self._make_label(f"{Defaults.FONT_SIZE} pt", 11)
-        self.font_label.setFixedWidth(65)
-        self.font_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.font_slider.valueChanged.connect(lambda v: self.font_label.setText(f"{v} pt"))
-        row_font.addWidget(self.font_label)
-        layout.addLayout(row_font)
+        (
+            self.current_spin, self.history_spin, self.refresh_slider, self.refresh_label,
+            self.retention_slider, self.retention_label, self.font_slider, self.font_label,
+        ) = self._build_common_settings_rows(layout)
 
         layout.addSpacing(8)
 
@@ -912,60 +1004,13 @@ class InitialSettingsDialog(QDialog):
         net_layout.setContentsMargins(0, 0, 0, 0)
         net_layout.setSpacing(8)
 
-        net_layout.addWidget(self._make_label("Network Settings", 12, bold=True))
-
-        row_net_unit = QHBoxLayout()
-        row_net_unit.addWidget(self._make_label("Speed unit:", 11, color="#aaaaaa"))
-        row_net_unit.addStretch()
-        self.net_unit_combo = self._make_combo(["KB/s", "MB/s"], Defaults.NETWORK_UNIT)
-        row_net_unit.addWidget(self.net_unit_combo)
-        net_layout.addLayout(row_net_unit)
-
-        row_net_sort = QHBoxLayout()
-        row_net_sort.addWidget(self._make_label("Sort by:", 11, color="#aaaaaa"))
-        row_net_sort.addStretch()
-        self.net_sort_combo = self._make_combo(["total", "download", "upload"], Defaults.NETWORK_SORT_MODE)
-        row_net_sort.addWidget(self.net_sort_combo)
-        net_layout.addLayout(row_net_sort)
-
         # Auto-detect link speed for default
         from .network_monitor import get_link_speed_mbps
         link_speed = get_link_speed_mbps()
 
-        row_net_dl = QHBoxLayout()
-        row_net_dl.addWidget(self._make_label("Max download (Mbps):", 11, color="#aaaaaa"))
-        row_net_dl.addStretch()
-        self.net_dl_spin = QSpinBox()
-        self.net_dl_spin.setRange(0, 100000)
-        self.net_dl_spin.setValue(link_speed)
-        self.net_dl_spin.setSpecialValueText("auto")
-        self.net_dl_spin.setFont(QFont("Segoe UI", 11))
-        self.net_dl_spin.setFixedHeight(32)
-        self.net_dl_spin.setFixedWidth(100)
-        self.net_dl_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.net_dl_spin.setStyleSheet(_SPINBOX_STYLE)
-        row_net_dl.addWidget(self.net_dl_spin)
-        net_layout.addLayout(row_net_dl)
-
-        row_net_ul = QHBoxLayout()
-        row_net_ul.addWidget(self._make_label("Max upload (Mbps):", 11, color="#aaaaaa"))
-        row_net_ul.addStretch()
-        self.net_ul_spin = QSpinBox()
-        self.net_ul_spin.setRange(0, 100000)
-        self.net_ul_spin.setValue(link_speed)
-        self.net_ul_spin.setSpecialValueText("auto")
-        self.net_ul_spin.setFont(QFont("Segoe UI", 11))
-        self.net_ul_spin.setFixedHeight(32)
-        self.net_ul_spin.setFixedWidth(100)
-        self.net_ul_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.net_ul_spin.setStyleSheet(_SPINBOX_STYLE)
-        row_net_ul.addWidget(self.net_ul_spin)
-        net_layout.addLayout(row_net_ul)
-
-        speed_hint = self._make_label(
-            "0 = auto-detect from link speed. Test yours at speedtest.net", 9, color="#666666"
-        )
-        net_layout.addWidget(speed_hint)
+        (
+            self.net_unit_combo, self.net_sort_combo, self.net_dl_spin, self.net_ul_spin,
+        ) = self._build_network_settings_rows(net_layout, default_speed_mbps=link_speed)
 
         layout.addWidget(self._net_settings_container)
         self._net_settings_container.setVisible(False)
@@ -1131,7 +1176,7 @@ class MemorySettings:
 # CPUSettingsDialog
 # ---------------------------------------------------------------------------
 
-class CPUSettingsDialog(QDialog):
+class CPUSettingsDialog(BaseSettingsDialog):
     """Settings dialog for CPU window (no mode selection, no memory unit)."""
 
     def __init__(self, parent: Optional[QWidget] = None, settings: Optional[CPUSettings] = None):
@@ -1140,56 +1185,10 @@ class CPUSettingsDialog(QDialog):
         self.setWindowTitle("CPU Monitor - Settings")
         self.resize(400, 600)
 
-        icon_path = get_base_path() / "assets" / "icon.ico"
-        if icon_path.exists():
-            self.setWindowIcon(QIcon(str(icon_path)))
-
-        palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e2e"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Base, QColor("#2a2a3e"))
-        palette.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Button, QColor("#3a3a4e"))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor("#e94560"))
-        self.setPalette(palette)
-        self.setAutoFillBackground(True)
+        self._apply_dark_theme()
 
         self._setup_ui()
         self._load_settings()
-
-    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: str = "#ffffff") -> QLabel:
-        label = QLabel(text)
-        weight = QFont.Weight.Bold if bold else QFont.Weight.Normal
-        label.setFont(QFont("Segoe UI", size, weight))
-        label.setStyleSheet(f"color: {color}; background: transparent;")
-        return label
-
-    def _make_combo(self, items: list, default: str) -> QComboBox:
-        combo = QComboBox()
-        combo.addItems(items)
-        combo.setCurrentText(default)
-        combo.setFont(QFont("Segoe UI", 11))
-        combo.setMinimumContentsLength(max(len(item) for item in items))
-        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        combo.setFixedHeight(32)
-        combo.setStyleSheet("""
-            QComboBox {
-                background-color: #3a3a4e; color: #ffffff;
-                border: 1px solid #4a4a5e; border-radius: 4px; padding: 4px 8px;
-            }
-            QComboBox::drop-down { border: none; width: 24px; }
-            QComboBox::down-arrow {
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid #ffffff;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #3a3a4e; color: #ffffff;
-                selection-background-color: #e94560;
-            }
-        """)
-        return combo
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -1201,80 +1200,10 @@ class CPUSettingsDialog(QDialog):
         layout.addWidget(title)
         layout.addSpacing(12)
 
-        row1 = QHBoxLayout()
-        row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
-        row1.addStretch()
-        self.current_spin = _make_spinbox(Defaults.CURRENT_ROWS)
-        row1.addWidget(self.current_spin)
-        layout.addLayout(row1)
-
-        row2 = QHBoxLayout()
-        row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
-        row2.addStretch()
-        self.history_spin = _make_spinbox(Defaults.HISTORY_ROWS)
-        row2.addWidget(self.history_spin)
-        layout.addLayout(row2)
-
-        row3 = QHBoxLayout()
-        row3.addWidget(self._make_label("Refresh rate:", 11, color="#aaaaaa"))
-        row3.addStretch()
-        self.refresh_slider = QSlider(Qt.Orientation.Horizontal)
-        self.refresh_slider.setRange(1, 10)
-        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 500)
-        self.refresh_slider.setFixedWidth(140)
-        self.refresh_slider.setStyleSheet("""
-            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
-            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
-        """)
-        row3.addWidget(self.refresh_slider)
-        self.refresh_label = self._make_label(f"{Defaults.REFRESH_RATE_MS} ms", 11)
-        self.refresh_label.setFixedWidth(65)
-        self.refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 500} ms"))
-        row3.addWidget(self.refresh_label)
-        layout.addLayout(row3)
-
-        row4 = QHBoxLayout()
-        row4.addWidget(self._make_label("History retention:", 11, color="#aaaaaa"))
-        row4.addStretch()
-        self.retention_slider = QSlider(Qt.Orientation.Horizontal)
-        self.retention_slider.setRange(1, 36)
-        self.retention_slider.setValue(Defaults.RETENTION_MINUTES // 10)
-        self.retention_slider.setFixedWidth(140)
-        self.retention_slider.setStyleSheet("""
-            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
-            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
-        """)
-        row4.addWidget(self.retention_slider)
-        self.retention_label = self._make_label(f"{Defaults.RETENTION_MINUTES} min", 11)
-        self.retention_label.setFixedWidth(65)
-        self.retention_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.retention_slider.valueChanged.connect(lambda v: self.retention_label.setText(f"{v * 10} min"))
-        row4.addWidget(self.retention_label)
-        layout.addLayout(row4)
-
-        # Font size
-        row_font = QHBoxLayout()
-        row_font.addWidget(self._make_label("Font size:", 11, color="#aaaaaa"))
-        row_font.addStretch()
-        self.font_slider = QSlider(Qt.Orientation.Horizontal)
-        self.font_slider.setRange(8, 18)
-        self.font_slider.setValue(Defaults.FONT_SIZE)
-        self.font_slider.setFixedWidth(140)
-        self.font_slider.setStyleSheet("""
-            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
-            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
-        """)
-        row_font.addWidget(self.font_slider)
-        self.font_label = self._make_label(f"{Defaults.FONT_SIZE} pt", 11)
-        self.font_label.setFixedWidth(65)
-        self.font_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.font_slider.valueChanged.connect(lambda v: self.font_label.setText(f"{v} pt"))
-        row_font.addWidget(self.font_label)
-        layout.addLayout(row_font)
+        (
+            self.current_spin, self.history_spin, self.refresh_slider, self.refresh_label,
+            self.retention_slider, self.retention_label, self.font_slider, self.font_label,
+        ) = self._build_common_settings_rows(layout)
 
         # Color Settings — all sections in one compact container (4px spacing)
         color_container = QWidget()
@@ -1340,7 +1269,7 @@ class CPUSettingsDialog(QDialog):
 # MemorySettingsDialog
 # ---------------------------------------------------------------------------
 
-class MemorySettingsDialog(QDialog):
+class MemorySettingsDialog(BaseSettingsDialog):
     """Settings dialog for Memory window (no mode selection, has memory unit)."""
 
     def __init__(self, parent: Optional[QWidget] = None, settings: Optional[MemorySettings] = None):
@@ -1349,56 +1278,10 @@ class MemorySettingsDialog(QDialog):
         self.setWindowTitle("Memory Monitor - Settings")
         self.resize(400, 900)
 
-        icon_path = get_base_path() / "assets" / "icon.ico"
-        if icon_path.exists():
-            self.setWindowIcon(QIcon(str(icon_path)))
-
-        palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e2e"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Base, QColor("#2a2a3e"))
-        palette.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Button, QColor("#3a3a4e"))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor("#e94560"))
-        self.setPalette(palette)
-        self.setAutoFillBackground(True)
+        self._apply_dark_theme()
 
         self._setup_ui()
         self._load_settings()
-
-    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: str = "#ffffff") -> QLabel:
-        label = QLabel(text)
-        weight = QFont.Weight.Bold if bold else QFont.Weight.Normal
-        label.setFont(QFont("Segoe UI", size, weight))
-        label.setStyleSheet(f"color: {color}; background: transparent;")
-        return label
-
-    def _make_combo(self, items: list, default: str) -> QComboBox:
-        combo = QComboBox()
-        combo.addItems(items)
-        combo.setCurrentText(default)
-        combo.setFont(QFont("Segoe UI", 11))
-        combo.setMinimumContentsLength(max(len(item) for item in items))
-        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        combo.setFixedHeight(32)
-        combo.setStyleSheet("""
-            QComboBox {
-                background-color: #3a3a4e; color: #ffffff;
-                border: 1px solid #4a4a5e; border-radius: 4px; padding: 4px 8px;
-            }
-            QComboBox::drop-down { border: none; width: 24px; }
-            QComboBox::down-arrow {
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid #ffffff;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #3a3a4e; color: #ffffff;
-                selection-background-color: #e94560;
-            }
-        """)
-        return combo
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -1410,80 +1293,10 @@ class MemorySettingsDialog(QDialog):
         layout.addWidget(title)
         layout.addSpacing(12)
 
-        row1 = QHBoxLayout()
-        row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
-        row1.addStretch()
-        self.current_spin = _make_spinbox(Defaults.CURRENT_ROWS)
-        row1.addWidget(self.current_spin)
-        layout.addLayout(row1)
-
-        row2 = QHBoxLayout()
-        row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
-        row2.addStretch()
-        self.history_spin = _make_spinbox(Defaults.HISTORY_ROWS)
-        row2.addWidget(self.history_spin)
-        layout.addLayout(row2)
-
-        row3 = QHBoxLayout()
-        row3.addWidget(self._make_label("Refresh rate:", 11, color="#aaaaaa"))
-        row3.addStretch()
-        self.refresh_slider = QSlider(Qt.Orientation.Horizontal)
-        self.refresh_slider.setRange(1, 10)
-        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 500)
-        self.refresh_slider.setFixedWidth(140)
-        self.refresh_slider.setStyleSheet("""
-            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
-            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
-        """)
-        row3.addWidget(self.refresh_slider)
-        self.refresh_label = self._make_label(f"{Defaults.REFRESH_RATE_MS} ms", 11)
-        self.refresh_label.setFixedWidth(65)
-        self.refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 500} ms"))
-        row3.addWidget(self.refresh_label)
-        layout.addLayout(row3)
-
-        row4 = QHBoxLayout()
-        row4.addWidget(self._make_label("History retention:", 11, color="#aaaaaa"))
-        row4.addStretch()
-        self.retention_slider = QSlider(Qt.Orientation.Horizontal)
-        self.retention_slider.setRange(1, 36)
-        self.retention_slider.setValue(Defaults.RETENTION_MINUTES // 10)
-        self.retention_slider.setFixedWidth(140)
-        self.retention_slider.setStyleSheet("""
-            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
-            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
-        """)
-        row4.addWidget(self.retention_slider)
-        self.retention_label = self._make_label(f"{Defaults.RETENTION_MINUTES} min", 11)
-        self.retention_label.setFixedWidth(65)
-        self.retention_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.retention_slider.valueChanged.connect(lambda v: self.retention_label.setText(f"{v * 10} min"))
-        row4.addWidget(self.retention_label)
-        layout.addLayout(row4)
-
-        # Font size
-        row_font = QHBoxLayout()
-        row_font.addWidget(self._make_label("Font size:", 11, color="#aaaaaa"))
-        row_font.addStretch()
-        self.font_slider = QSlider(Qt.Orientation.Horizontal)
-        self.font_slider.setRange(8, 18)
-        self.font_slider.setValue(Defaults.FONT_SIZE)
-        self.font_slider.setFixedWidth(140)
-        self.font_slider.setStyleSheet("""
-            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
-            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
-        """)
-        row_font.addWidget(self.font_slider)
-        self.font_label = self._make_label(f"{Defaults.FONT_SIZE} pt", 11)
-        self.font_label.setFixedWidth(65)
-        self.font_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.font_slider.valueChanged.connect(lambda v: self.font_label.setText(f"{v} pt"))
-        row_font.addWidget(self.font_label)
-        layout.addLayout(row_font)
+        (
+            self.current_spin, self.history_spin, self.refresh_slider, self.refresh_label,
+            self.retention_slider, self.retention_label, self.font_slider, self.font_label,
+        ) = self._build_common_settings_rows(layout)
 
         layout.addWidget(self._make_label("Memory Settings", 12, bold=True))
         row5 = QHBoxLayout()
@@ -1592,7 +1405,7 @@ class NetworkSettings:
     font_size: int = Defaults.FONT_SIZE
 
 
-class NetworkSettingsDialog(QDialog):
+class NetworkSettingsDialog(BaseSettingsDialog):
     """Settings dialog for Network window."""
 
     def __init__(self, parent: Optional[QWidget] = None, settings: Optional[NetworkSettings] = None):
@@ -1601,56 +1414,10 @@ class NetworkSettingsDialog(QDialog):
         self.setWindowTitle("Network Monitor - Settings")
         self.resize(400, 700)
 
-        icon_path = get_base_path() / "assets" / "icon.ico"
-        if icon_path.exists():
-            self.setWindowIcon(QIcon(str(icon_path)))
-
-        palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e2e"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Base, QColor("#2a2a3e"))
-        palette.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Button, QColor("#3a3a4e"))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor("#e94560"))
-        self.setPalette(palette)
-        self.setAutoFillBackground(True)
+        self._apply_dark_theme()
 
         self._setup_ui()
         self._load_settings()
-
-    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: str = "#ffffff") -> QLabel:
-        label = QLabel(text)
-        weight = QFont.Weight.Bold if bold else QFont.Weight.Normal
-        label.setFont(QFont("Segoe UI", size, weight))
-        label.setStyleSheet(f"color: {color}; background: transparent;")
-        return label
-
-    def _make_combo(self, items: list, default: str) -> QComboBox:
-        combo = QComboBox()
-        combo.addItems(items)
-        combo.setCurrentText(default)
-        combo.setFont(QFont("Segoe UI", 11))
-        combo.setMinimumContentsLength(max(len(item) for item in items))
-        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        combo.setFixedHeight(32)
-        combo.setStyleSheet("""
-            QComboBox {
-                background-color: #3a3a4e; color: #ffffff;
-                border: 1px solid #4a4a5e; border-radius: 4px; padding: 4px 8px;
-            }
-            QComboBox::drop-down { border: none; width: 24px; }
-            QComboBox::down-arrow {
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid #ffffff;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #3a3a4e; color: #ffffff;
-                selection-background-color: #e94560;
-            }
-        """)
-        return combo
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -1663,130 +1430,15 @@ class NetworkSettingsDialog(QDialog):
         layout.addSpacing(12)
 
         # Display settings
-        row1 = QHBoxLayout()
-        row1.addWidget(self._make_label("Current processes:", 11, color="#aaaaaa"))
-        row1.addStretch()
-        self.current_spin = _make_spinbox(Defaults.CURRENT_ROWS)
-        row1.addWidget(self.current_spin)
-        layout.addLayout(row1)
-
-        row2 = QHBoxLayout()
-        row2.addWidget(self._make_label("History records:", 11, color="#aaaaaa"))
-        row2.addStretch()
-        self.history_spin = _make_spinbox(Defaults.HISTORY_ROWS)
-        row2.addWidget(self.history_spin)
-        layout.addLayout(row2)
-
-        row3 = QHBoxLayout()
-        row3.addWidget(self._make_label("Refresh rate:", 11, color="#aaaaaa"))
-        row3.addStretch()
-        self.refresh_slider = QSlider(Qt.Orientation.Horizontal)
-        self.refresh_slider.setRange(1, 10)
-        self.refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 500)
-        self.refresh_slider.setFixedWidth(140)
-        self.refresh_slider.setStyleSheet("""
-            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
-            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
-        """)
-        row3.addWidget(self.refresh_slider)
-        self.refresh_label = self._make_label(f"{Defaults.REFRESH_RATE_MS} ms", 11)
-        self.refresh_label.setFixedWidth(65)
-        self.refresh_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.refresh_slider.valueChanged.connect(lambda v: self.refresh_label.setText(f"{v * 500} ms"))
-        row3.addWidget(self.refresh_label)
-        layout.addLayout(row3)
-
-        row4 = QHBoxLayout()
-        row4.addWidget(self._make_label("History retention:", 11, color="#aaaaaa"))
-        row4.addStretch()
-        self.retention_slider = QSlider(Qt.Orientation.Horizontal)
-        self.retention_slider.setRange(1, 36)
-        self.retention_slider.setValue(Defaults.RETENTION_MINUTES // 10)
-        self.retention_slider.setFixedWidth(140)
-        self.retention_slider.setStyleSheet("""
-            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
-            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
-        """)
-        row4.addWidget(self.retention_slider)
-        self.retention_label = self._make_label(f"{Defaults.RETENTION_MINUTES} min", 11)
-        self.retention_label.setFixedWidth(65)
-        self.retention_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.retention_slider.valueChanged.connect(lambda v: self.retention_label.setText(f"{v * 10} min"))
-        row4.addWidget(self.retention_label)
-        layout.addLayout(row4)
-
-        # Font size
-        row_font = QHBoxLayout()
-        row_font.addWidget(self._make_label("Font size:", 11, color="#aaaaaa"))
-        row_font.addStretch()
-        self.font_slider = QSlider(Qt.Orientation.Horizontal)
-        self.font_slider.setRange(8, 18)
-        self.font_slider.setValue(Defaults.FONT_SIZE)
-        self.font_slider.setFixedWidth(140)
-        self.font_slider.setStyleSheet("""
-            QSlider::groove:horizontal { height: 6px; background: #3a3a4e; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #e94560; width: 16px; margin: -5px 0; border-radius: 8px; }
-            QSlider::sub-page:horizontal { background: #e94560; border-radius: 3px; }
-        """)
-        row_font.addWidget(self.font_slider)
-        self.font_label = self._make_label(f"{Defaults.FONT_SIZE} pt", 11)
-        self.font_label.setFixedWidth(65)
-        self.font_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.font_slider.valueChanged.connect(lambda v: self.font_label.setText(f"{v} pt"))
-        row_font.addWidget(self.font_label)
-        layout.addLayout(row_font)
+        (
+            self.current_spin, self.history_spin, self.refresh_slider, self.refresh_label,
+            self.retention_slider, self.retention_label, self.font_slider, self.font_label,
+        ) = self._build_common_settings_rows(layout)
 
         # Network-specific settings
-        layout.addWidget(self._make_label("Network Settings", 12, bold=True))
-
-        row_unit = QHBoxLayout()
-        row_unit.addWidget(self._make_label("Speed unit:", 11, color="#aaaaaa"))
-        row_unit.addStretch()
-        self.unit_combo = self._make_combo(["KB/s", "MB/s"], Defaults.NETWORK_UNIT)
-        row_unit.addWidget(self.unit_combo)
-        layout.addLayout(row_unit)
-
-        row_sort = QHBoxLayout()
-        row_sort.addWidget(self._make_label("Sort by:", 11, color="#aaaaaa"))
-        row_sort.addStretch()
-        self.sort_combo = self._make_combo(["total", "download", "upload"], Defaults.NETWORK_SORT_MODE)
-        row_sort.addWidget(self.sort_combo)
-        layout.addLayout(row_sort)
-
-        row_dl = QHBoxLayout()
-        row_dl.addWidget(self._make_label("Max download (Mbps):", 11, color="#aaaaaa"))
-        row_dl.addStretch()
-        self.dl_spin = QSpinBox()
-        self.dl_spin.setRange(0, 100000)
-        self.dl_spin.setSpecialValueText("auto")
-        self.dl_spin.setFont(QFont("Segoe UI", 11))
-        self.dl_spin.setFixedHeight(32)
-        self.dl_spin.setFixedWidth(100)
-        self.dl_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.dl_spin.setStyleSheet(_SPINBOX_STYLE)
-        row_dl.addWidget(self.dl_spin)
-        layout.addLayout(row_dl)
-
-        row_ul = QHBoxLayout()
-        row_ul.addWidget(self._make_label("Max upload (Mbps):", 11, color="#aaaaaa"))
-        row_ul.addStretch()
-        self.ul_spin = QSpinBox()
-        self.ul_spin.setRange(0, 100000)
-        self.ul_spin.setSpecialValueText("auto")
-        self.ul_spin.setFont(QFont("Segoe UI", 11))
-        self.ul_spin.setFixedHeight(32)
-        self.ul_spin.setFixedWidth(100)
-        self.ul_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.ul_spin.setStyleSheet(_SPINBOX_STYLE)
-        row_ul.addWidget(self.ul_spin)
-        layout.addLayout(row_ul)
-
-        speed_hint = self._make_label(
-            "0 = auto-detect from link speed. Test yours at speedtest.net", 9, color="#666666"
-        )
-        layout.addWidget(speed_hint)
+        (
+            self.unit_combo, self.sort_combo, self.dl_spin, self.ul_spin,
+        ) = self._build_network_settings_rows(layout)
 
         # Color Settings
         color_container = QWidget()
