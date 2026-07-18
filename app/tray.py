@@ -42,6 +42,10 @@ class TrayController:
         self._tray.activated.connect(self._on_activated)
         self._tray.show()
 
+    def hide(self):
+        """Hide the tray icon (used on app exit so it vanishes instantly)."""
+        self._tray.hide()
+
     def _toggle_window(self, window, visible: bool):
         """Show or hide a monitor window (close == hide + pause its monitor)."""
         if visible:

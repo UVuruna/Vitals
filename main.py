@@ -100,12 +100,18 @@ def main():
     app.setQuitOnLastWindowClosed(False)
     tray = TrayController(app.windowIcon(), windows)  # noqa: F841 — must outlive app.exec()
 
-    # Hidden windows save their layout when closed; visible ones on exit
-    def save_visible_layouts():
+    # On exit (File > Exit or tray Exit): save layouts of visible windows,
+    # then hide every window and the tray icon at once — quitting feels
+    # instant while the slow teardown (collector stop, ETW session stop)
+    # runs after the windows are already off screen. Hidden windows saved
+    # their layout when they were closed.
+    def on_about_to_quit():
+        tray.hide()
         for w in windows:
             if w.isVisible():
                 w._save_window_layout()
-    app.aboutToQuit.connect(save_visible_layouts)
+            w.hide()
+    app.aboutToQuit.connect(on_about_to_quit)
 
     # Start collector if not already running
     if not collector.isRunning():
