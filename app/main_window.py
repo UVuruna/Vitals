@@ -324,9 +324,74 @@ class BaseMonitorWindow(QMainWindow):
         """Return JSON key for this window's layout ('cpu' or 'memory')."""
         raise NotImplementedError("Subclasses must implement _get_window_key()")
 
+    def _has_total_row(self) -> bool:
+        """Whether the current-processes table has a Σ total row.
+
+        True for CPU/Memory; NetworkWindow overrides to False.
+        """
+        return True
+
+    def _configure_collector(self):
+        """Configure the shared collector with this mode's current settings. Must be overridden in subclasses."""
+        raise NotImplementedError("Subclasses must implement _configure_collector()")
+
+    def _disable_collector(self):
+        """Disable this mode's collection on the shared collector. Must be overridden in subclasses."""
+        raise NotImplementedError("Subclasses must implement _disable_collector()")
+
+    def _create_settings_dialog(self):
+        """Create and return this mode's settings dialog. Must be overridden in subclasses."""
+        raise NotImplementedError("Subclasses must implement _create_settings_dialog()")
+
+    def _store_settings(self, new_settings):
+        """Store new settings. NetworkWindow overrides to also recompute max-speed thresholds."""
+        self._settings = new_settings
+
     def _show_settings(self):
-        """Show settings dialog. Must be overridden in subclasses."""
-        raise NotImplementedError("Subclasses must implement _show_settings()")
+        """Show settings dialog and apply any changes.
+
+        Compares old vs new settings, applies them to the collector (rebuilding
+        tables if row counts changed), re-applies fonts if the font size changed,
+        and syncs a visible peer window's refresh rate if it changed (NetworkWindow
+        has no peer, so the guard below is always a no-op for it).
+        """
+        dialog = self._create_settings_dialog()
+        if dialog.exec():
+            new_settings = dialog.get_settings()
+            if new_settings == self._settings:
+                return
+            prev = self._settings
+            self._store_settings(new_settings)
+            self._apply_settings(prev)
+            if new_settings.font_size != prev.font_size:
+                self._font_base = new_settings.font_size
+                self._apply_fonts()
+            # Sync only a visible peer — a hidden window's monitor is disabled
+            # and re-configuring it would re-enable collection for nothing
+            if (
+                self._peer_window is not None
+                and self._peer_window.isVisible()
+                and new_settings.refresh_rate_ms != prev.refresh_rate_ms
+            ):
+                self._peer_window._sync_refresh_rate(new_settings.refresh_rate_ms)
+
+    def _sync_refresh_rate(self, refresh_rate_ms: int):
+        """Sync refresh rate from peer window without rebuilding tables."""
+        if self._settings.refresh_rate_ms == refresh_rate_ms:
+            return
+        self._settings.refresh_rate_ms = refresh_rate_ms
+        self._configure_collector()
+
+    def _apply_settings(self, prev_settings=None):
+        """Apply current settings to collector. Rebuilds tables only if row counts changed."""
+        self._configure_collector()
+        rows_changed = (
+            prev_settings is None
+            or prev_settings.current_rows != self._settings.current_rows
+            or prev_settings.history_rows != self._settings.history_rows
+        )
+        if rows_changed:
+            self._rebuild_tables()
 
     def _apply_col_widths(self, table: QTableWidget, widths: list[int]):
         """Apply saved widths to interactive columns (col 2 onward)."""
@@ -857,8 +922,57 @@ class BaseMonitorWindow(QMainWindow):
         return table
 
     def _rebuild_tables(self):
-        """Rebuild tables based on current settings."""
-        raise NotImplementedError("Subclasses must implement _rebuild_tables()")
+        """Rebuild tables with current settings."""
+        current_layout = self.current_section.layout()
+
+        # Remove old tables
+        current_layout.removeWidget(self.current_table)
+        self.current_table.deleteLater()
+
+        self.bottom_stack.removeWidget(self.history_table)
+        self.history_table.deleteLater()
+        self.bottom_stack.removeWidget(self.rolling_table)
+        self.rolling_table.deleteLater()
+
+        mode_cols = self._get_mode_cols()
+
+        # Create new tables
+        self.current_table = self._create_table(
+            self._settings.current_rows,
+            mode_cols=mode_cols,
+            has_time=False,
+            bg_color=self.CURRENT_BG,
+            has_total_row=self._has_total_row(),
+        )
+        self.history_table = self._create_table(
+            self._settings.history_rows,
+            mode_cols=mode_cols,
+            has_time=True,
+            bg_color=self.HISTORY_BG,
+        )
+        self.rolling_table = self._create_table(
+            0,
+            mode_cols=mode_cols,
+            has_time=False,
+            bg_color=self.ROLLING_BG,
+            has_uptime=True,
+        )
+
+        # Add to layouts
+        current_layout.addWidget(self.current_table)
+        self.bottom_stack.insertWidget(0, self.history_table)
+        self.bottom_stack.insertWidget(1, self.rolling_table)
+        self.bottom_stack.setCurrentIndex(self._bottom_page)
+
+        # Re-apply saved column widths after rebuild
+        if self._saved_col_widths_current:
+            self._apply_col_widths(self.current_table, self._saved_col_widths_current)
+        if self._saved_col_widths_history:
+            self._apply_col_widths(self.history_table, self._saved_col_widths_history)
+        if self._saved_col_widths_rolling:
+            self._apply_col_widths(self.rolling_table, self._saved_col_widths_rolling)
+
+        self._connect_table_selection()
 
     def _connect_table_selection(self):
         """Connect row-selection signals after table creation or rebuild."""
@@ -920,8 +1034,11 @@ class BaseMonitorWindow(QMainWindow):
                 table._last_clicked_row = None
 
     def _set_monitor_enabled(self, enabled: bool):
-        """Resume or pause this window's monitor. Must be overridden in subclasses."""
-        raise NotImplementedError("Subclasses must implement _set_monitor_enabled()")
+        """Resume or pause this mode's collection when the window is shown/hidden."""
+        if enabled:
+            self._apply_settings(self._settings)
+        else:
+            self._disable_collector()
 
     def show_from_tray(self):
         """Re-show a hidden window and resume its monitor."""
@@ -1092,7 +1209,7 @@ class CPUWindow(BaseMonitorWindow):
     def __init__(self, initial_settings: InitialSettings, collector: SharedDataCollector, parent=None):
         self._initial_settings = initial_settings
         self._collector = collector
-        self._cpu_settings = CPUSettings(
+        self._settings = CPUSettings(
             current_rows=initial_settings.current_rows,
             history_rows=initial_settings.history_rows,
             refresh_rate_ms=initial_settings.refresh_rate_ms,
@@ -1121,110 +1238,24 @@ class CPUWindow(BaseMonitorWindow):
     def _get_window_key(self) -> str:
         return "cpu"
 
-    def _show_settings(self):
-        """Show CPU settings dialog."""
-        dialog = CPUSettingsDialog(self, self._cpu_settings)
-        if dialog.exec():
-            new_settings = dialog.get_settings()
-            if new_settings == self._cpu_settings:
-                return
-            prev = self._cpu_settings
-            self._cpu_settings = new_settings
-            self._apply_settings(prev)
-            if new_settings.font_size != prev.font_size:
-                self._font_base = new_settings.font_size
-                self._apply_fonts()
-            # Sync only a visible peer — a hidden window's monitor is disabled
-            # and re-configuring it would re-enable collection for nothing
-            if (
-                self._peer_window is not None
-                and self._peer_window.isVisible()
-                and new_settings.refresh_rate_ms != prev.refresh_rate_ms
-            ):
-                self._peer_window._sync_refresh_rate(new_settings.refresh_rate_ms)
-
-    def _sync_refresh_rate(self, refresh_rate_ms: int):
-        """Sync refresh rate from peer window without rebuilding tables."""
-        if self._cpu_settings.refresh_rate_ms == refresh_rate_ms:
-            return
-        self._cpu_settings.refresh_rate_ms = refresh_rate_ms
+    def _configure_collector(self):
+        """Configure the shared collector for CPU monitoring using current settings."""
         self._collector.configure_cpu(
             cpu_threads=self._initial_settings.cpu_threads,
             ram_gb=self._initial_settings.ram_gb,
-            current_rows=self._cpu_settings.current_rows,
-            history_rows=self._cpu_settings.history_rows,
-            retention_minutes=self._cpu_settings.retention_minutes,
-            refresh_rate_ms=self._cpu_settings.refresh_rate_ms,
+            current_rows=self._settings.current_rows,
+            history_rows=self._settings.history_rows,
+            retention_minutes=self._settings.retention_minutes,
+            refresh_rate_ms=self._settings.refresh_rate_ms,
         )
 
-    def _apply_settings(self, prev_settings: 'CPUSettings | None' = None):
-        """Apply current settings to collector. Rebuilds tables only if row counts changed."""
-        self._collector.configure_cpu(
-            cpu_threads=self._initial_settings.cpu_threads,
-            ram_gb=self._initial_settings.ram_gb,
-            current_rows=self._cpu_settings.current_rows,
-            history_rows=self._cpu_settings.history_rows,
-            retention_minutes=self._cpu_settings.retention_minutes,
-            refresh_rate_ms=self._cpu_settings.refresh_rate_ms,
-        )
-        rows_changed = (
-            prev_settings is None
-            or prev_settings.current_rows != self._cpu_settings.current_rows
-            or prev_settings.history_rows != self._cpu_settings.history_rows
-        )
-        if rows_changed:
-            self._rebuild_tables()
+    def _disable_collector(self):
+        """Disable CPU collection on the shared collector."""
+        self._collector.disable_cpu()
 
-    def _rebuild_tables(self):
-        """Rebuild tables with current settings."""
-        current_layout = self.current_section.layout()
-
-        # Remove old tables
-        current_layout.removeWidget(self.current_table)
-        self.current_table.deleteLater()
-
-        self.bottom_stack.removeWidget(self.history_table)
-        self.history_table.deleteLater()
-        self.bottom_stack.removeWidget(self.rolling_table)
-        self.rolling_table.deleteLater()
-
-        # Create new tables
-        self.current_table = self._create_table(
-            self._cpu_settings.current_rows,
-            mode_cols="cpu",
-            has_time=False,
-            bg_color=self.CURRENT_BG,
-            has_total_row=True,
-        )
-        self.history_table = self._create_table(
-            self._cpu_settings.history_rows,
-            mode_cols="cpu",
-            has_time=True,
-            bg_color=self.HISTORY_BG,
-        )
-        self.rolling_table = self._create_table(
-            0,
-            mode_cols="cpu",
-            has_time=False,
-            bg_color=self.ROLLING_BG,
-            has_uptime=True,
-        )
-
-        # Add to layouts
-        current_layout.addWidget(self.current_table)
-        self.bottom_stack.insertWidget(0, self.history_table)
-        self.bottom_stack.insertWidget(1, self.rolling_table)
-        self.bottom_stack.setCurrentIndex(self._bottom_page)
-
-        # Re-apply saved column widths after rebuild
-        if self._saved_col_widths_current:
-            self._apply_col_widths(self.current_table, self._saved_col_widths_current)
-        if self._saved_col_widths_history:
-            self._apply_col_widths(self.history_table, self._saved_col_widths_history)
-        if self._saved_col_widths_rolling:
-            self._apply_col_widths(self.rolling_table, self._saved_col_widths_rolling)
-
-        self._connect_table_selection()
+    def _create_settings_dialog(self):
+        """Create the CPU settings dialog."""
+        return CPUSettingsDialog(self, self._settings)
 
     def _fill_cpu_cols(self, table, row, item, color_mgr):
         """Fill CPU-specific columns: Usage, Count, Threads."""
@@ -1248,7 +1279,7 @@ class CPUWindow(BaseMonitorWindow):
         self._fill_cpu_cols(table, row, item, color_mgr)
         uptime_min = round(item.uptime_seconds / 60)
         uptime_item = QTableWidgetItem(f"{uptime_min}m")
-        if uptime_min >= self._cpu_settings.retention_minutes:
+        if uptime_min >= self._settings.retention_minutes:
             uptime_item.setForeground(QColor(self.TEXT_MUTED))
         table.setItem(row, 5, uptime_item)
 
@@ -1308,13 +1339,6 @@ class CPUWindow(BaseMonitorWindow):
         self.rolling_table.setRowCount(len(data.rolling_average))
         self._fill_process_rows(self.rolling_table, data.rolling_average, self._fill_cpu_rolling_cols)
 
-    def _set_monitor_enabled(self, enabled: bool):
-        """Resume or pause CPU collection when the window is shown/hidden."""
-        if enabled:
-            self._apply_settings(self._cpu_settings)
-        else:
-            self._collector.disable_cpu()
-
 
 class MemoryWindow(BaseMonitorWindow):
     """Memory Monitor window."""
@@ -1322,7 +1346,7 @@ class MemoryWindow(BaseMonitorWindow):
     def __init__(self, initial_settings: InitialSettings, collector: SharedDataCollector, parent=None):
         self._initial_settings = initial_settings
         self._collector = collector
-        self._memory_settings = MemorySettings(
+        self._settings = MemorySettings(
             current_rows=initial_settings.current_rows,
             history_rows=initial_settings.history_rows,
             refresh_rate_ms=initial_settings.refresh_rate_ms,
@@ -1353,117 +1377,30 @@ class MemoryWindow(BaseMonitorWindow):
     def _get_window_key(self) -> str:
         return "memory"
 
-    def _show_settings(self):
-        """Show Memory settings dialog."""
-        dialog = MemorySettingsDialog(self, self._memory_settings)
-        if dialog.exec():
-            new_settings = dialog.get_settings()
-            if new_settings == self._memory_settings:
-                return
-            prev = self._memory_settings
-            self._memory_settings = new_settings
-            self._apply_settings(prev)
-            if new_settings.font_size != prev.font_size:
-                self._font_base = new_settings.font_size
-                self._apply_fonts()
-            # Sync only a visible peer — a hidden window's monitor is disabled
-            # and re-configuring it would re-enable collection for nothing
-            if (
-                self._peer_window is not None
-                and self._peer_window.isVisible()
-                and new_settings.refresh_rate_ms != prev.refresh_rate_ms
-            ):
-                self._peer_window._sync_refresh_rate(new_settings.refresh_rate_ms)
-
-    def _sync_refresh_rate(self, refresh_rate_ms: int):
-        """Sync refresh rate from peer window without rebuilding tables."""
-        if self._memory_settings.refresh_rate_ms == refresh_rate_ms:
-            return
-        self._memory_settings.refresh_rate_ms = refresh_rate_ms
+    def _configure_collector(self):
+        """Configure the shared collector for Memory monitoring using current settings."""
         self._collector.configure_memory(
             cpu_threads=self._initial_settings.cpu_threads,
             ram_gb=self._initial_settings.ram_gb,
-            current_rows=self._memory_settings.current_rows,
-            history_rows=self._memory_settings.history_rows,
-            retention_minutes=self._memory_settings.retention_minutes,
-            refresh_rate_ms=self._memory_settings.refresh_rate_ms,
-            memory_unit=self._memory_settings.memory_unit,
+            current_rows=self._settings.current_rows,
+            history_rows=self._settings.history_rows,
+            retention_minutes=self._settings.retention_minutes,
+            refresh_rate_ms=self._settings.refresh_rate_ms,
+            memory_unit=self._settings.memory_unit,
         )
 
-    def _apply_settings(self, prev_settings: 'MemorySettings | None' = None):
-        """Apply current settings to collector. Rebuilds tables only if row counts changed."""
-        self._collector.configure_memory(
-            cpu_threads=self._initial_settings.cpu_threads,
-            ram_gb=self._initial_settings.ram_gb,
-            current_rows=self._memory_settings.current_rows,
-            history_rows=self._memory_settings.history_rows,
-            retention_minutes=self._memory_settings.retention_minutes,
-            refresh_rate_ms=self._memory_settings.refresh_rate_ms,
-            memory_unit=self._memory_settings.memory_unit,
-        )
-        rows_changed = (
-            prev_settings is None
-            or prev_settings.current_rows != self._memory_settings.current_rows
-            or prev_settings.history_rows != self._memory_settings.history_rows
-        )
-        if rows_changed:
-            self._rebuild_tables()
+    def _disable_collector(self):
+        """Disable Memory collection on the shared collector."""
+        self._collector.disable_memory()
 
-    def _rebuild_tables(self):
-        """Rebuild tables with current settings."""
-        current_layout = self.current_section.layout()
-
-        # Remove old tables
-        current_layout.removeWidget(self.current_table)
-        self.current_table.deleteLater()
-
-        self.bottom_stack.removeWidget(self.history_table)
-        self.history_table.deleteLater()
-        self.bottom_stack.removeWidget(self.rolling_table)
-        self.rolling_table.deleteLater()
-
-        # Create new tables
-        self.current_table = self._create_table(
-            self._memory_settings.current_rows,
-            mode_cols="mem",
-            has_time=False,
-            bg_color=self.CURRENT_BG,
-            has_total_row=True,
-        )
-        self.history_table = self._create_table(
-            self._memory_settings.history_rows,
-            mode_cols="mem",
-            has_time=True,
-            bg_color=self.HISTORY_BG,
-        )
-        self.rolling_table = self._create_table(
-            0,
-            mode_cols="mem",
-            has_time=False,
-            bg_color=self.ROLLING_BG,
-            has_uptime=True,
-        )
-
-        # Add to layouts
-        current_layout.addWidget(self.current_table)
-        self.bottom_stack.insertWidget(0, self.history_table)
-        self.bottom_stack.insertWidget(1, self.rolling_table)
-        self.bottom_stack.setCurrentIndex(self._bottom_page)
-
-        # Re-apply saved column widths after rebuild
-        if self._saved_col_widths_current:
-            self._apply_col_widths(self.current_table, self._saved_col_widths_current)
-        if self._saved_col_widths_history:
-            self._apply_col_widths(self.history_table, self._saved_col_widths_history)
-        if self._saved_col_widths_rolling:
-            self._apply_col_widths(self.rolling_table, self._saved_col_widths_rolling)
-
-        self._connect_table_selection()
+    def _create_settings_dialog(self):
+        """Create the Memory settings dialog."""
+        return MemorySettingsDialog(self, self._settings)
 
     def _fill_memory_cols(self, table, row, item, color_mgr):
         """Fill Memory-specific columns: Usage, Commit."""
         monitor = self._collector.memory_monitor
-        unit = self._memory_settings.memory_unit
+        unit = self._settings.memory_unit
         value_str = monitor.format_value(item.value, unit) if monitor else f"{item.value:.0f}"
         value_item = QTableWidgetItem(value_str)
         if monitor:
@@ -1487,7 +1424,7 @@ class MemoryWindow(BaseMonitorWindow):
         self._fill_memory_cols(table, row, item, color_mgr)
         uptime_min = round(item.uptime_seconds / 60)
         uptime_item = QTableWidgetItem(f"{uptime_min}m")
-        if uptime_min >= self._memory_settings.retention_minutes:
+        if uptime_min >= self._settings.retention_minutes:
             uptime_item.setForeground(QColor(self.TEXT_MUTED))
         table.setItem(row, 4, uptime_item)
 
@@ -1497,7 +1434,7 @@ class MemoryWindow(BaseMonitorWindow):
             return
 
         monitor = self._collector.memory_monitor
-        unit = self._memory_settings.memory_unit
+        unit = self._settings.memory_unit
 
         # Update header
         self.total_label.setText(data.total_display)
@@ -1555,13 +1492,6 @@ class MemoryWindow(BaseMonitorWindow):
         self.rolling_table.setRowCount(len(data.rolling_average))
         self._fill_process_rows(self.rolling_table, data.rolling_average, self._fill_memory_rolling_cols)
 
-    def _set_monitor_enabled(self, enabled: bool):
-        """Resume or pause Memory collection when the window is shown/hidden."""
-        if enabled:
-            self._apply_settings(self._memory_settings)
-        else:
-            self._collector.disable_memory()
-
 
 class NetworkWindow(BaseMonitorWindow):
     """Network Monitor window."""
@@ -1569,7 +1499,7 @@ class NetworkWindow(BaseMonitorWindow):
     def __init__(self, initial_settings: InitialSettings, collector: SharedDataCollector, parent=None):
         self._initial_settings = initial_settings
         self._collector = collector
-        self._network_settings = NetworkSettings(
+        self._settings = NetworkSettings(
             current_rows=initial_settings.current_rows,
             history_rows=initial_settings.history_rows,
             refresh_rate_ms=initial_settings.refresh_rate_ms,
@@ -1616,95 +1546,39 @@ class NetworkWindow(BaseMonitorWindow):
     def _get_window_key(self) -> str:
         return "network"
 
-    def _show_settings(self):
-        """Show Network settings dialog."""
-        dialog = NetworkSettingsDialog(self, self._network_settings)
-        if dialog.exec():
-            new_settings = dialog.get_settings()
-            if new_settings == self._network_settings:
-                return
-            prev = self._network_settings
-            self._network_settings = new_settings
-            self._max_dl_bytes = self._resolve_max_bytes(new_settings.max_download_mbps)
-            self._max_ul_bytes = self._resolve_max_bytes(new_settings.max_upload_mbps)
-            self._apply_settings(prev)
-            if new_settings.font_size != prev.font_size:
-                self._font_base = new_settings.font_size
-                self._apply_fonts()
+    def _has_total_row(self) -> bool:
+        return False
 
-    def _apply_settings(self, prev_settings: 'NetworkSettings | None' = None):
-        """Apply current settings to collector. Rebuilds tables only if row counts changed."""
+    def _configure_collector(self):
+        """Configure the shared collector for Network monitoring using current settings."""
         self._collector.configure_network(
-            current_rows=self._network_settings.current_rows,
-            history_rows=self._network_settings.history_rows,
-            retention_minutes=self._network_settings.retention_minutes,
-            refresh_rate_ms=self._network_settings.refresh_rate_ms,
-            network_unit=self._network_settings.network_unit,
-            sort_mode=self._network_settings.sort_mode,
-            max_download_mbps=self._network_settings.max_download_mbps,
-            max_upload_mbps=self._network_settings.max_upload_mbps,
-        )
-        rows_changed = (
-            prev_settings is None
-            or prev_settings.current_rows != self._network_settings.current_rows
-            or prev_settings.history_rows != self._network_settings.history_rows
-        )
-        if rows_changed:
-            self._rebuild_tables()
-
-    def _rebuild_tables(self):
-        """Rebuild tables with current settings."""
-        current_layout = self.current_section.layout()
-
-        # Remove old tables
-        current_layout.removeWidget(self.current_table)
-        self.current_table.deleteLater()
-
-        self.bottom_stack.removeWidget(self.history_table)
-        self.history_table.deleteLater()
-        self.bottom_stack.removeWidget(self.rolling_table)
-        self.rolling_table.deleteLater()
-
-        # Create new tables
-        self.current_table = self._create_table(
-            self._network_settings.current_rows,
-            mode_cols="net",
-            has_time=False,
-            bg_color=self.CURRENT_BG,
-        )
-        self.history_table = self._create_table(
-            self._network_settings.history_rows,
-            mode_cols="net",
-            has_time=True,
-            bg_color=self.HISTORY_BG,
-        )
-        self.rolling_table = self._create_table(
-            0,
-            mode_cols="net",
-            has_time=False,
-            bg_color=self.ROLLING_BG,
-            has_uptime=True,
+            current_rows=self._settings.current_rows,
+            history_rows=self._settings.history_rows,
+            retention_minutes=self._settings.retention_minutes,
+            refresh_rate_ms=self._settings.refresh_rate_ms,
+            network_unit=self._settings.network_unit,
+            sort_mode=self._settings.sort_mode,
+            max_download_mbps=self._settings.max_download_mbps,
+            max_upload_mbps=self._settings.max_upload_mbps,
         )
 
-        # Add to layouts
-        current_layout.addWidget(self.current_table)
-        self.bottom_stack.insertWidget(0, self.history_table)
-        self.bottom_stack.insertWidget(1, self.rolling_table)
-        self.bottom_stack.setCurrentIndex(self._bottom_page)
+    def _disable_collector(self):
+        """Disable Network collection on the shared collector."""
+        self._collector.disable_network()
 
-        # Re-apply saved column widths after rebuild
-        if self._saved_col_widths_current:
-            self._apply_col_widths(self.current_table, self._saved_col_widths_current)
-        if self._saved_col_widths_history:
-            self._apply_col_widths(self.history_table, self._saved_col_widths_history)
-        if self._saved_col_widths_rolling:
-            self._apply_col_widths(self.rolling_table, self._saved_col_widths_rolling)
+    def _create_settings_dialog(self):
+        """Create the Network settings dialog."""
+        return NetworkSettingsDialog(self, self._settings)
 
-        self._connect_table_selection()
+    def _store_settings(self, new_settings):
+        """Store new settings and recompute max-speed color thresholds."""
+        self._settings = new_settings
+        self._max_dl_bytes = self._resolve_max_bytes(new_settings.max_download_mbps)
+        self._max_ul_bytes = self._resolve_max_bytes(new_settings.max_upload_mbps)
 
     def _fill_net_cols(self, table, row, item, color_mgr):
         """Fill Network-specific columns: Download, Upload."""
-        unit = self._network_settings.network_unit
+        unit = self._settings.network_unit
         dl_str = format_speed(item.download, unit)
         dl_item = QTableWidgetItem(dl_str)
         if self._max_dl_bytes > 0:
@@ -1729,7 +1603,7 @@ class NetworkWindow(BaseMonitorWindow):
         self._fill_net_cols(table, row, item, color_mgr)
         uptime_min = round(item.uptime_seconds / 60)
         uptime_item = QTableWidgetItem(f"{uptime_min}m")
-        if uptime_min >= self._network_settings.retention_minutes:
+        if uptime_min >= self._settings.retention_minutes:
             uptime_item.setForeground(QColor(self.TEXT_MUTED))
         table.setItem(row, 4, uptime_item)
 
@@ -1745,7 +1619,7 @@ class NetworkWindow(BaseMonitorWindow):
             self.sensor_widget.setVisible(False)
             return
 
-        unit = self._network_settings.network_unit
+        unit = self._settings.network_unit
 
         # Update header — big number = current download speed
         self.total_label.setText(f"↓ {format_speed(data.current_download, unit)}")
@@ -1777,10 +1651,3 @@ class NetworkWindow(BaseMonitorWindow):
         # Update rolling average table (dynamic row count)
         self.rolling_table.setRowCount(len(data.rolling_average))
         self._fill_process_rows(self.rolling_table, data.rolling_average, self._fill_net_rolling_cols)
-
-    def _set_monitor_enabled(self, enabled: bool):
-        """Resume or pause Network collection when the window is shown/hidden."""
-        if enabled:
-            self._apply_settings(self._network_settings)
-        else:
-            self._collector.disable_network()
