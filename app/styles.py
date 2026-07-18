@@ -94,6 +94,11 @@ class Defaults:
     # even at slow refresh rates (max wait = one chunk, not one full interval)
     COLLECTOR_SLEEP_CHUNK_MS = 100
 
+    # Rolling-average expiry bucket span. Ticks are merged into buckets of
+    # this many seconds so the window costs O(buckets) instead of O(ticks)
+    # memory (~45x less at 120 min retention @ 1 s refresh).
+    ROLLING_BUCKET_SECONDS = 60
+
 
 # Memory unit conversions
 MEMORY_UNITS = {

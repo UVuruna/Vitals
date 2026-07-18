@@ -8,6 +8,7 @@ Uses background thread for non-blocking UI.
 
 import ctypes
 from ctypes import wintypes
+import sys
 import time
 
 
@@ -32,11 +33,16 @@ class _PERFORMANCE_INFORMATION(ctypes.Structure):
 
 
 def get_commit_limit_bytes() -> int:
-    """Return system commit limit (RAM + all page files) in bytes via GetPerformanceInfo."""
+    """Return system commit limit (RAM + all page files) in bytes via GetPerformanceInfo.
+
+    Returns 0 if the WinAPI call fails (documented fallback: commit coloring disabled).
+    """
     try:
         pi = _PERFORMANCE_INFORMATION()
         pi.cb = ctypes.sizeof(pi)
-        ctypes.windll.psapi.GetPerformanceInfo(ctypes.byref(pi), pi.cb)
+        if not ctypes.windll.psapi.GetPerformanceInfo(ctypes.byref(pi), pi.cb):
+            print("get_commit_limit_bytes: GetPerformanceInfo failed", file=sys.stderr)
+            return 0
         return pi.CommitLimit * pi.PageSize
     except Exception:
         return psutil.virtual_memory().total
@@ -50,13 +56,6 @@ import heapq
 
 import psutil
 from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
-
-# Optional WMI for CPU temperature on Windows
-try:
-    import wmi
-    WMI_AVAILABLE = True
-except ImportError:
-    WMI_AVAILABLE = False
 
 
 @dataclass
@@ -298,11 +297,6 @@ class HWiNFOSharedMemory:
 
         return data
 
-    def get_cpu_temp(self) -> Optional[float]:
-        """Get primary CPU temperature (Tctl/Tdie preferred)."""
-        data = self.get_sensors()
-        return data.cpu_tctl
-
 
 # Global HWiNFO reader instance
 _hwinfo_reader: Optional[HWiNFOSharedMemory] = None
@@ -371,79 +365,6 @@ class MonitorStats:
     max_usage: float = 0.0
     max_usage_time: Optional[datetime] = None
     process_count: int = 0
-
-
-def _collect_processes(
-    need_cpu: bool,
-    need_mem: bool,
-    cpu_threads: int,
-) -> tuple[dict[str, list], float, int, dict[int, str]]:
-    """
-    Single psutil pass collecting CPU and/or memory data.
-
-    Args:
-        need_cpu: Collect cpu_percent and num_threads
-        need_mem: Collect rss, vms, page_faults
-        cpu_threads: Total logical CPU count (for idle calculation)
-
-    Returns:
-        (aggregated, total_cpu, total_rss)
-        aggregated: {display_name: [cpu_pct, threads, rss, vms, pf]}
-    """
-    attrs = ['name', 'pid']
-    if need_cpu:
-        attrs += ['cpu_percent', 'num_threads']
-    if need_mem:
-        attrs += ['memory_info']
-
-    aggregated: dict[str, list] = {}
-    pid_to_name: dict[int, str] = {}
-    total_cpu = 0.0
-    total_rss = 0
-
-    for proc in psutil.process_iter(attrs):
-        try:
-            info = proc.info
-            name = info['name']
-            if not name:
-                continue
-
-            cpu_pct = 0.0
-            threads = 0
-            if need_cpu:
-                cpu_pct = info.get('cpu_percent') or 0.0
-                threads = info.get('num_threads') or 0
-                if name == 'System Idle Process':
-                    total_cpu = (cpu_threads * 100) - cpu_pct
-                    continue
-
-            rss = 0
-            vms = 0
-            if need_mem:
-                mem_info = info.get('memory_info')
-                if mem_info:
-                    rss = mem_info.rss
-                    vms = mem_info.vms
-                    total_rss += rss
-
-            pid = info.get('pid') or 0
-            display_name = get_process_display_name(name)
-            pid_to_name[pid] = display_name
-            if display_name in aggregated:
-                entry = aggregated[display_name]
-                entry[_CPU_IDX]     += cpu_pct
-                entry[_THREADS_IDX] += threads
-                entry[_RSS_IDX]     += rss
-                entry[_VMS_IDX]     += vms
-                entry[_COUNT_IDX]   += 1
-                # Keep first-seen PID for company lookup
-            else:
-                aggregated[display_name] = [cpu_pct, threads, rss, vms, 1, pid]
-
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-
-    return aggregated, total_cpu, total_rss, pid_to_name
 
 
 # ---- CPU delta state for _collect_processes_bulk ----
@@ -561,6 +482,100 @@ def _collect_processes_bulk(
     return aggregated, total_cpu, total_rss, pid_to_name
 
 
+class RollingWindow:
+    """Rolling-average buffer with per-tick accuracy and bucketed expiry.
+
+    Shared by ProcessMonitor (4 fields) and NetworkMonitor (2 fields).
+
+    Every tick's values are added to a per-name accumulator immediately, so
+    averages stay tick-accurate. For expiry, ticks are merged into coarse
+    time buckets (Defaults.ROLLING_BUCKET_SECONDS) instead of storing one
+    snapshot per tick: memory is O(buckets x names) instead of
+    O(ticks x names) — ~45x less at default settings (120 min @ 1 s).
+    Tradeoff: values leave the window in bucket-sized groups, up to one
+    bucket span later than exact — negligible for a multi-minute average.
+    """
+
+    def __init__(self, retention_seconds: int, n_fields: int):
+        self.retention_seconds = retention_seconds
+        self._n_fields = n_fields
+        # {name: [field_sums..., tick_count]} over the whole window
+        self._acc: dict[str, list] = {}
+        # Sealed buckets: [start_ts, last_ts, tick_count, {name: [field_sums..., tick_count]}]
+        self._buckets: deque = deque()
+        self._current: list | None = None  # same shape as a sealed bucket
+        self._total_samples = 0
+
+    @property
+    def total_samples(self) -> int:
+        """Number of ticks currently inside the window."""
+        return self._total_samples
+
+    def span_seconds(self) -> float:
+        """Time between the oldest and newest tick in the window."""
+        if self._current is not None:
+            newest = self._current[1]
+            oldest = self._buckets[0][0] if self._buckets else self._current[0]
+        elif self._buckets:
+            newest = self._buckets[-1][1]
+            oldest = self._buckets[0][0]
+        else:
+            return 0.0
+        return newest - oldest
+
+    def items(self):
+        """Yield (name, field_sums, tick_count) for every name in the window."""
+        n = self._n_fields
+        for name, entry in self._acc.items():
+            if entry[n] > 0:
+                yield name, entry[:n], entry[n]
+
+    def add(self, now: float, snapshot: dict[str, tuple]) -> None:
+        """Add one tick's per-name values and expire old buckets."""
+        n = self._n_fields
+        if self._current is None:
+            self._current = [now, now, 0, {}]
+        cur = self._current
+        cur[1] = now
+        cur[2] += 1
+        bucket_map = cur[3]
+
+        for name, values in snapshot.items():
+            acc_entry = self._acc.get(name)
+            if acc_entry is None:
+                acc_entry = self._acc[name] = [0.0] * n + [0]
+            b_entry = bucket_map.get(name)
+            if b_entry is None:
+                b_entry = bucket_map[name] = [0.0] * n + [0]
+            for i in range(n):
+                acc_entry[i] += values[i]
+                b_entry[i] += values[i]
+            acc_entry[n] += 1
+            b_entry[n] += 1
+
+        self._total_samples += 1
+
+        # Seal the current bucket once it covers a full span
+        if now - cur[0] >= Defaults.ROLLING_BUCKET_SECONDS:
+            self._buckets.append(cur)
+            self._current = None
+
+        # Expire buckets whose newest tick left the retention window
+        cutoff = now - self.retention_seconds
+        while self._buckets and self._buckets[0][1] < cutoff:
+            _, _, ticks, expired = self._buckets.popleft()
+            self._total_samples -= ticks
+            for name, b_entry in expired.items():
+                acc_entry = self._acc.get(name)
+                if acc_entry is None:
+                    continue
+                for i in range(n):
+                    acc_entry[i] -= b_entry[i]
+                acc_entry[n] -= b_entry[n]
+                if acc_entry[n] <= 0:
+                    del self._acc[name]
+
+
 class ProcessMonitor:
     """
     Monitors system processes for CPU or Memory usage.
@@ -594,10 +609,8 @@ class ProcessMonitor:
         self.history_max_size = 10
         self.retention_seconds = 120 * 60  # 2 hours default
 
-        # Rolling average buffer: (timestamp, {name: (value, threads, count, vms)}) snapshots
-        self._rolling_snapshots: deque = deque()
-        # Incremental accumulator: {name: [total_value, total_threads, total_count, total_vms, sample_count]}
-        self._rolling_acc: dict[str, list] = {}
+        # Rolling average window: (value, threads, count, vms) per tick
+        self._rolling = RollingWindow(self.retention_seconds, n_fields=4)
         self._refresh_rate_ms: int = 1000  # Used to compute uptime from sample count
 
         # Peak buffer: (timestamp, total_usage) — rolling window, same retention as snapshots
@@ -611,60 +624,6 @@ class ProcessMonitor:
     def _detect_ram_gb(self) -> int:
         """Detect total RAM in GB."""
         return round(psutil.virtual_memory().total / (1024 ** 3))
-
-    def get_cpu_temperature(self) -> Optional[float]:
-        """
-        Get CPU temperature in Celsius.
-
-        Supports: HWiNFO, OpenHardwareMonitor, LibreHardwareMonitor.
-        Requires one of these running with shared memory/WMI enabled.
-
-        Returns:
-            Temperature in Celsius or None if unavailable
-        """
-        global _hwinfo_reader
-
-        # Try HWiNFO shared memory first (most common on Windows)
-        if _hwinfo_reader is None:
-            _hwinfo_reader = HWiNFOSharedMemory()
-        temp = _hwinfo_reader.get_cpu_temp()
-        if temp is not None:
-            return temp
-
-        # Try psutil (works on Linux, some Windows)
-        if hasattr(psutil, 'sensors_temperatures'):
-            try:
-                temps = psutil.sensors_temperatures()
-                if temps:
-                    for name in ['coretemp', 'cpu_thermal', 'k10temp', 'zenpower']:
-                        if name in temps and temps[name]:
-                            return temps[name][0].current
-            except Exception:
-                pass
-
-        # Try WMI on Windows
-        if WMI_AVAILABLE:
-            # OpenHardwareMonitor WMI
-            try:
-                w = wmi.WMI(namespace="root\\OpenHardwareMonitor")
-                sensors = w.Sensor()
-                for sensor in sensors:
-                    if sensor.SensorType == 'Temperature' and 'CPU' in sensor.Name:
-                        return float(sensor.Value)
-            except Exception:
-                pass
-
-            # LibreHardwareMonitor WMI
-            try:
-                w = wmi.WMI(namespace="root\\LibreHardwareMonitor")
-                sensors = w.Sensor()
-                for sensor in sensors:
-                    if sensor.SensorType == 'Temperature' and 'CPU' in sensor.Name:
-                        return float(sensor.Value)
-            except Exception:
-                pass
-
-        return None
 
     def get_hwinfo_data(self) -> HWiNFOData:
         """
@@ -703,31 +662,16 @@ class ProcessMonitor:
         """Set refresh rate used to compute uptime from sample count."""
         self._refresh_rate_ms = refresh_rate_ms
 
-    def get_processes(self, limit: int = 10) -> list[ProcessInfo]:
-        """
-        Get current process usage data (single-mode convenience method).
-
-        Args:
-            limit: Maximum number of processes to return
-
-        Returns:
-            List of ProcessInfo sorted by usage (descending)
-        """
-        need_cpu = self.mode == MonitorMode.CPU
-        need_mem = self.mode == MonitorMode.MEMORY
-        aggregated, total_cpu, total_rss, _ = _collect_processes(need_cpu, need_mem, self.cpu_threads)
-        if need_cpu:
-            return self._extract_cpu_top(aggregated, total_cpu, limit)
-        return self._extract_mem_top(aggregated, total_rss, limit)
-
     def _extract_cpu_top(self, aggregated: dict[str, list], total_cpu: float, limit: int) -> list[ProcessInfo]:
         """Extract top CPU processes from aggregated data and update stats."""
-        self.stats.total_usage = total_cpu
         self.stats.process_count = len(aggregated)
 
         if self._first_cpu_tick:
+            # No prev-tick delta yet: total_cpu is a bogus artifact (cpu_threads*100 - 0).
+            self.stats.total_usage = 0.0
             self._first_cpu_tick = False
         else:
+            self.stats.total_usage = total_cpu
             now_ts = time.time()
             self._peak_buffer.append((now_ts, total_cpu))
             cutoff = now_ts - self.retention_seconds
@@ -763,7 +707,7 @@ class ProcessMonitor:
         Update historical high-usage records.
 
         Args:
-            processes: Current process list from get_processes()
+            processes: Current process list from _extract_cpu_top/_extract_mem_top
         """
         now = time.time()
 
@@ -818,18 +762,11 @@ class ProcessMonitor:
         return sorted(self.history.values(), key=lambda r: r.value, reverse=True)[:self.history_max_size]
 
     def update_rolling_average(self, aggregated: dict) -> None:
-        """Add current process snapshot to rolling average buffer and purge old entries.
+        """Add the current process snapshot to the rolling window.
 
-        Stores a lightweight snapshot of all process values from the aggregated dict.
-        CPU mode captures (cpu_pct, threads, count, 0); Memory mode captures (rss, 0, count, vms).
-        Old snapshots outside the retention window are purged immediately.
-
-        Maintains an incremental accumulator (_rolling_acc) so get_rolling_average()
-        reads O(processes) instead of O(snapshots * processes).
+        CPU mode captures (cpu_pct, threads, count, 0); Memory mode captures
+        (rss, 0, count, vms). See RollingWindow for the accuracy/memory model.
         """
-        now = time.time()
-        acc = self._rolling_acc
-
         if self.mode == MonitorMode.CPU:
             snapshot = {
                 name: (entry[_CPU_IDX], entry[_THREADS_IDX], entry[_COUNT_IDX], 0)
@@ -840,35 +777,8 @@ class ProcessMonitor:
                 name: (entry[_RSS_IDX], 0, entry[_COUNT_IDX], entry[_VMS_IDX])
                 for name, entry in aggregated.items()
             }
-
-        # Add new snapshot values to accumulator
-        for name, (value, threads, count, vms) in snapshot.items():
-            if name not in acc:
-                acc[name] = [0.0, 0, 0, 0, 0]
-            entry = acc[name]
-            entry[0] += value
-            entry[1] += threads
-            entry[2] += count
-            entry[3] += vms
-            entry[4] += 1
-
-        self._rolling_snapshots.append((now, snapshot))
-
-        # Purge expired snapshots and subtract their values from accumulator
-        cutoff = now - self.retention_seconds
-        while self._rolling_snapshots and self._rolling_snapshots[0][0] < cutoff:
-            _, expired = self._rolling_snapshots.popleft()
-            for name, (value, threads, count, vms) in expired.items():
-                entry = acc.get(name)
-                if entry is None:
-                    continue
-                entry[0] -= value
-                entry[1] -= threads
-                entry[2] -= count
-                entry[3] -= vms
-                entry[4] -= 1
-                if entry[4] <= 0:
-                    del acc[name]
+        self._rolling.retention_seconds = self.retention_seconds
+        self._rolling.add(time.time(), snapshot)
 
     def get_rolling_average(self, limit: int = 0) -> list[ProcessInfo]:
         """Calculate per-process averages across the rolling window, sorted by average value descending.
@@ -876,24 +786,18 @@ class ProcessMonitor:
         Args:
             limit: Maximum number of processes to return (0 = no limit).
 
-        Reads from the incremental accumulator (_rolling_acc) maintained by update_rolling_average().
+        Reads from the RollingWindow accumulator maintained by update_rolling_average().
         Each process that appeared in at least one snapshot is included.
         Threads and count are rounded to the nearest integer.
         Processes with zero average value are excluded.
         """
-        total_snapshots = len(self._rolling_snapshots)
+        total_snapshots = self._rolling.total_samples
         if total_snapshots == 0:
             return []
-
-        if total_snapshots >= 2:
-            actual_span = self._rolling_snapshots[-1][0] - self._rolling_snapshots[0][0]
-        else:
-            actual_span = 0.0
+        actual_span = self._rolling.span_seconds()
 
         result = []
-        for name, (total_val, total_threads, total_count, total_vms, samples) in self._rolling_acc.items():
-            if samples == 0:
-                continue
+        for name, (total_val, total_threads, total_count, total_vms), samples in self._rolling.items():
             # Denominator is always total_snapshots — same for all processes.
             # A process active for only part of the window gets a proportionally lower average.
             avg_value = total_val / total_snapshots
@@ -1042,9 +946,8 @@ class NetworkMonitor:
         # Peak total speed buffer: (timestamp, speed_bytes_per_sec)
         self._peak_buffer: deque = deque()
 
-        # Rolling average: deque of (timestamp, {name: (dl, ul)})
-        self._rolling_snapshots: deque = deque()
-        self._rolling_acc: dict[str, list] = {}  # {name: [total_dl, total_ul, samples]}
+        # Rolling average window: (dl, ul) per tick
+        self._rolling = RollingWindow(self.retention_seconds, n_fields=2)
 
     def _sort_key(self, dl: float, ul: float) -> float:
         """Compute sort key based on current sort mode."""
@@ -1124,47 +1027,19 @@ class NetworkMonitor:
         ]
 
     def _update_rolling(self, now: float, snapshot: dict[str, tuple[float, float]]):
-        """Add snapshot to rolling average and purge expired entries."""
-        acc = self._rolling_acc
-
-        for name, (dl, ul) in snapshot.items():
-            if name not in acc:
-                acc[name] = [0.0, 0.0, 0]
-            entry = acc[name]
-            entry[0] += dl
-            entry[1] += ul
-            entry[2] += 1
-
-        self._rolling_snapshots.append((now, snapshot))
-
-        cutoff = now - self.retention_seconds
-        while self._rolling_snapshots and self._rolling_snapshots[0][0] < cutoff:
-            _, expired = self._rolling_snapshots.popleft()
-            for name, (dl, ul) in expired.items():
-                entry = acc.get(name)
-                if entry is None:
-                    continue
-                entry[0] -= dl
-                entry[1] -= ul
-                entry[2] -= 1
-                if entry[2] <= 0:
-                    del acc[name]
+        """Add snapshot to the rolling window (see RollingWindow)."""
+        self._rolling.retention_seconds = self.retention_seconds
+        self._rolling.add(now, snapshot)
 
     def get_rolling_average(self, limit: int = 0) -> list[NetworkProcessInfo]:
         """Get per-process rolling averages sorted by sort mode."""
-        total_snapshots = len(self._rolling_snapshots)
+        total_snapshots = self._rolling.total_samples
         if total_snapshots == 0:
             return []
-
-        if total_snapshots >= 2:
-            actual_span = self._rolling_snapshots[-1][0] - self._rolling_snapshots[0][0]
-        else:
-            actual_span = 0.0
+        actual_span = self._rolling.span_seconds()
 
         result = []
-        for name, (total_dl, total_ul, samples) in self._rolling_acc.items():
-            if samples == 0:
-                continue
+        for name, (total_dl, total_ul), samples in self._rolling.items():
             avg_dl = total_dl / total_snapshots
             avg_ul = total_ul / total_snapshots
             if avg_dl <= 0 and avg_ul <= 0:
