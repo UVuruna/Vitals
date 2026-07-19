@@ -107,8 +107,7 @@ Signals: `cpu_data_ready(MonitorData)`, `memory_data_ready(MonitorData)`,
 
 | Method | Description |
 |--------|-------------|
-| `configure_cpu(...)` / `configure_memory(...)` / `configure_network(...)` | Called by the owning window whenever settings change; lazily creates the mode's `ProcessMonitor`/`NetworkMonitor` and (for network) starts the `NetworkTracer`. |
-| `disable_cpu()` / `disable_memory()` / `disable_network()` | Called when a window is hidden. Stops the whole thread only if no other mode remains enabled; `disable_network()` also stops the ETW tracer outside the lock. |
+| `configure_cpu(...)` / `configure_memory(...)` / `configure_network(...)` | Called by the owning window at startup and whenever settings change; lazily creates the mode's `ProcessMonitor`/`NetworkMonitor` and (for network) starts the `NetworkTracer`. A configured mode stays enabled for the app's lifetime — hiding a window no longer disables it (CPU/Memory share one bulk syscall, so pausing saves nothing). |
 | `run()` | Main loop: one bulk collect per tick, dispatches to whichever modes are enabled, sleeps in chunks. |
 | `stop()` | Signals the loop to exit, stops the tracer if running, joins the thread (2s timeout). |
 | `cpu_monitor` / `memory_monitor` / `network_monitor` (properties) | Access the underlying per-mode monitor instances. |

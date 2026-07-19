@@ -62,7 +62,7 @@ bar, context-menu process actions, and window-layout persistence.
 |------|---------|
 | `_get_mode()` / `_get_title()` / `_get_mode_cols()` / `_get_window_key()` | Identify the mode, window title, extra table columns (`"cpu"`/`"mem"`/`"net"`), and `last_setup.json` layout key. |
 | `_has_total_row()` | Whether the current table has a Σ row (`True` for CPU/Memory, `False` for `NetworkWindow`). |
-| `_configure_collector()` / `_disable_collector()` | Enable/disable this mode on the shared `SharedDataCollector`. |
+| `_configure_collector()` | Configure this mode on the shared `SharedDataCollector` (called once at startup and on every settings change; the mode stays enabled for the app's lifetime — hiding a window no longer disables it). |
 | `_create_settings_dialog()` | Return this mode's settings dialog instance. |
 | `_store_settings(new_settings)` | Store new settings; `NetworkWindow` overrides to also recompute max-speed color thresholds. |
 | `_on_data_ready(data)` | Handle a `MonitorData`/`NetworkMonitorData` signal — fills tables and the header. |
@@ -75,10 +75,10 @@ bar, context-menu process actions, and window-layout persistence.
 | `_apply_settings(prev_settings)` | Reconfigures the collector; rebuilds tables only if row counts changed. |
 | `_sync_refresh_rate(ms)` | Applies a refresh-rate change pushed from the peer window, without rebuilding tables. |
 | `_rebuild_tables()` | Recreates the current/history/rolling tables after a row-count change, reapplying saved column widths. |
-| `_set_monitor_enabled(enabled)` | Resumes (`_apply_settings`) or pauses (`_disable_collector`) this mode's collection — driven by window show/hide. |
-| `show_from_tray()` | Resumes the monitor, restarts the collector thread if it had fully stopped, and shows/raises/activates the window. |
-| `closeEvent(event)` | **Hides to the tray instead of exiting** and pauses the monitor (`_set_monitor_enabled(False)`); accepts the close only during OS session end (`isSavingSession()`) so logoff/shutdown isn't blocked. Real exit goes through `QApplication.quit()` (File > Exit or the tray menu). |
-| `keyPressEvent(event)` | `Esc` → `close()` (hide + pause); `Space` → `_toggle_pause()`. |
+| `_hide_to_tray()` | Saves the window layout and hides the window. The shared collector keeps running (CPU/Memory come from one bulk syscall regardless of visibility), so peaks/history stay continuous. Called by the native title-bar X (`closeEvent`), `Esc`, the tray checkboxes, and the tray "Minimize". |
+| `show_from_tray()` | Shows/raises/activates the window (its monitor never stopped). |
+| `closeEvent(event)` | **Hides to the tray instead of exiting** (`_hide_to_tray()`); accepts the close only during OS session end (`isSavingSession()`) so logoff/shutdown isn't blocked. Real exit goes through `QApplication.quit()` (File > Exit or the tray menu). |
+| `keyPressEvent(event)` | `Esc` → `_hide_to_tray()`; `Space` → `_toggle_pause()`. |
 | `_save_window_layout()` / `_restore_window_layout()` | Persist/restore geometry, font size, splitter sizes, bottom-page toggle, and column widths via [Persistence](persistence.md). |
 | `_on_context_menu(pos, table, has_total_row)` | Right-click menu: copy PIDs/exe path, Kill Process, Open File Location, Set Priority — delegates to [Process Actions (script)](process_actions.py) and shows [Process Dialog (script)](process_dialog.py) confirmation dialogs. |
 
@@ -100,15 +100,17 @@ Implement the hooks above plus mode-specific column fillers
 
 **Gadget mode (`Qt.Tool`) with tray-driven visibility.** Setting
 `Qt.WindowType.Tool` removes the taskbar button and Alt-Tab entry, matching
-desktop-gadget behavior. Combined with `app.setQuitOnLastWindowClosed(False)`
-in `main.py`, closing a window (via the X button or `Esc`) only calls
-`hide()` — the [Tray Controller](tray.md) is the only way to bring it back
-or to actually quit.
+desktop-gadget behavior, while keeping the native title bar (so normal
+move/resize and the X button work). Combined with
+`app.setQuitOnLastWindowClosed(False)` in `main.py`, closing a window (its X or
+`Esc`) only hides it — the [Tray Controller](tray.md) is the only way to bring
+it back or to actually quit.
 
-**Closing a window pauses its monitor.** `closeEvent()` calls
-`_set_monitor_enabled(False)`, which disables collection for that mode on
-the shared collector. A hidden window would otherwise keep consuming CPU
-cycles for data nobody can see; `show_from_tray()` resumes it.
+**Hiding a window does NOT pause its monitor.** CPU and Memory both come from a
+single bulk `NtQuerySystemInformation` call per collector tick, so "pausing" a
+hidden mode would save essentially nothing while breaking continuous
+peak/history tracking. Windows just `hide()`/`show()`; the collector runs for
+the app's whole lifetime and stops only at exit (`main.py`).
 
 **One unified `self._settings` attribute** (not separate per-field state)
 holds the current `CPUSettings`/`MemorySettings`/`NetworkSettings` dataclass,
@@ -116,6 +118,5 @@ so `_show_settings()` can diff old vs. new as a single object comparison.
 
 **CPU/Memory refresh-rate peering** (`_peer_window`, wired in `main.py`) syncs
 one window's rate change to the other since both read from the same
-`SharedDataCollector` tick — but only if the peer is currently visible,
-since a hidden window's monitor is disabled and reconfiguring it would
-re-enable collection for nothing.
+`SharedDataCollector` tick. No visibility guard is needed — hidden peers keep
+monitoring, so syncing their rate is always correct.

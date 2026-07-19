@@ -43,15 +43,16 @@ TrayController(icon: QIcon, windows: list[BaseMonitorWindow])
 ```
 
 Builds one checkable menu action per window (`window.windowTitle()`) plus a
-separator and **Exit**, and shows the tray icon immediately.
+separator, **Minimize**, and **Exit**, and shows the tray icon immediately.
 
 #### Methods (internal callbacks — this is the entire behavior surface)
 
 | Method | Description |
 |--------|-------------|
-| `_toggle_window(window, visible)` | Checkbox toggled: `show_from_tray()` to show, `close()` to hide. |
+| `_minimize_all()` | "Minimize" menu action: hides every currently visible window to the tray at once (`_hide_to_tray()`), the counterpart to a double-click. Monitors keep running while hidden. |
+| `_toggle_window(window, visible)` | Checkbox toggled: `show_from_tray()` to show, `_hide_to_tray()` to hide. |
 | `_refresh_checks()` | Runs on `QMenu.aboutToShow` — syncs checkmarks to actual `isVisible()` state before the menu is drawn. |
-| `_on_activated(reason)` | Double-click re-shows every currently hidden window via `show_from_tray()`. |
+| `_on_activated(reason)` | Double-click toggles all windows: hides them all (`_minimize_all()`) if any is visible, otherwise re-shows them all via `show_from_tray()`. |
 
 ---
 

@@ -83,8 +83,8 @@ flowchart TB
     main --> WINDOWS
     main --> TRAY
     main --> COLLECT
-    TRAY -->|show_from_tray / close| WINDOWS
-    WINDOWS -->|configure_*/disable_*| COLLECT
+    TRAY -->|show_from_tray / _hide_to_tray| WINDOWS
+    WINDOWS -->|configure_*| COLLECT
     COLLECT -->|cpu/memory/network_data_ready| WINDOWS
     PM_CPU --> NtQSI[(NtQuerySystemInformation)]
     PM_MEM --> NtQSI
@@ -104,7 +104,11 @@ flowchart TB
    accumulated bytes (Network), then emits a data-ready signal per enabled mode.
 3. **Display** — each window's `_on_data_ready()` fills its current/history/
    rolling tables, coloring cells via `ProcessColorManager`.
-4. **Gadget lifecycle** — closing a window (X, `Esc`, or unchecking it in the
-   tray menu) hides it and pauses its collector mode; the tray icon's
-   double-click or per-window checkbox brings it back via `show_from_tray()`.
-   Exit (File menu or tray menu) is the only path to `QApplication.quit()`.
+4. **Gadget lifecycle** — the windows are `Qt.Tool` gadgets (native title bar,
+   normal move/resize) with no taskbar/Alt-Tab presence. Closing a window (its
+   X, `Esc`, the tray checkbox, or the tray **Minimize** which drops all at
+   once) only hides it — the collector keeps running, so peaks/history stay
+   continuous. The tray icon's **double-click toggles** all windows (hides them
+   if any is visible, else re-shows them all); the per-window checkbox brings a
+   single one back via `show_from_tray()`. Exit (File menu or tray menu) is the
+   only path to `QApplication.quit()`.
