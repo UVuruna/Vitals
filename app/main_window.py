@@ -130,7 +130,8 @@ class BaseMonitorWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         # Gadget mode: Tool windows have no taskbar button and no Alt-Tab
-        # entry — the tray icon (app/tray.py) is the app's single identity
+        # entry — the tray icon (app/tray.py) is the app's single identity.
+        # The native title bar keeps normal move/resize/close behavior.
         self.setWindowFlag(Qt.WindowType.Tool, True)
         self.is_paused = False
         self._saved_col_widths_current: list[int] | None = None
@@ -318,10 +319,6 @@ class BaseMonitorWindow(QMainWindow):
         """Configure the shared collector with this mode's current settings. Must be overridden in subclasses."""
         raise NotImplementedError("Subclasses must implement _configure_collector()")
 
-    def _disable_collector(self):
-        """Disable this mode's collection on the shared collector. Must be overridden in subclasses."""
-        raise NotImplementedError("Subclasses must implement _disable_collector()")
-
     def _create_settings_dialog(self):
         """Create and return this mode's settings dialog. Must be overridden in subclasses."""
         raise NotImplementedError("Subclasses must implement _create_settings_dialog()")
@@ -349,11 +346,10 @@ class BaseMonitorWindow(QMainWindow):
             if new_settings.font_size != prev.font_size:
                 self._font_base = new_settings.font_size
                 self._apply_fonts()
-            # Sync only a visible peer — a hidden window's monitor is disabled
-            # and re-configuring it would re-enable collection for nothing
+            # Keep the peer's refresh rate in sync (both read from the same
+            # collector tick). Hidden peers still monitor, so no visibility guard.
             if (
                 self._peer_window is not None
-                and self._peer_window.isVisible()
                 and new_settings.refresh_rate_ms != prev.refresh_rate_ms
             ):
                 self._peer_window._sync_refresh_rate(new_settings.refresh_rate_ms)
@@ -1020,36 +1016,36 @@ class BaseMonitorWindow(QMainWindow):
                 table.clearSelection()
                 table._last_clicked_row = None
 
-    def _set_monitor_enabled(self, enabled: bool):
-        """Resume or pause this mode's collection when the window is shown/hidden."""
-        if enabled:
-            self._apply_settings(self._settings)
-        else:
-            self._disable_collector()
+    def _hide_to_tray(self):
+        """Hide this window to the tray, saving its layout first.
+
+        The shared collector keeps running — CPU/Memory come from one bulk
+        NtQuerySystemInformation call regardless of which windows are visible,
+        so pausing a hidden mode would save nothing while breaking continuous
+        peak/history tracking. The tray icon (or File > Exit) is the only quit.
+        """
+        self._save_window_layout()
+        self.hide()
 
     def show_from_tray(self):
-        """Re-show a hidden window and resume its monitor."""
-        self._set_monitor_enabled(True)
-        if not self._collector.isRunning():
-            self._collector.start()
+        """Re-show a hidden window (its monitor never stopped)."""
         self.show()
         self.raise_()
         self.activateWindow()
 
     def closeEvent(self, event):
-        """Hide to the tray instead of exiting; the monitor pauses while hidden.
+        """Hide to the tray instead of exiting (the monitor keeps running).
 
         Real application exit goes through QApplication.quit() (File > Exit or
         the tray menu). During OS session end (logoff/shutdown) the close is
         accepted so Windows is not blocked by the ignored event.
         """
-        self._save_window_layout()
-        self._set_monitor_enabled(False)
         if QApplication.instance().isSavingSession():
+            self._save_window_layout()
             super().closeEvent(event)
             return
         event.ignore()
-        self.hide()
+        self._hide_to_tray()
 
     # -------------------------------------------------------------------------
     # Context menu — process actions
@@ -1236,10 +1232,6 @@ class CPUWindow(BaseMonitorWindow):
             refresh_rate_ms=self._settings.refresh_rate_ms,
         )
 
-    def _disable_collector(self):
-        """Disable CPU collection on the shared collector."""
-        self._collector.disable_cpu()
-
     def _create_settings_dialog(self):
         """Create the CPU settings dialog."""
         return CPUSettingsDialog(self, self._settings)
@@ -1375,10 +1367,6 @@ class MemoryWindow(BaseMonitorWindow):
             refresh_rate_ms=self._settings.refresh_rate_ms,
             memory_unit=self._settings.memory_unit,
         )
-
-    def _disable_collector(self):
-        """Disable Memory collection on the shared collector."""
-        self._collector.disable_memory()
 
     def _create_settings_dialog(self):
         """Create the Memory settings dialog."""
@@ -1548,10 +1536,6 @@ class NetworkWindow(BaseMonitorWindow):
             max_download_mbps=self._settings.max_download_mbps,
             max_upload_mbps=self._settings.max_upload_mbps,
         )
-
-    def _disable_collector(self):
-        """Disable Network collection on the shared collector."""
-        self._collector.disable_network()
 
     def _create_settings_dialog(self):
         """Create the Network settings dialog."""

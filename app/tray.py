@@ -34,6 +34,8 @@ class TrayController:
             self._window_actions.append((action, window))
 
         self._menu.addSeparator()
+        minimize_action = self._menu.addAction("Minimize")
+        minimize_action.triggered.connect(self._minimize_all)
         exit_action = self._menu.addAction("Exit")
         exit_action.triggered.connect(self._exit_app)
 
@@ -61,12 +63,22 @@ class TrayController:
         self.prepare_exit()
         QApplication.instance().quit()
 
+    def _minimize_all(self):
+        """Hide every visible monitor window to the tray at once.
+
+        The counterpart to a double-click, which re-shows them all. Monitors
+        keep running while hidden, so peaks/history stay continuous.
+        """
+        for _action, window in self._window_actions:
+            if window.isVisible():
+                window._hide_to_tray()
+
     def _toggle_window(self, window, visible: bool):
-        """Show or hide a monitor window (close == hide + pause its monitor)."""
+        """Show or hide a monitor window from its menu checkbox."""
         if visible:
             window.show_from_tray()
         else:
-            window.close()
+            window._hide_to_tray()
 
     def _refresh_checks(self):
         """Sync menu checkmarks with actual window visibility."""
@@ -74,8 +86,10 @@ class TrayController:
             action.setChecked(window.isVisible())
 
     def _on_activated(self, reason):
-        """Double-click on the tray icon re-shows all hidden windows."""
+        """Double-click toggles all windows: hide them if any is visible, else show all."""
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
-            for _action, window in self._window_actions:
-                if not window.isVisible():
+            if any(window.isVisible() for _action, window in self._window_actions):
+                self._minimize_all()
+            else:
+                for _action, window in self._window_actions:
                     window.show_from_tray()

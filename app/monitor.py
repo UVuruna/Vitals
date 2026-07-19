@@ -1265,37 +1265,6 @@ class SharedDataCollector(QThread):
                     self._network_tracer_error = tracer.error or "ETW trace failed to start"
                     _net_log.info("configure_network: tracer.start() failed, error=%s", tracer.error)
 
-    def disable_cpu(self):
-        """Disable CPU monitoring. Stops the thread if no mode remains enabled."""
-        with QMutexLocker(self._mutex):
-            self._cpu_enabled = False
-            should_stop = not self._memory_enabled and not self._network_enabled
-        # stop() blocks on the collector thread — never call it while holding the mutex
-        if should_stop:
-            self.stop()
-
-    def disable_memory(self):
-        """Disable Memory monitoring. Stops the thread if no mode remains enabled."""
-        with QMutexLocker(self._mutex):
-            self._memory_enabled = False
-            should_stop = not self._cpu_enabled and not self._network_enabled
-        if should_stop:
-            self.stop()
-
-    def disable_network(self):
-        """Disable Network monitoring. Stops the thread if no mode remains enabled."""
-        with QMutexLocker(self._mutex):
-            self._network_enabled = False
-            tracer = self._network_tracer
-            self._network_tracer = None
-            self._network_tracer_error = None
-            should_stop = not self._cpu_enabled and not self._memory_enabled
-        # Tracer stop joins the ETW consumer thread — must run outside the mutex
-        if tracer is not None:
-            tracer.stop()
-        if should_stop:
-            self.stop()
-
     def _compute_interval(self) -> int:
         """Compute interval as min of all enabled modes. Must be called within mutex."""
         rates = []
