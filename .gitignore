@@ -29,3 +29,6 @@ venv/
 # Debug logs (opt-in via PMUSAGE_DEBUG=1)
 logs/
 network_debug.log
+
+# Owner inbox - local only (root Rule #18)
+UV/
