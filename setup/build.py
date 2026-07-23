@@ -334,6 +334,47 @@ def build_installer():
     sign_file(installer_path)
 
 
+def _powershell(script: str) -> str:
+    result = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True)
+    return result.stdout.strip()
+
+
+def verify_build(exe_path: Path, installer_path: Path):
+    """Fail-closed verification gate: run after the installer is built and signed.
+
+    Asserts the exe carries the correct CompanyName/FileVersion and — when a
+    signing certificate and password are configured — that both the exe and
+    the final installer carry a valid Authenticode signature. On any problem,
+    every failure is printed and the build exits non-zero instead of shipping
+    broken metadata or an unsigned installer silently.
+    """
+    step("VERIFY  metadata + signatures (build fails if anything is missing)")
+    problems = []
+
+    info = _powershell(f"$v=(Get-Item '{exe_path}').VersionInfo; \"$($v.CompanyName)|$($v.FileVersion)\"")
+    company, _, file_version = info.partition("|")
+    expected_company = COMPANY["company_name"]
+    if company != expected_company:
+        problems.append(f"exe CompanyName is {company!r}, expected {expected_company!r}")
+
+    version = APP_INFO["version"]
+    if version not in file_version:
+        problems.append(f"exe FileVersion is {file_version!r}, expected to contain {version!r}")
+
+    if CERT_PATH.exists() and PASSWORD_PATH.exists():
+        for label, target in (("exe", exe_path), ("installer", installer_path)):
+            status = _powershell(f"(Get-AuthenticodeSignature '{target}').Status")
+            if status in ("", "NotSigned"):
+                problems.append(f"{label} is NOT signed (status {status or 'missing'!r})")
+
+    if problems:
+        for p in problems:
+            print(f"  FAIL: {p}")
+        sys.exit(1)
+
+    print(f"  OK: CompanyName={company!r}  FileVersion={file_version!r}; exe+installer signed")
+
+
 def main():
     print(f"Building {APP_NAME}")
     print(f"Project: {PROJECT_DIR}")
@@ -356,6 +397,8 @@ def main():
     step("BUILD COMPLETE")
     print(f"  Installer: {DIST_DIR / APP_INFO['installer_name']}")
     print()
+
+    verify_build(exe_path, DIST_DIR / APP_INFO["installer_name"])
 
 
 if __name__ == "__main__":
