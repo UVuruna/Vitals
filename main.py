@@ -96,14 +96,14 @@ def main():
 
     # Gadget mode: windows are Qt.Tool (no taskbar/Alt-Tab presence) and
     # closing one only hides it — the tray icon is the app's single identity
-    # and its Exit action (or File > Exit) is the way to quit
+    # and its Exit action is the way to quit
     app.setQuitOnLastWindowClosed(False)
     tray = TrayController(app.windowIcon(), windows)  # noqa: F841 — must outlive app.exec()
 
     # Tray Exit hides everything synchronously in its click handler; the
-    # aboutToQuit hook covers the File > Exit path the same way, so every
-    # quit route saves visible layouts and hides all windows at once before
-    # the slow teardown (collector stop, ETW session stop) begins.
+    # aboutToQuit hook covers any other quit route (an OS session end) the
+    # same way, so every quit saves visible layouts and hides all windows at
+    # once before the slow teardown (collector stop, ETW session stop) begins.
     app.aboutToQuit.connect(tray.prepare_exit)
 
     # Start collector if not already running

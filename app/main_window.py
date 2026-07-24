@@ -5,10 +5,11 @@ Main Window - Vitals Display
 import json
 import sys
 from pathlib import Path
+from textwrap import wrap
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer, QEvent, QRect
-from PySide6.QtGui import QAction, QFont, QIcon, QPalette, QColor
+from PySide6.QtCore import Qt, QEvent, QRect
+from PySide6.QtGui import QFont, QIcon, QPalette, QColor
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -28,9 +29,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import icons
+from .icons import IconButton
 from .monitor import MonitorMode, MonitorData, NetworkMonitorData, SharedDataCollector
 from .color_management import ProcessColorManager
 from .persistence import get_base_path, load_last_setup, save_last_setup
+from .theme import theme, theme_manager
+from .theme_switch import DayNightSwitch
 from .settings_dialog import (
     InitialSettings,
     CPUSettings,
@@ -49,37 +54,38 @@ from .process_actions import (
     set_priority,
 )
 from .process_dialog import KillConfirmDialog, PriorityDialog
-from .styles import CONTEXT_MENU_STYLE, Colors, Defaults, Fonts, FontScale, format_speed, format_bytes_total
+from .styles import (
+    Defaults, Dimensions, Fonts, FontScale,
+    context_menu_style, format_speed, format_bytes_total,
+)
 
 
 class TotalRowDelegate(QStyledItemDelegate):
     """Draws the Σ total row with a distinct header background color.
 
     QSS-styled tables ignore QTableWidgetItem.setBackground(); this delegate
-    bypasses the style engine and paints the background directly.
+    bypasses the style engine and paints the background directly. Colors are
+    read from the ACTIVE palette at paint time, so a theme flip needs no
+    delegate rebuild.
     """
 
     ROLE = Qt.ItemDataRole.UserRole + 100
-
-    def __init__(self, bg_color: str, text_color: str, parent=None):
-        super().__init__(parent)
-        self._bg = QColor(bg_color)
-        self._text = QColor(text_color)
 
     def paint(self, painter, option, index):
         if not index.data(self.ROLE):
             super().paint(painter, option, index)
             return
 
+        palette = theme()
         painter.save()
-        painter.fillRect(option.rect, self._bg)
+        painter.fillRect(option.rect, QColor(palette.HEADER))
 
         text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         fg_brush = index.data(Qt.ItemDataRole.ForegroundRole)
         if fg_brush is not None:
             painter.setPen(fg_brush.color() if hasattr(fg_brush, 'color') else QColor(fg_brush))
         else:
-            painter.setPen(self._text)
+            painter.setPen(QColor(palette.TEXT))
 
         font = index.data(Qt.ItemDataRole.FontRole)
         if font is not None:
@@ -118,11 +124,10 @@ class DoubleClickSplitter(QSplitter):
 class BaseMonitorWindow(QMainWindow):
     """Base class for monitor windows (CPU and Memory)."""
 
-    # Default temperature thresholds
-    DEFAULT_TEMP_CONFIG = {
-        "normal": Colors.TEXT,
-        "warning": Colors.TEMP_WARNING,
-        "critical": Colors.TEMP_CRITICAL,
+    # Temperature thresholds in °C — the COLORS themselves come from the
+    # active palette (TEXT / TEMP_WARNING / TEMP_CRITICAL) so they follow the
+    # theme; only the trip points are configurable.
+    DEFAULT_TEMP_THRESHOLDS = {
         "warning_threshold": 60,
         "critical_threshold": 75,
     }
@@ -155,8 +160,9 @@ class BaseMonitorWindow(QMainWindow):
         self._ico_path = icon_path
 
         self._load_config()
-        self._apply_dark_theme()
         self._setup_ui()
+        self._apply_theme()
+        theme_manager().changed.connect(self._apply_theme)
 
         app = QApplication.instance()
         if app:
@@ -456,45 +462,147 @@ class BaseMonitorWindow(QMainWindow):
             self._apply_col_widths(self.rolling_table, rolling_cols)
 
     def _load_config(self):
-        """Load temperature color config from JSON.
+        """Load temperature thresholds from JSON.
 
-        An unreadable or invalid config.json is reported to stderr and the
-        DEFAULT_TEMP_CONFIG fallback is kept (documented behavior).
+        Only the trip points are configurable — the colors come from the
+        active palette so they follow the theme. An unreadable or invalid
+        config.json is reported to stderr and the DEFAULT_TEMP_THRESHOLDS
+        fallback is kept (documented behavior).
         """
         config_path = get_base_path() / "config" / "config.json"
-        self.temp_config = self.DEFAULT_TEMP_CONFIG.copy()
+        self.temp_config = self.DEFAULT_TEMP_THRESHOLDS.copy()
 
         if config_path.exists():
             try:
                 with open(config_path, encoding="utf-8") as f:
                     data = json.load(f)
-                    if "temp_colors" in data:
-                        self.temp_config.update(data["temp_colors"])
+                    temp = data.get("temp_colors", {})
+                    for key in self.DEFAULT_TEMP_THRESHOLDS:
+                        if key in temp:
+                            self.temp_config[key] = temp[key]
             except (OSError, ValueError) as e:
-                print(f"[Vitals] Invalid {config_path}: {e} - using default temp config", file=sys.stderr)
+                print(f"[Vitals] Invalid {config_path}: {e} - using default temp thresholds", file=sys.stderr)
 
     def _get_temp_color(self, temp: Optional[float]) -> str:
-        """Get color for temperature value based on config thresholds."""
+        """Get the active theme's color for a temperature value."""
+        palette = theme()
         if temp is None:
-            return Colors.TEXT
+            return palette.TEXT
 
         if temp >= self.temp_config["critical_threshold"]:
-            return self.temp_config["critical"]
+            return palette.TEMP_CRITICAL
         elif temp >= self.temp_config["warning_threshold"]:
-            return self.temp_config["warning"]
+            return palette.TEMP_WARNING
         else:
-            return self.temp_config["normal"]
+            return palette.TEXT
 
-    def _apply_dark_theme(self):
-        """Apply dark theme to window."""
-        palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(Colors.BACKGROUND))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(Colors.TEXT))
-        palette.setColor(QPalette.ColorRole.Base, QColor(Colors.CARD))
-        palette.setColor(QPalette.ColorRole.Text, QColor(Colors.TEXT))
-        palette.setColor(QPalette.ColorRole.Button, QColor(Colors.HEADER))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor(Colors.TEXT))
-        self.setPalette(palette)
+    def _apply_theme(self):
+        """(Re)style every widget in this window from the ACTIVE palette.
+
+        Runs once at startup and again on every Day/Night flip — it is the
+        single place that owns the window's stylesheets, so no color can be
+        left frozen at the theme that happened to be active at build time.
+        """
+        palette = theme()
+
+        qpalette = QPalette()
+        qpalette.setColor(QPalette.ColorRole.Window, QColor(palette.BACKGROUND))
+        qpalette.setColor(QPalette.ColorRole.WindowText, QColor(palette.TEXT))
+        qpalette.setColor(QPalette.ColorRole.Base, QColor(palette.CARD))
+        qpalette.setColor(QPalette.ColorRole.Text, QColor(palette.TEXT))
+        qpalette.setColor(QPalette.ColorRole.Button, QColor(palette.HEADER))
+        qpalette.setColor(QPalette.ColorRole.ButtonText, QColor(palette.TEXT))
+        self.setPalette(qpalette)
+
+        self.header_widget.setStyleSheet(
+            f"background-color: {palette.CARD}; border-radius: 8px;"
+        )
+        self.title_label.setStyleSheet(
+            f"color: {palette.TEXT}; background: transparent;"
+        )
+        self.total_label.setStyleSheet(
+            f"color: {palette.TEXT}; background: transparent;"
+        )
+        for lbl in self.sensor_name_labels:
+            lbl.setStyleSheet(f"color: {palette.TEXT_MUTED}; background: transparent;")
+        # Sensor VALUES carry a temperature color that the next refresh
+        # recomputes; reset them to plain text so a flip is never stale.
+        for lbl in self.sensor_value_labels:
+            lbl.setStyleSheet(f"color: {palette.TEXT}; background: transparent;")
+        self.current_title.setStyleSheet(f"color: {palette.TEXT};")
+        self.peak_label.setStyleSheet(
+            f"color: {palette.TEXT_MUTED}; background: transparent;"
+        )
+        self.bottom_toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {palette.TEXT};
+                border: none;
+                padding: 0;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                color: {palette.ACCENT};
+            }}
+        """)
+        self.splitter.setStyleSheet(f"""
+            QSplitter::handle {{
+                background-color: {palette.HEADER};
+                height: 4px;
+            }}
+            QSplitter::handle:hover {{
+                background-color: {palette.ACCENT};
+            }}
+        """)
+        for table in (self.current_table, self.history_table, self.rolling_table):
+            self._style_table(table)
+
+    def _style_table(self, table: QTableWidget):
+        """Apply the ACTIVE palette's QSS to one process table.
+
+        All three sections (current, peak, rolling) share one surface color —
+        a per-section tint made the same data look like three different kinds
+        of table for no reason (owner 2026-07-24).
+        """
+        palette = theme()
+        table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {palette.SECTION_BG};
+                color: {palette.TEXT};
+                border: none;
+                border-radius: 6px;
+                outline: none;
+            }}
+            QTableWidget::item {{
+                padding: 4px 8px;
+                border-bottom: 1px solid {palette.HEADER};
+            }}
+            QTableWidget::item:selected {{
+                background-color: {palette.HEADER};
+                color: {palette.TEXT};
+            }}
+            {self._header_css()}
+        """)
+        # The header carries its OWN stylesheet (set by _apply_fonts, which
+        # must restyle it without rebuilding the table). A per-widget sheet
+        # wins over the table's, so it has to be refreshed here too or a
+        # theme flip would leave the column headers in the old palette.
+        table.horizontalHeader().setStyleSheet(self._header_css())
+
+    def _header_css(self) -> str:
+        """QSS for a table's horizontal header, in the active theme and font."""
+        palette = theme()
+        return f"""
+            QHeaderView::section {{
+                background-color: {palette.HEADER};
+                color: {palette.TEXT};
+                font-family: {Fonts.FAMILY};
+                font-size: {FontScale.size(self._font_base, FontScale.SMALL)}pt;
+                font-weight: bold;
+                padding: 8px;
+                border: none;
+            }}
+        """
 
     def _font(self, offset: int, bold: bool = False) -> QFont:
         """Create a proportionally scaled font.
@@ -516,20 +624,9 @@ class BaseMonitorWindow(QMainWindow):
         self.current_title.setFont(self._font(FontScale.SECTION, bold=True))
         self.bottom_toggle_btn.setFont(self._font(FontScale.SECTION, bold=True))
         self.peak_label.setFont(self._font(FontScale.SMALL))
-        self.menuBar().setFont(self._font(FontScale.BODY))
         # Update table row heights and header font
         row_h = FontScale.row_height(self._font_base)
-        header_css = f"""
-            QHeaderView::section {{
-                background-color: {Colors.HEADER};
-                color: {Colors.TEXT};
-                font-family: {Fonts.FAMILY};
-                font-size: {FontScale.size(self._font_base, FontScale.SMALL)}pt;
-                font-weight: bold;
-                padding: 8px;
-                border: none;
-            }}
-        """
+        header_css = self._header_css()
         content_font = self._font(FontScale.SMALL)
         for table in (self.current_table, self.history_table, self.rolling_table):
             table.setFont(content_font)
@@ -551,29 +648,49 @@ class BaseMonitorWindow(QMainWindow):
 
         # Header
         self.header_widget = QWidget()
-        self.header_widget.setStyleSheet(f"""
-            background-color: {Colors.CARD};
-            border-radius: 8px;
-        """)
         header_layout = QVBoxLayout(self.header_widget)
-        header_layout.setContentsMargins(16, 12, 16, 12)
+        header_layout.setContentsMargins(16, 10, 16, 12)
 
-        # Title row: title on left, total value on right
+        # Title row: the two window controls and the title on the left, the
+        # Day/Night switch stacked above the total value on the right.
+        # These controls replaced the old menu bar (owner 2026-07-24): it
+        # offered nothing but Pause and Settings, both duplicated, while the
+        # title bar's X already closes the window.
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(4)
+
+        self.pause_btn = IconButton(icons.PAUSE, "Pause monitoring")
+        self.pause_btn.clicked.connect(self._toggle_pause)
+        title_row.addWidget(self.pause_btn)
+
+        self.settings_btn = IconButton(icons.SETTINGS, "Settings")
+        self.settings_btn.clicked.connect(self._show_settings)
+        title_row.addWidget(self.settings_btn)
 
         self.title_label = QLabel(self._get_title())
         self.title_label.setFont(self._font(FontScale.TITLE, bold=True))
-        self.title_label.setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
         title_row.addWidget(self.title_label)
 
         title_row.addStretch()
 
+        right_col = QVBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(0)
+
+        switch_row = QHBoxLayout()
+        switch_row.setContentsMargins(0, 0, 0, 0)
+        switch_row.addStretch()
+        self.theme_switch = DayNightSwitch()
+        switch_row.addWidget(self.theme_switch)
+        right_col.addLayout(switch_row)
+
         self.total_label = QLabel("")
         self.total_label.setFont(self._font(FontScale.SUBTITLE))
-        self.total_label.setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
         self.total_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        title_row.addWidget(self.total_label)
+        right_col.addWidget(self.total_label)
+
+        title_row.addLayout(right_col)
 
         header_layout.addLayout(title_row)
 
@@ -596,13 +713,11 @@ class BaseMonitorWindow(QMainWindow):
 
             name_lbl = QLabel("")
             name_lbl.setFont(self._font(FontScale.TINY))
-            name_lbl.setStyleSheet(f"color: {Colors.TEXT_MUTED}; background: transparent;")
             name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             col_layout.addWidget(name_lbl)
 
             value_lbl = QLabel("")
             value_lbl.setFont(self._font(FontScale.BODY))
-            value_lbl.setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
             value_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             col_layout.addWidget(value_lbl)
 
@@ -616,15 +731,6 @@ class BaseMonitorWindow(QMainWindow):
 
         # Splitter for resizable sections (double-click resets to 50-50)
         self.splitter = DoubleClickSplitter(Qt.Orientation.Vertical)
-        self.splitter.setStyleSheet(f"""
-            QSplitter::handle {{
-                background-color: {Colors.HEADER};
-                height: 4px;
-            }}
-            QSplitter::handle:hover {{
-                background-color: {Colors.ACCENT};
-            }}
-        """)
 
         # Current Processes section
         self.current_section = QWidget()
@@ -634,10 +740,9 @@ class BaseMonitorWindow(QMainWindow):
 
         self.current_title = QLabel("Current Processes")
         self.current_title.setFont(self._font(FontScale.SECTION, bold=True))
-        self.current_title.setStyleSheet(f"color: {Colors.TEXT};")
         current_layout.addWidget(self.current_title)
 
-        self.current_table = self._create_table(7, mode_cols=self._get_mode_cols(), bg_color=Colors.CURRENT_BG)
+        self.current_table = self._create_table(7, mode_cols=self._get_mode_cols())
         current_layout.addWidget(self.current_table)
 
         self.splitter.addWidget(self.current_section)
@@ -653,31 +758,18 @@ class BaseMonitorWindow(QMainWindow):
 
         self.bottom_toggle_btn = QPushButton("◀ Peak Usage ▶")
         self.bottom_toggle_btn.setFont(self._font(FontScale.SECTION, bold=True))
-        self.bottom_toggle_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {Colors.TEXT};
-                border: none;
-                padding: 0;
-                text-align: left;
-            }}
-            QPushButton:hover {{
-                color: {Colors.ACCENT};
-            }}
-        """)
         self.bottom_toggle_btn.clicked.connect(self._toggle_bottom_table)
         bottom_header_row.addWidget(self.bottom_toggle_btn)
         bottom_header_row.addStretch()
 
         self.peak_label = QLabel("Peak: --")
         self.peak_label.setFont(self._font(FontScale.SMALL))
-        self.peak_label.setStyleSheet(f"color: {Colors.TEXT_MUTED}; background: transparent;")
         bottom_header_row.addWidget(self.peak_label)
         history_layout.addLayout(bottom_header_row)
 
         self.bottom_stack = QStackedWidget()
-        self.history_table = self._create_table(4, mode_cols=self._get_mode_cols(), has_time=True, bg_color=Colors.HISTORY_BG)
-        self.rolling_table = self._create_table(0, mode_cols=self._get_mode_cols(), has_time=False, bg_color=Colors.ROLLING_BG, has_uptime=True)
+        self.history_table = self._create_table(4, mode_cols=self._get_mode_cols(), has_time=True)
+        self.rolling_table = self._create_table(0, mode_cols=self._get_mode_cols(), has_time=False, has_uptime=True)
         self.bottom_stack.addWidget(self.history_table)   # index 0 = Peak Usage
         self.bottom_stack.addWidget(self.rolling_table)   # index 1 = Rolling Average
         history_layout.addWidget(self.bottom_stack)
@@ -688,37 +780,6 @@ class BaseMonitorWindow(QMainWindow):
         self.splitter.setSizes([300, 150])
 
         layout.addWidget(self.splitter)
-
-        # Menu bar — contains File, View, and a clickable Pause action
-        menubar = self.menuBar()
-        menubar.setStyleSheet(f"""
-            QMenuBar {{
-                background-color: {Colors.BACKGROUND};
-                color: {Colors.TEXT};
-            }}
-            QMenuBar::item:selected {{
-                background-color: {Colors.HEADER};
-            }}
-        """)
-
-        file_menu = menubar.addMenu("File")
-        settings_action = QAction("Settings", self)
-        settings_action.triggered.connect(self._show_settings)
-        file_menu.addAction(settings_action)
-        # Exit quits the whole app — plain close() only hides to the tray
-        exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(QApplication.instance().quit)
-        file_menu.addAction(exit_action)
-
-        view_menu = menubar.addMenu("View")
-        pause_action = QAction("Pause/Resume", self)
-        pause_action.triggered.connect(self._toggle_pause)
-        view_menu.addAction(pause_action)
-
-        # Pause as a direct menubar action (clickable text in the bar itself)
-        self._pause_action = QAction("Pause", self)
-        self._pause_action.triggered.connect(self._toggle_pause)
-        menubar.addAction(self._pause_action)
 
     def _toggle_bottom_table(self):
         """Switch between Peak Usage (index 0) and Rolling Average (index 1)."""
@@ -734,7 +795,7 @@ class BaseMonitorWindow(QMainWindow):
         """Create a styled QTableWidgetItem for the Σ total row."""
         item = QTableWidgetItem(text)
         item.setData(TotalRowDelegate.ROLE, True)
-        item.setForeground(QColor(Colors.TEXT))
+        item.setForeground(QColor(theme().TEXT))
         item.setFont(self._font(FontScale.SMALL, bold=True))
         return item
 
@@ -772,19 +833,15 @@ class BaseMonitorWindow(QMainWindow):
 
         return color_mgr
 
-    def _create_table(self, rows: int, mode_cols: str = "none", has_time: bool = False, bg_color: str = None, has_total_row: bool = False, has_uptime: bool = False) -> QTableWidget:
+    def _create_table(self, rows: int, mode_cols: str = "none", has_time: bool = False, has_total_row: bool = False, has_uptime: bool = False) -> QTableWidget:
         """Create a styled table.
 
         Args:
             rows: Number of rows
             mode_cols: "cpu" for Parallel+Threads, "mem" for Commit, "none" for no extra cols
             has_time: Add Time column
-            bg_color: Background color
             has_uptime: Add Uptime column (rolling average table only)
         """
-        if bg_color is None:
-            bg_color = Colors.CARD
-
         cols = 3  # #, Process, Usage
         headers = ["#", "Process", "Usage"]
 
@@ -842,32 +899,7 @@ class BaseMonitorWindow(QMainWindow):
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
 
         # Styling
-        table.setStyleSheet(f"""
-            QTableWidget {{
-                background-color: {bg_color};
-                color: {Colors.TEXT};
-                border: none;
-                border-radius: 6px;
-                outline: none;
-            }}
-            QTableWidget::item {{
-                padding: 4px 8px;
-                border-bottom: 1px solid {Colors.HEADER};
-            }}
-            QTableWidget::item:selected {{
-                background-color: {Colors.HEADER};
-                color: {Colors.TEXT};
-            }}
-            QHeaderView::section {{
-                background-color: {Colors.HEADER};
-                color: {Colors.TEXT};
-                font-family: {Fonts.FAMILY};
-                font-size: {FontScale.size(self._font_base, FontScale.SMALL)}pt;
-                font-weight: bold;
-                padding: 8px;
-                border: none;
-            }}
-        """)
+        self._style_table(table)
 
         table.verticalHeader().setDefaultSectionSize(FontScale.row_height(self._font_base))
 
@@ -900,7 +932,7 @@ class BaseMonitorWindow(QMainWindow):
 
         # Enable hover events for tooltips and install delegate for total row background
         table.viewport().setMouseTracking(True)
-        table.setItemDelegate(TotalRowDelegate(Colors.HEADER, Colors.TEXT, table))
+        table.setItemDelegate(TotalRowDelegate(table))
 
         return table
 
@@ -924,20 +956,17 @@ class BaseMonitorWindow(QMainWindow):
             self._settings.current_rows,
             mode_cols=mode_cols,
             has_time=False,
-            bg_color=Colors.CURRENT_BG,
             has_total_row=self._has_total_row(),
         )
         self.history_table = self._create_table(
             self._settings.history_rows,
             mode_cols=mode_cols,
             has_time=True,
-            bg_color=Colors.HISTORY_BG,
         )
         self.rolling_table = self._create_table(
             0,
             mode_cols=mode_cols,
             has_time=False,
-            bg_color=Colors.ROLLING_BG,
             has_uptime=True,
         )
 
@@ -1075,9 +1104,25 @@ class BaseMonitorWindow(QMainWindow):
         pid_clipboard = ", ".join(str(p) for p in pids)
 
         menu = QMenu(self)
-        menu.setStyleSheet(CONTEXT_MENU_STYLE)
+        menu.setStyleSheet(context_menu_style())
 
-        # Info section — PIDs split 10 per row, click any line to copy all
+        # Info section — the company that signed the exe leads it, wrapped
+        # across as many lines as the name needs (owner 2026-07-24), with the
+        # row's own color as a swatch so the menu ties back to the table.
+        color_mgr = ProcessColorManager()
+        company = color_mgr.get_company_name(process_name)
+        company_actions: list = []
+        if company:
+            proc_color = color_mgr.get_process_color(process_name)
+            for i, line in enumerate(wrap(company, Dimensions.MENU_LINE_CHARS)):
+                act = menu.addAction(line)
+                if i == 0 and proc_color:
+                    act.setIcon(icons.swatch(proc_color))
+                act.setToolTip("Click to copy the company name to clipboard")
+                company_actions.append(act)
+            menu.addSeparator()
+
+        # PIDs split 10 per row, click any line to copy all
         pid_actions: list = []
         if pids:
             label = "PIDs" if len(pids) > 1 else "PID"
@@ -1107,7 +1152,9 @@ class BaseMonitorWindow(QMainWindow):
 
         if action is None:
             return
-        if action in pid_actions:
+        if action in company_actions:
+            QApplication.clipboard().setText(company)
+        elif action in pid_actions:
             QApplication.clipboard().setText(pid_clipboard)
         elif action == exe_action:
             QApplication.clipboard().setText(exe_path)
@@ -1168,9 +1215,12 @@ class BaseMonitorWindow(QMainWindow):
                     )
 
     def _toggle_pause(self):
-        """Toggle pause. Must be implemented by subclasses for proper pause/resume."""
+        """Toggle pause and flip the header button between pause and play."""
         self.is_paused = not self.is_paused
-        self._pause_action.setText("Resume" if self.is_paused else "Pause")
+        self.pause_btn.set_glyph(icons.PLAY if self.is_paused else icons.PAUSE)
+        self.pause_btn.setToolTip(
+            "Resume monitoring" if self.is_paused else "Pause monitoring"
+        )
 
     def _on_data_ready(self, data: MonitorData):
         """Handle data from collector (runs on main thread via signal)."""
@@ -1259,7 +1309,7 @@ class CPUWindow(BaseMonitorWindow):
         uptime_min = round(item.uptime_seconds / 60)
         uptime_item = QTableWidgetItem(f"{uptime_min}m")
         if uptime_min >= self._settings.retention_minutes:
-            uptime_item.setForeground(QColor(Colors.TEXT_MUTED))
+            uptime_item.setForeground(QColor(theme().TEXT_MUTED))
         table.setItem(row, 5, uptime_item)
 
     def _on_data_ready(self, data: MonitorData):
@@ -1400,7 +1450,7 @@ class MemoryWindow(BaseMonitorWindow):
         uptime_min = round(item.uptime_seconds / 60)
         uptime_item = QTableWidgetItem(f"{uptime_min}m")
         if uptime_min >= self._settings.retention_minutes:
-            uptime_item.setForeground(QColor(Colors.TEXT_MUTED))
+            uptime_item.setForeground(QColor(theme().TEXT_MUTED))
         table.setItem(row, 4, uptime_item)
 
     def _on_data_ready(self, data: MonitorData):
@@ -1436,7 +1486,7 @@ class MemoryWindow(BaseMonitorWindow):
             for i, (name, value_text) in enumerate(zip(sensor_names, sensor_values)):
                 self.sensor_name_labels[i].setText(name)
                 self.sensor_value_labels[i].setText(value_text)
-                self.sensor_value_labels[i].setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
+                self.sensor_value_labels[i].setStyleSheet(f"color: {theme().TEXT}; background: transparent;")
 
         # Update current table
         total_row = self.current_table.rowCount() - 1
@@ -1575,7 +1625,7 @@ class NetworkWindow(BaseMonitorWindow):
         uptime_min = round(item.uptime_seconds / 60)
         uptime_item = QTableWidgetItem(f"{uptime_min}m")
         if uptime_min >= self._settings.retention_minutes:
-            uptime_item.setForeground(QColor(Colors.TEXT_MUTED))
+            uptime_item.setForeground(QColor(theme().TEXT_MUTED))
         table.setItem(row, 4, uptime_item)
 
     def _on_data_ready(self, data: NetworkMonitorData):
@@ -1600,15 +1650,15 @@ class NetworkWindow(BaseMonitorWindow):
         self.sensor_widget.setVisible(True)
         self.sensor_name_labels[0].setText("Upload")
         self.sensor_value_labels[0].setText(f"↑ {format_speed(data.current_upload, unit)}")
-        self.sensor_value_labels[0].setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
+        self.sensor_value_labels[0].setStyleSheet(f"color: {theme().TEXT}; background: transparent;")
 
         self.sensor_name_labels[1].setText("Total ↓")
         self.sensor_value_labels[1].setText(format_bytes_total(data.cumulative_download, unit))
-        self.sensor_value_labels[1].setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
+        self.sensor_value_labels[1].setStyleSheet(f"color: {theme().TEXT}; background: transparent;")
 
         self.sensor_name_labels[2].setText("Total ↑")
         self.sensor_value_labels[2].setText(format_bytes_total(data.cumulative_upload, unit))
-        self.sensor_value_labels[2].setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
+        self.sensor_value_labels[2].setStyleSheet(f"color: {theme().TEXT}; background: transparent;")
 
         # Update current table (no total row for network)
         self._fill_process_rows(

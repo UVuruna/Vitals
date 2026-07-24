@@ -25,7 +25,8 @@ from PySide6.QtWidgets import (
 )
 
 from .persistence import get_base_path, load_last_setup, save_last_setup
-from .styles import Colors, Defaults, FontScale, MEMORY_UNITS, NETWORK_UNITS
+from .styles import Defaults, FontScale, MEMORY_UNITS, NETWORK_UNITS
+from .theme import theme, theme_manager
 from .color_management import ProcessColorManager
 
 
@@ -165,10 +166,13 @@ def _format_bytes_in_unit(total_bytes: int, unit: str) -> str:
     return f"{round(value):,} {unit}"
 
 
-_SPINBOX_STYLE = f"""
+def _spinbox_style() -> str:
+    """QSS for a numeric input, in the ACTIVE theme."""
+    palette = theme()
+    return f"""
     QSpinBox {{
-        background-color: {Colors.HEADER}; color: {Colors.TEXT};
-        border: 1px solid {Colors.BORDER}; border-radius: 4px;
+        background-color: {palette.HEADER}; color: {palette.TEXT};
+        border: 1px solid {palette.BORDER}; border-radius: 4px;
         padding: 4px 8px;
     }}
     QSpinBox::up-button, QSpinBox::down-button {{ width: 0px; }}
@@ -184,14 +188,17 @@ def _make_spinbox(default: int = 1) -> QSpinBox:
     sb.setFixedHeight(32)
     sb.setFixedWidth(70)
     sb.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    sb.setStyleSheet(_SPINBOX_STYLE)
+    sb.setStyleSheet(_spinbox_style())
     return sb
 
 
-_SLIDER_STYLE = f"""
-    QSlider::groove:horizontal {{ height: 6px; background: {Colors.HEADER}; border-radius: 3px; }}
-    QSlider::handle:horizontal {{ background: {Colors.ACCENT}; width: 16px; margin: -5px 0; border-radius: 8px; }}
-    QSlider::sub-page:horizontal {{ background: {Colors.ACCENT}; border-radius: 3px; }}
+def _slider_style() -> str:
+    """QSS for a settings slider, in the ACTIVE theme."""
+    palette = theme()
+    return f"""
+    QSlider::groove:horizontal {{ height: 6px; background: {palette.HEADER}; border-radius: 3px; }}
+    QSlider::handle:horizontal {{ background: {palette.ACCENT}; width: 16px; margin: -5px 0; border-radius: 8px; }}
+    QSlider::sub-page:horizontal {{ background: {palette.ACCENT}; border-radius: 3px; }}
 """
 
 
@@ -271,7 +278,7 @@ class ColorScaleWidget(QWidget):
             r = float(self._HANDLE_R)
             zone_color = self._colors[i].lighter(150)
             painter.setBrush(QBrush(zone_color))
-            painter.setPen(QPen(QColor(Colors.TEXT), 1.0))
+            painter.setPen(QPen(QColor(theme().TEXT), 1.0))
             painter.drawConvexPolygon([
                 QPointF(x,     cy - r),
                 QPointF(x + r, cy),
@@ -280,7 +287,7 @@ class ColorScaleWidget(QWidget):
             ])
 
         # Percentage labels below handles
-        painter.setPen(QColor(Colors.TEXT_MUTED))
+        painter.setPen(QColor(theme().TEXT_MUTED))
         painter.setFont(QFont("Segoe UI", 9))
         fm = painter.fontMetrics()
         for t in self._thresholds:
@@ -349,10 +356,10 @@ class CompanyLegendDialog(QDialog):
             self.setWindowIcon(QIcon(str(icon_path)))
 
         palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(Colors.BACKGROUND))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(Colors.TEXT))
-        palette.setColor(QPalette.ColorRole.Base, QColor(Colors.CARD))
-        palette.setColor(QPalette.ColorRole.Text, QColor(Colors.TEXT))
+        palette.setColor(QPalette.ColorRole.Window, QColor(theme().BACKGROUND))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(theme().TEXT))
+        palette.setColor(QPalette.ColorRole.Base, QColor(theme().CARD))
+        palette.setColor(QPalette.ColorRole.Text, QColor(theme().TEXT))
         self.setPalette(palette)
         self.setAutoFillBackground(True)
 
@@ -372,7 +379,7 @@ class CompanyLegendDialog(QDialog):
 
         title = QLabel("Company Color Legend")
         title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
+        title.setStyleSheet(f"color: {theme().TEXT}; background: transparent;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
@@ -380,16 +387,22 @@ class CompanyLegendDialog(QDialog):
         self._scroll.setWidgetResizable(True)
         self._scroll.setStyleSheet(f"""
             QScrollArea {{ border: none; background: transparent; }}
-            QScrollBar:vertical {{ background: {Colors.CARD}; width: 8px; border-radius: 4px; }}
-            QScrollBar::handle:vertical {{ background: {Colors.BORDER}; border-radius: 4px; }}
+            QScrollBar:vertical {{ background: {theme().CARD}; width: 8px; border-radius: 4px; }}
+            QScrollBar::handle:vertical {{ background: {theme().BORDER}; border-radius: 4px; }}
         """)
         self._rebuild_legend_content()
         layout.addWidget(self._scroll)
 
-        note = QLabel("Colored = named company  ·  White = no company info")
+        # The list is ranked by process count, and so is the color scale:
+        # the top entry is plain contrast, the rest walk blue -> red.
+        top_word = "Black" if not theme_manager().is_dark() else "White"
+        note = QLabel(
+            f"{top_word} = most processes  ·  blue → red by count  ·  Gray = no company info"
+        )
         note.setFont(QFont("Segoe UI", 8))
-        note.setStyleSheet(f"color: {Colors.TEXT_DISABLED}; background: transparent;")
+        note.setStyleSheet(f"color: {theme().TEXT_DISABLED}; background: transparent;")
         note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        note.setWordWrap(True)
         layout.addWidget(note)
 
         # Hue color sliders
@@ -397,13 +410,13 @@ class CompanyLegendDialog(QDialog):
 
         slider_style = f"""
             QSlider::groove:horizontal {{
-                height: 4px; background: {Colors.HEADER}; border-radius: 2px;
+                height: 4px; background: {theme().HEADER}; border-radius: 2px;
             }}
             QSlider::handle:horizontal {{
                 width: 14px; height: 14px; margin: -5px 0;
-                background: {Colors.ACCENT}; border-radius: 7px;
+                background: {theme().ACCENT}; border-radius: 7px;
             }}
-            QSlider::sub-page:horizontal {{ background: {Colors.ACCENT}; border-radius: 2px; }}
+            QSlider::sub-page:horizontal {{ background: {theme().ACCENT}; border-radius: 2px; }}
         """
 
         for label_text, attr_slider, attr_val, init_val in [
@@ -418,7 +431,7 @@ class CompanyLegendDialog(QDialog):
 
             lbl = QLabel(label_text)
             lbl.setFont(QFont("Segoe UI", 9))
-            lbl.setStyleSheet(f"color: {Colors.TEXT_MUTED}; background: transparent;")
+            lbl.setStyleSheet(f"color: {theme().TEXT_MUTED}; background: transparent;")
             lbl.setFixedWidth(70)
             row.addWidget(lbl)
 
@@ -431,7 +444,7 @@ class CompanyLegendDialog(QDialog):
 
             val_lbl = QLabel(f"{int(init_val * 100)}%")
             val_lbl.setFont(QFont("Segoe UI", 9))
-            val_lbl.setStyleSheet(f"color: {Colors.TEXT_MUTED}; background: transparent;")
+            val_lbl.setStyleSheet(f"color: {theme().TEXT_MUTED}; background: transparent;")
             val_lbl.setFixedWidth(34)
             val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             row.addWidget(val_lbl)
@@ -445,8 +458,8 @@ class CompanyLegendDialog(QDialog):
         close_btn.setFixedHeight(36)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {Colors.HEADER}; color: {Colors.TEXT}; border: none; border-radius: 6px; }}
-            QPushButton:hover {{ background-color: {Colors.BORDER}; }}
+            QPushButton {{ background-color: {theme().HEADER}; color: {theme().TEXT}; border: none; border-radius: 6px; }}
+            QPushButton:hover {{ background-color: {theme().BORDER}; }}
         """)
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
@@ -463,16 +476,16 @@ class CompanyLegendDialog(QDialog):
         if not legend:
             empty = QLabel("No companies detected yet.\nStart monitoring to populate.")
             empty.setFont(QFont("Segoe UI", 10))
-            empty.setStyleSheet(f"color: {Colors.TEXT_DIM}; background: transparent;")
+            empty.setStyleSheet(f"color: {theme().TEXT_DIM}; background: transparent;")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             content_layout.addWidget(empty)
         else:
             toggle_style = f"""
                 QPushButton {{
-                    background: transparent; color: {Colors.TEXT_DIM};
+                    background: transparent; color: {theme().TEXT_DIM};
                     border: none; padding: 0;
                 }}
-                QPushButton:hover {{ color: {Colors.TEXT}; }}
+                QPushButton:hover {{ color: {theme().TEXT}; }}
             """
             for company, color, proc_count in legend:
                 is_expanded = company in self._expanded
@@ -492,12 +505,12 @@ class CompanyLegendDialog(QDialog):
 
                 name_lbl = QLabel(company)
                 name_lbl.setFont(QFont("Segoe UI", 10))
-                name_lbl.setStyleSheet(f"color: {Colors.TEXT}; background: transparent;")
+                name_lbl.setStyleSheet(f"color: {theme().TEXT}; background: transparent;")
                 row.addWidget(name_lbl, 1)
 
                 count_lbl = QLabel(str(proc_count))
                 count_lbl.setFont(QFont("Segoe UI", 10))
-                count_lbl.setStyleSheet(f"color: {Colors.TEXT_FAINT}; background: transparent;")
+                count_lbl.setStyleSheet(f"color: {theme().TEXT_FAINT}; background: transparent;")
                 count_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 row.addWidget(count_lbl)
 
@@ -527,7 +540,7 @@ class CompanyLegendDialog(QDialog):
 
                         sub_lbl = QLabel(item_name)
                         sub_lbl.setFont(QFont("Segoe UI", 9))
-                        sub_lbl.setStyleSheet(f"color: {Colors.TEXT_MUTED}; background: transparent;")
+                        sub_lbl.setStyleSheet(f"color: {theme().TEXT_MUTED}; background: transparent;")
                         sub_row.addWidget(sub_lbl, 1)
 
                         content_layout.addWidget(sub_w)
@@ -571,10 +584,10 @@ def _make_legend_btn() -> QPushButton:
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
     btn.setStyleSheet(f"""
         QPushButton {{
-            background-color: {Colors.CARD}; color: {Colors.TEXT_DIM};
-            border: 1px solid {Colors.HEADER}; border-radius: 4px; padding: 0 12px;
+            background-color: {theme().CARD}; color: {theme().TEXT_DIM};
+            border: 1px solid {theme().HEADER}; border-radius: 4px; padding: 0 12px;
         }}
-        QPushButton:hover {{ background-color: {Colors.HEADER}; color: {Colors.TEXT}; }}
+        QPushButton:hover {{ background-color: {theme().HEADER}; color: {theme().TEXT}; }}
     """)
     return btn
 
@@ -602,7 +615,7 @@ def _build_color_section(
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.addWidget(make_label(title, 12, bold=True))
         title_row.addStretch()
-        title_row.addWidget(make_label(f"100% = {max_info}", 9, color=Colors.TEXT_FAINT))
+        title_row.addWidget(make_label(f"100% = {max_info}", 9, color=theme().TEXT_FAINT))
         layout.addLayout(title_row)
     else:
         layout.addWidget(make_label(title, 12, bold=True))
@@ -641,28 +654,38 @@ class BaseSettingsDialog(QDialog):
     builders for the settings rows duplicated across all four dialogs.
     """
 
-    def _apply_dark_theme(self) -> None:
-        """Load the window icon and apply the shared dark QPalette."""
+    def _apply_theme(self) -> None:
+        """Load the window icon and apply the ACTIVE theme's QPalette.
+
+        Settings dialogs are modal, so the theme cannot change while one is
+        open — reading the palette once at construction is enough.
+        """
         icon_path = get_base_path() / "assets" / "icon.ico"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
 
         palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(Colors.BACKGROUND))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(Colors.TEXT))
-        palette.setColor(QPalette.ColorRole.Base, QColor(Colors.CARD))
-        palette.setColor(QPalette.ColorRole.Text, QColor(Colors.TEXT))
-        palette.setColor(QPalette.ColorRole.Button, QColor(Colors.HEADER))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor(Colors.TEXT))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(Colors.ACCENT))
+        palette.setColor(QPalette.ColorRole.Window, QColor(theme().BACKGROUND))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(theme().TEXT))
+        palette.setColor(QPalette.ColorRole.Base, QColor(theme().CARD))
+        palette.setColor(QPalette.ColorRole.Text, QColor(theme().TEXT))
+        palette.setColor(QPalette.ColorRole.Button, QColor(theme().HEADER))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(theme().TEXT))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(theme().ACCENT))
         self.setPalette(palette)
         self.setAutoFillBackground(True)
 
-    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: str = Colors.TEXT) -> QLabel:
+    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: Optional[str] = None) -> QLabel:
+        """Build a styled label. `color` defaults to the ACTIVE theme's TEXT.
+
+        The default is resolved here rather than in the signature: a default
+        argument is evaluated once at import, which would freeze whichever
+        palette happened to be active then.
+        """
         label = QLabel(text)
         weight = QFont.Weight.Bold if bold else QFont.Weight.Normal
         label.setFont(QFont("Segoe UI", size, weight))
-        label.setStyleSheet(f"color: {color}; background: transparent;")
+        label.setStyleSheet(f"color: {color or theme().TEXT}; background: transparent;")
         return label
 
     def _make_combo(self, items: list, default: str) -> QComboBox:
@@ -675,18 +698,18 @@ class BaseSettingsDialog(QDialog):
         combo.setFixedHeight(32)
         combo.setStyleSheet(f"""
             QComboBox {{
-                background-color: {Colors.HEADER}; color: {Colors.TEXT};
-                border: 1px solid {Colors.BORDER}; border-radius: 4px; padding: 4px 8px;
+                background-color: {theme().HEADER}; color: {theme().TEXT};
+                border: 1px solid {theme().BORDER}; border-radius: 4px; padding: 4px 8px;
             }}
             QComboBox::drop-down {{ border: none; width: 24px; }}
             QComboBox::down-arrow {{
                 border-left: 5px solid transparent;
                 border-right: 5px solid transparent;
-                border-top: 5px solid {Colors.TEXT};
+                border-top: 5px solid {theme().TEXT};
             }}
             QComboBox QAbstractItemView {{
-                background-color: {Colors.HEADER}; color: {Colors.TEXT};
-                selection-background-color: {Colors.ACCENT};
+                background-color: {theme().HEADER}; color: {theme().TEXT};
+                selection-background-color: {theme().ACCENT};
             }}
         """)
         return combo
@@ -702,27 +725,27 @@ class BaseSettingsDialog(QDialog):
         retention_slider, retention_label, font_slider, font_label).
         """
         row1 = QHBoxLayout()
-        row1.addWidget(self._make_label("Current processes:", 11, color=Colors.TEXT_MUTED))
+        row1.addWidget(self._make_label("Current processes:", 11, color=theme().TEXT_MUTED))
         row1.addStretch()
         current_spin = _make_spinbox(Defaults.CURRENT_ROWS)
         row1.addWidget(current_spin)
         layout.addLayout(row1)
 
         row2 = QHBoxLayout()
-        row2.addWidget(self._make_label("History records:", 11, color=Colors.TEXT_MUTED))
+        row2.addWidget(self._make_label("History records:", 11, color=theme().TEXT_MUTED))
         row2.addStretch()
         history_spin = _make_spinbox(Defaults.HISTORY_ROWS)
         row2.addWidget(history_spin)
         layout.addLayout(row2)
 
         row3 = QHBoxLayout()
-        row3.addWidget(self._make_label("Refresh rate:", 11, color=Colors.TEXT_MUTED))
+        row3.addWidget(self._make_label("Refresh rate:", 11, color=theme().TEXT_MUTED))
         row3.addStretch()
         refresh_slider = QSlider(Qt.Orientation.Horizontal)
         refresh_slider.setRange(1, 10)
         refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 500)
         refresh_slider.setFixedWidth(140)
-        refresh_slider.setStyleSheet(_SLIDER_STYLE)
+        refresh_slider.setStyleSheet(_slider_style())
         row3.addWidget(refresh_slider)
         refresh_label = self._make_label(f"{Defaults.REFRESH_RATE_MS} ms", 11)
         refresh_label.setFixedWidth(65)
@@ -732,13 +755,13 @@ class BaseSettingsDialog(QDialog):
         layout.addLayout(row3)
 
         row4 = QHBoxLayout()
-        row4.addWidget(self._make_label("History retention:", 11, color=Colors.TEXT_MUTED))
+        row4.addWidget(self._make_label("History retention:", 11, color=theme().TEXT_MUTED))
         row4.addStretch()
         retention_slider = QSlider(Qt.Orientation.Horizontal)
         retention_slider.setRange(1, 36)
         retention_slider.setValue(Defaults.RETENTION_MINUTES // 10)
         retention_slider.setFixedWidth(140)
-        retention_slider.setStyleSheet(_SLIDER_STYLE)
+        retention_slider.setStyleSheet(_slider_style())
         row4.addWidget(retention_slider)
         retention_label = self._make_label(f"{Defaults.RETENTION_MINUTES} min", 11)
         retention_label.setFixedWidth(65)
@@ -749,13 +772,13 @@ class BaseSettingsDialog(QDialog):
 
         # Font size
         row_font = QHBoxLayout()
-        row_font.addWidget(self._make_label("Font size:", 11, color=Colors.TEXT_MUTED))
+        row_font.addWidget(self._make_label("Font size:", 11, color=theme().TEXT_MUTED))
         row_font.addStretch()
         font_slider = QSlider(Qt.Orientation.Horizontal)
         font_slider.setRange(8, 18)
         font_slider.setValue(Defaults.FONT_SIZE)
         font_slider.setFixedWidth(140)
-        font_slider.setStyleSheet(_SLIDER_STYLE)
+        font_slider.setStyleSheet(_slider_style())
         row_font.addWidget(font_slider)
         font_label = self._make_label(f"{Defaults.FONT_SIZE} pt", 11)
         font_label.setFixedWidth(65)
@@ -782,21 +805,21 @@ class BaseSettingsDialog(QDialog):
         layout.addWidget(self._make_label("Network Settings", 12, bold=True))
 
         row_unit = QHBoxLayout()
-        row_unit.addWidget(self._make_label("Speed unit:", 11, color=Colors.TEXT_MUTED))
+        row_unit.addWidget(self._make_label("Speed unit:", 11, color=theme().TEXT_MUTED))
         row_unit.addStretch()
         unit_combo = self._make_combo(["KB/s", "MB/s"], Defaults.NETWORK_UNIT)
         row_unit.addWidget(unit_combo)
         layout.addLayout(row_unit)
 
         row_sort = QHBoxLayout()
-        row_sort.addWidget(self._make_label("Sort by:", 11, color=Colors.TEXT_MUTED))
+        row_sort.addWidget(self._make_label("Sort by:", 11, color=theme().TEXT_MUTED))
         row_sort.addStretch()
         sort_combo = self._make_combo(["total", "download", "upload"], Defaults.NETWORK_SORT_MODE)
         row_sort.addWidget(sort_combo)
         layout.addLayout(row_sort)
 
         row_dl = QHBoxLayout()
-        row_dl.addWidget(self._make_label("Max download (Mbps):", 11, color=Colors.TEXT_MUTED))
+        row_dl.addWidget(self._make_label("Max download (Mbps):", 11, color=theme().TEXT_MUTED))
         row_dl.addStretch()
         dl_spin = QSpinBox()
         dl_spin.setRange(0, 100000)
@@ -806,12 +829,12 @@ class BaseSettingsDialog(QDialog):
         dl_spin.setFixedHeight(32)
         dl_spin.setFixedWidth(100)
         dl_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dl_spin.setStyleSheet(_SPINBOX_STYLE)
+        dl_spin.setStyleSheet(_spinbox_style())
         row_dl.addWidget(dl_spin)
         layout.addLayout(row_dl)
 
         row_ul = QHBoxLayout()
-        row_ul.addWidget(self._make_label("Max upload (Mbps):", 11, color=Colors.TEXT_MUTED))
+        row_ul.addWidget(self._make_label("Max upload (Mbps):", 11, color=theme().TEXT_MUTED))
         row_ul.addStretch()
         ul_spin = QSpinBox()
         ul_spin.setRange(0, 100000)
@@ -821,12 +844,12 @@ class BaseSettingsDialog(QDialog):
         ul_spin.setFixedHeight(32)
         ul_spin.setFixedWidth(100)
         ul_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ul_spin.setStyleSheet(_SPINBOX_STYLE)
+        ul_spin.setStyleSheet(_spinbox_style())
         row_ul.addWidget(ul_spin)
         layout.addLayout(row_ul)
 
         speed_hint = self._make_label(
-            "0 = auto-detect from link speed. Test yours at speedtest.net", 9, color=Colors.TEXT_FAINT
+            "0 = auto-detect from link speed. Test yours at speedtest.net", 9, color=theme().TEXT_FAINT
         )
         layout.addWidget(speed_hint)
 
@@ -880,7 +903,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
         self.setWindowTitle("Vitals - Setup")
         self.resize(480, 560)
 
-        self._apply_dark_theme()
+        self._apply_theme()
 
         self._setup_ui()
 
@@ -893,7 +916,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
-        subtitle = self._make_label("Select monitors to open", 10, color=Colors.TEXT_DIM)
+        subtitle = self._make_label("Select monitors to open", 10, color=theme().TEXT_DIM)
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
 
@@ -930,13 +953,13 @@ class InitialSettingsDialog(BaseSettingsDialog):
         mode_row.addWidget(self.net_btn)
 
         active_style = f"""
-            QPushButton {{ background-color: {Colors.ACCENT}; color: white; border: none; border-radius: 6px; }}
+            QPushButton {{ background-color: {theme().ACCENT}; color: white; border: none; border-radius: 6px; }}
         """
         inactive_style = f"""
             QPushButton {{
-                background-color: {Colors.HEADER}; color: {Colors.TEXT_DIM}; border: none; border-radius: 6px;
+                background-color: {theme().HEADER}; color: {theme().TEXT_DIM}; border: none; border-radius: 6px;
             }}
-            QPushButton:hover {{ background-color: {Colors.BORDER}; }}
+            QPushButton:hover {{ background-color: {theme().BORDER}; }}
         """
         self.cpu_btn.setStyleSheet(active_style)
         self.mem_btn.setStyleSheet(inactive_style)
@@ -944,7 +967,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
 
         layout.addLayout(mode_row)
 
-        hint = self._make_label("Select one or more monitors", 9, color=Colors.TEXT_FAINT)
+        hint = self._make_label("Select one or more monitors", 9, color=theme().TEXT_FAINT)
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
 
@@ -964,7 +987,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
         layout.addWidget(self._make_label("Memory Settings", 12, bold=True))
 
         row5 = QHBoxLayout()
-        row5.addWidget(self._make_label("Display unit:", 11, color=Colors.TEXT_MUTED))
+        row5.addWidget(self._make_label("Display unit:", 11, color=theme().TEXT_MUTED))
         row5.addStretch()
         self.unit_combo = self._make_combo(["KB", "MB", "GB"], Defaults.MEMORY_UNIT)
         row5.addWidget(self.unit_combo)
@@ -990,7 +1013,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
 
         # Start with Windows toggle
         startup_row = QHBoxLayout()
-        startup_row.addWidget(self._make_label("Start with Windows:", 11, color=Colors.TEXT_MUTED))
+        startup_row.addWidget(self._make_label("Start with Windows:", 11, color=theme().TEXT_MUTED))
         startup_row.addStretch()
         self.startup_toggle = QPushButton()
         self.startup_toggle.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
@@ -1009,7 +1032,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
         cpu_threads = psutil.cpu_count()
         ram_gb = round(psutil.virtual_memory().total / (1024 ** 3))
         info_label = self._make_label(
-            f"Detected: {cpu_threads} CPU threads, {ram_gb} GB RAM", 10, color=Colors.TEXT_FAINT
+            f"Detected: {cpu_threads} CPU threads, {ram_gb} GB RAM", 10, color=theme().TEXT_FAINT
         )
         info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(info_label)
@@ -1021,9 +1044,9 @@ class InitialSettingsDialog(BaseSettingsDialog):
         self.start_btn.setFixedHeight(44)
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.start_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {Colors.ACCENT}; color: white; border: none; border-radius: 8px; }}
-            QPushButton:hover {{ background-color: {Colors.ACCENT_HOVER}; }}
-            QPushButton:disabled {{ background-color: {Colors.TEXT_DISABLED}; color: {Colors.TEXT_DIM}; }}
+            QPushButton {{ background-color: {theme().ACCENT}; color: white; border: none; border-radius: 8px; }}
+            QPushButton:hover {{ background-color: {theme().ACCENT_HOVER}; }}
+            QPushButton:disabled {{ background-color: {theme().TEXT_DISABLED}; color: {theme().TEXT_DIM}; }}
         """)
         self.start_btn.clicked.connect(self._on_start)
         layout.addWidget(self.start_btn)
@@ -1033,13 +1056,13 @@ class InitialSettingsDialog(BaseSettingsDialog):
 
     def _update_mode_buttons(self):
         active_style = f"""
-            QPushButton {{ background-color: {Colors.ACCENT}; color: white; border: none; border-radius: 6px; }}
+            QPushButton {{ background-color: {theme().ACCENT}; color: white; border: none; border-radius: 6px; }}
         """
         inactive_style = f"""
             QPushButton {{
-                background-color: {Colors.HEADER}; color: {Colors.TEXT_DIM}; border: none; border-radius: 6px;
+                background-color: {theme().HEADER}; color: {theme().TEXT_DIM}; border: none; border-radius: 6px;
             }}
-            QPushButton:hover {{ background-color: {Colors.BORDER}; }}
+            QPushButton:hover {{ background-color: {theme().BORDER}; }}
         """
         self.cpu_btn.setStyleSheet(active_style if self.cpu_btn.isChecked() else inactive_style)
         self.mem_btn.setStyleSheet(active_style if self.mem_btn.isChecked() else inactive_style)
@@ -1054,13 +1077,13 @@ class InitialSettingsDialog(BaseSettingsDialog):
         if self.startup_toggle.isChecked():
             self.startup_toggle.setText("ON")
             self.startup_toggle.setStyleSheet(f"""
-                QPushButton {{ background-color: {Colors.ACCENT}; color: white; border: none; border-radius: 6px; }}
+                QPushButton {{ background-color: {theme().ACCENT}; color: white; border: none; border-radius: 6px; }}
             """)
         else:
             self.startup_toggle.setText("OFF")
             self.startup_toggle.setStyleSheet(f"""
-                QPushButton {{ background-color: {Colors.HEADER}; color: {Colors.TEXT_DIM}; border: none; border-radius: 6px; }}
-                QPushButton:hover {{ background-color: {Colors.BORDER}; }}
+                QPushButton {{ background-color: {theme().HEADER}; color: {theme().TEXT_DIM}; border: none; border-radius: 6px; }}
+                QPushButton:hover {{ background-color: {theme().BORDER}; }}
             """)
 
     def _on_start(self):
@@ -1158,7 +1181,7 @@ class CPUSettingsDialog(BaseSettingsDialog):
         self.setWindowTitle("CPU Monitor - Settings")
         self.resize(400, 600)
 
-        self._apply_dark_theme()
+        self._apply_theme()
 
         self._setup_ui()
         self._load_settings()
@@ -1207,8 +1230,8 @@ class CPUSettingsDialog(BaseSettingsDialog):
         self.apply_btn.setFixedHeight(44)
         self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.apply_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {Colors.ACCENT}; color: white; border: none; border-radius: 8px; }}
-            QPushButton:hover {{ background-color: {Colors.ACCENT_HOVER}; }}
+            QPushButton {{ background-color: {theme().ACCENT}; color: white; border: none; border-radius: 8px; }}
+            QPushButton:hover {{ background-color: {theme().ACCENT_HOVER}; }}
         """)
         self.apply_btn.clicked.connect(self.accept)
         layout.addWidget(self.apply_btn)
@@ -1251,7 +1274,7 @@ class MemorySettingsDialog(BaseSettingsDialog):
         self.setWindowTitle("Memory Monitor - Settings")
         self.resize(400, 900)
 
-        self._apply_dark_theme()
+        self._apply_theme()
 
         self._setup_ui()
         self._load_settings()
@@ -1273,7 +1296,7 @@ class MemorySettingsDialog(BaseSettingsDialog):
 
         layout.addWidget(self._make_label("Memory Settings", 12, bold=True))
         row5 = QHBoxLayout()
-        row5.addWidget(self._make_label("Display unit:", 11, color=Colors.TEXT_MUTED))
+        row5.addWidget(self._make_label("Display unit:", 11, color=theme().TEXT_MUTED))
         row5.addStretch()
         self.unit_combo = self._make_combo(["KB", "MB", "GB"], "MB")
         row5.addWidget(self.unit_combo)
@@ -1325,8 +1348,8 @@ class MemorySettingsDialog(BaseSettingsDialog):
         self.apply_btn.setFixedHeight(44)
         self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.apply_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {Colors.ACCENT}; color: white; border: none; border-radius: 8px; }}
-            QPushButton:hover {{ background-color: {Colors.ACCENT_HOVER}; }}
+            QPushButton {{ background-color: {theme().ACCENT}; color: white; border: none; border-radius: 8px; }}
+            QPushButton:hover {{ background-color: {theme().ACCENT_HOVER}; }}
         """)
         self.apply_btn.clicked.connect(self.accept)
         layout.addWidget(self.apply_btn)
@@ -1387,7 +1410,7 @@ class NetworkSettingsDialog(BaseSettingsDialog):
         self.setWindowTitle("Network Monitor - Settings")
         self.resize(400, 700)
 
-        self._apply_dark_theme()
+        self._apply_theme()
 
         self._setup_ui()
         self._load_settings()
@@ -1444,8 +1467,8 @@ class NetworkSettingsDialog(BaseSettingsDialog):
         self.apply_btn.setFixedHeight(44)
         self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.apply_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {Colors.ACCENT}; color: white; border: none; border-radius: 8px; }}
-            QPushButton:hover {{ background-color: {Colors.ACCENT_HOVER}; }}
+            QPushButton {{ background-color: {theme().ACCENT}; color: white; border: none; border-radius: 8px; }}
+            QPushButton:hover {{ background-color: {theme().ACCENT_HOVER}; }}
         """)
         self.apply_btn.clicked.connect(self.accept)
         layout.addWidget(self.apply_btn)

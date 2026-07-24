@@ -21,17 +21,17 @@ from PySide6.QtWidgets import (
 
 from .process_actions import PRIORITY_CLASSES
 from .styles import Fonts
+from .theme import theme
 
 
 class _ProcessDialogBase(QDialog):
-    """Modal dialog with a dark theme and process name header."""
+    """Modal dialog with the active theme and a process name header.
 
-    BG_COLOR = "#1e1e2e"
-    CARD_COLOR = "#2a2a3e"
-    HEADER_COLOR = "#3a3a4e"
-    ACCENT = "#e94560"
-    TEXT = "#ffffff"
-    TEXT_MUTED = "#aaaaaa"
+    These dialogs used to carry their OWN copy of the palette hexes — a
+    duplicate that could not follow a theme flip. They now read the shared
+    palette like every other widget (root Rules #4 and #5); being modal,
+    reading it once at construction is enough.
+    """
 
     def __init__(
         self,
@@ -47,17 +47,18 @@ class _ProcessDialogBase(QDialog):
         self._build_base(process_name, proc_color)
 
     def _build_base(self, process_name: str, proc_color: Optional[QColor]):
+        palette = theme()
         self.setStyleSheet(f"""
             QDialog {{
-                background-color: {self.BG_COLOR};
+                background-color: {palette.BACKGROUND};
             }}
             QLabel {{
                 background: transparent;
-                color: {self.TEXT};
+                color: {palette.TEXT};
             }}
             QPushButton {{
-                background-color: {self.HEADER_COLOR};
-                color: {self.TEXT};
+                background-color: {palette.HEADER};
+                color: {palette.TEXT};
                 border: none;
                 border-radius: 6px;
                 padding: 6px 20px;
@@ -65,14 +66,25 @@ class _ProcessDialogBase(QDialog):
                 font-size: {Fonts.SIZE_BODY}px;
             }}
             QPushButton:hover {{
-                background-color: #4a4a5e;
+                background-color: {palette.BORDER};
             }}
             QRadioButton {{
-                color: {self.TEXT};
+                color: {palette.TEXT};
                 background: transparent;
                 font-family: {Fonts.FAMILY};
                 font-size: {Fonts.SIZE_BODY}px;
                 spacing: 8px;
+            }}
+            QRadioButton::indicator {{
+                width: 13px;
+                height: 13px;
+                border-radius: 8px;
+                border: 2px solid {palette.BORDER};
+                background-color: {palette.CARD};
+            }}
+            QRadioButton::indicator:checked {{
+                border: 2px solid {palette.ACCENT};
+                background-color: {palette.ACCENT};
             }}
         """)
 
@@ -82,13 +94,13 @@ class _ProcessDialogBase(QDialog):
 
         # Header — process name
         header = QFrame()
-        header.setStyleSheet(f"background-color: {self.CARD_COLOR};")
+        header.setStyleSheet(f"background-color: {palette.CARD};")
         header_layout = QVBoxLayout(header)
         header_layout.setContentsMargins(20, 16, 20, 16)
 
         name_label = QLabel(process_name)
         name_label.setFont(QFont(Fonts.FAMILY, Fonts.SIZE_HEADER, QFont.Weight.Bold))
-        name_color = proc_color.name() if proc_color else self.TEXT
+        name_color = proc_color.name() if proc_color else palette.TEXT
         name_label.setStyleSheet(f"color: {name_color}; background: transparent;")
         header_layout.addWidget(name_label)
 
@@ -96,7 +108,7 @@ class _ProcessDialogBase(QDialog):
 
         # Content area
         content = QFrame()
-        content.setStyleSheet(f"background-color: {self.BG_COLOR};")
+        content.setStyleSheet(f"background-color: {palette.BACKGROUND};")
         self._content = QVBoxLayout(content)
         self._content.setContentsMargins(20, 16, 20, 20)
         self._content.setSpacing(12)
@@ -119,7 +131,7 @@ class KillConfirmDialog(_ProcessDialogBase):
         count_str = f"{count} instance{'s' if count != 1 else ''}"
         msg = QLabel(f"Kill all {count_str} of this process?\nThis cannot be undone.")
         msg.setFont(QFont(Fonts.FAMILY, Fonts.SIZE_BODY))
-        msg.setStyleSheet(f"color: {self.TEXT_MUTED}; background: transparent;")
+        msg.setStyleSheet(f"color: {theme().TEXT_MUTED}; background: transparent;")
         self._content.addWidget(msg)
 
         btn_row = QHBoxLayout()
@@ -130,10 +142,11 @@ class KillConfirmDialog(_ProcessDialogBase):
         btn_row.addWidget(cancel_btn)
 
         kill_btn = QPushButton("Kill")
+        palette = theme()
         kill_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {self.ACCENT};
-                color: {self.TEXT};
+                background-color: {palette.ACCENT};
+                color: #ffffff;
                 border: none;
                 border-radius: 6px;
                 padding: 6px 20px;
@@ -141,7 +154,7 @@ class KillConfirmDialog(_ProcessDialogBase):
                 font-size: {Fonts.SIZE_BODY}px;
             }}
             QPushButton:hover {{
-                background-color: #ff6080;
+                background-color: {palette.ACCENT_HOVER};
             }}
         """)
         kill_btn.clicked.connect(self.accept)
@@ -164,7 +177,7 @@ class PriorityDialog(_ProcessDialogBase):
 
         desc = QLabel("Set priority for all instances:")
         desc.setFont(QFont(Fonts.FAMILY, Fonts.SIZE_SMALL))
-        desc.setStyleSheet(f"color: {self.TEXT_MUTED}; background: transparent;")
+        desc.setStyleSheet(f"color: {theme().TEXT_MUTED}; background: transparent;")
         self._content.addWidget(desc)
 
         self._group = QButtonGroup(self)
@@ -184,10 +197,11 @@ class PriorityDialog(_ProcessDialogBase):
         btn_row.addWidget(cancel_btn)
 
         apply_btn = QPushButton("Apply")
+        palette = theme()
         apply_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: #3a6a3a;
-                color: {self.TEXT};
+                background-color: {palette.CONFIRM};
+                color: #ffffff;
                 border: none;
                 border-radius: 6px;
                 padding: 6px 20px;
@@ -195,7 +209,7 @@ class PriorityDialog(_ProcessDialogBase):
                 font-size: {Fonts.SIZE_BODY}px;
             }}
             QPushButton:hover {{
-                background-color: #4a8a4a;
+                background-color: {palette.CONFIRM_HOVER};
             }}
         """)
         apply_btn.clicked.connect(self.accept)

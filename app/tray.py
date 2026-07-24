@@ -6,12 +6,14 @@ Single tray icon representing the whole application (gadget mode).
 The monitor windows use Qt.Tool, so they have no taskbar button and no
 Alt-Tab entry — like desktop gadgets. This tray icon is the application's
 only shell identity: its menu shows/hides each monitor window, and Exit
-is the way to quit the application (closing a window only hides it).
+is the ONLY way to quit the application (a window's X only hides it, and
+the menu bar that used to carry File > Exit is gone — owner 2026-07-24).
 """
 
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from .styles import CONTEXT_MENU_STYLE
+from .styles import context_menu_style
+from .theme import theme_manager
 
 
 class TrayController:
@@ -22,7 +24,8 @@ class TrayController:
         self._tray.setToolTip("Vitals")
 
         self._menu = QMenu()
-        self._menu.setStyleSheet(CONTEXT_MENU_STYLE)
+        self._apply_theme()
+        theme_manager().changed.connect(self._apply_theme)
 
         self._window_actions = []
         for window in windows:
@@ -43,6 +46,10 @@ class TrayController:
         self._tray.setContextMenu(self._menu)
         self._tray.activated.connect(self._on_activated)
         self._tray.show()
+
+    def _apply_theme(self):
+        """Restyle the tray menu for the active theme (the tray outlives a flip)."""
+        self._menu.setStyleSheet(context_menu_style())
 
     def prepare_exit(self):
         """Save visible layouts, then hide the tray icon and ALL windows at once.
