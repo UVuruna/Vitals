@@ -1,19 +1,30 @@
 """
 Color Management
 
-Handles all color logic for Vitals:
-- Company-based process name coloring:
-    Companies with >1 process name get an individual hue (360°/N evenly spaced).
-    Companies with exactly 1 process name share a single "Other" color.
-    Processes with no company info at all get a fixed near-white color.
-- Value-based usage coloring (per-monitor-mode thresholds: CPU and Memory are independent)
+Handles all data-driven color logic for Vitals:
 
-The app chrome/dark-theme palette (Colors) lives in styles.py, not here — this
-module only owns the value-threshold gradient defaults (_DEFAULT_VALUE_RANGES*)
-and the fixed near-white color for processes with no company info, which are
-config-tunable data rather than UI palette constants.
+- Company-based process name coloring, ranked by how many process names a
+  company runs (owner 2026-07-24):
+    1. The company with the MOST processes gets the theme's plain contrast
+       color — white on dark, black on light. It is almost always the OS
+       vendor, so the busiest name in the table stays neutral.
+    2. Every other named company walks a BLUE -> RED color wheel, running
+       counter-clockwise from blue through cyan/green/yellow to red as the
+       process count drops. Companies with a single process name share the
+       last (red) slot as "Other".
+    3. Processes with no company information at all are GRAY — the reserved
+       "Unknown" color, never part of the wheel.
+- Value-based usage coloring (per-monitor-mode thresholds: CPU, Memory and
+  Network are independent).
 
-Config is read from config/config.json — edit that file to tune value color thresholds.
+Both are theme-aware. The wheel's saturation/lightness and the value-color
+lightness come from the ACTIVE palette (theme.py), and every cached color is
+rebuilt when the theme flips — light mode gets darker tints for contrast on
+a pale surface, dark mode lighter ones.
+
+Config is read from config/config.json — edit that file to tune value color
+thresholds. The authored hexes are the hues only; each theme re-shades them
+(root Rule #19 — compute the variants, never author them twice).
 """
 
 import ctypes
@@ -26,6 +37,7 @@ from PySide6.QtCore import QMutex, QMutexLocker
 from PySide6.QtGui import QColor
 
 from .persistence import get_base_path, load_last_setup, save_last_setup
+from .theme import shade_for_theme, theme, theme_manager, wheel_color
 
 
 # ---------------------------------------------------------------------------
@@ -76,12 +88,10 @@ _DEFAULT_VALUE_RANGES_NET_UL = [
     {"max_pct": 100, "color": "#C85555"},
 ]
 
-# Near-white for processes with no company information at all (text color in table)
-_DEFAULT_NO_COMPANY_COLOR = "#D2D2D2"
-
-# HSL parameters for named multi-company hues (vivid pastels, readable on dark background)
-_COMPANY_HUE_SATURATION = 0.84
-_COMPANY_HUE_LIGHTNESS = 0.84
+_MODE_KEYS = (
+    "cpu", "cpu_all", "memory", "memory_total",
+    "memory_all", "memory_all_total", "net_dl", "net_ul",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -153,33 +163,26 @@ def _read_company_name(exe_path: str) -> Optional[str]:
 # ProcessColorManager — singleton, thread-safe
 # ---------------------------------------------------------------------------
 
-def _company_hue_color(index: int, total: int, saturation: float, lightness: float) -> QColor:
-    """
-    Return a QColor for a multi-company at discovery index `index` out of `total`.
-
-    Hues are evenly distributed: hue = index / total * 360°.
-    Saturation and lightness are user-configurable via ProcessColorManager.
-    """
-    hue = (index / total) * 360.0
-    return QColor.fromHslF(hue / 360.0, saturation, lightness)
-
-
 class ProcessColorManager:
     """
     Manages color assignment for processes.
 
-    Company-based coloring (three tiers):
-      - Multi-company (count > 1): individual hue, 360°/N evenly spaced where N = number
-        of such companies. When a new multi-company is discovered N grows and all hues shift.
-      - Singleton company (count == 1): shared "Other" color (warm tan).
-      - No company info: fixed near-white color.
+    Company-based coloring (three tiers, ranked by process-name count):
+      - Rank 0 (most process names): the theme's COMPANY_TOP contrast color
+        (white on dark, black on light).
+      - Ranks 1..N and "Other": the BLUE -> RED wheel. Rank 1 is blue; each
+        lower rank steps toward red; the singleton-company group "Other"
+        always occupies the last (red) slot.
+      - No company info: the theme's reserved COMPANY_UNKNOWN gray.
 
-    Legend shows multi-companies individually, singletons grouped as "Other",
-    and no-company processes as "Unknown" (white swatch).
+    Ranks are recomputed every refresh from the ACTIVE process set, so the
+    ordering the legend shows is exactly the ordering the colors follow.
+    Ties are broken by company name so equal counts never flicker.
 
     Value-based coloring:
-      - get_value_color(pct, mode) maps 0-100% to a color using per-mode thresholds.
-      - CPU and Memory maintain independent threshold lists.
+      - get_value_color(pct, mode) maps 0-100% to a color using per-mode
+        thresholds, re-shaded for the active theme.
+      - Each mode maintains an independent threshold list.
     """
 
     _instance: Optional['ProcessColorManager'] = None
@@ -202,33 +205,25 @@ class ProcessColorManager:
         self._company_cache: dict[str, Optional[str]] = {}
         # {company_name -> count of distinct process names}
         self._company_counts: dict[str, int] = {}
-        # {company_name -> hue index} — only for companies with count > 1
-        self._company_multi_idx: dict[str, int] = {}
-        # Total companies that have ever reached count > 1 (used for hue spacing)
-        self._company_multi_count: int = 0
+        # {company_name -> rank} for companies with more than one process name;
+        # rank 0 = most processes. Recomputed every refresh_active_counts().
+        self._company_rank: dict[str, int] = {}
+        # Number of slots on the blue->red wheel (ranks 1.. plus "Other")
+        self._wheel_slots: int = 1
 
-        # White for processes with no company info
-        self._no_company_color = QColor(_DEFAULT_NO_COMPANY_COLOR)
+        # Per-theme wheel saturation/lightness, seeded from each palette and
+        # overridden by whatever the user saved for that theme.
+        self._hue_params: dict[str, tuple[float, float]] = {}
 
-        # HSL parameters for multi-company hue colors (user-configurable)
-        self._hue_saturation: float = _COMPANY_HUE_SATURATION
-        self._hue_lightness: float = _COMPANY_HUE_LIGHTNESS
-
-        # Value color ranges — CPU, Memory (Usage), and Memory Total start from same config
-        self._value_ranges_cpu: list[tuple[float, QColor]] = []
-        self._value_ranges_memory: list[tuple[float, QColor]] = []
-        self._value_ranges_memory_total: list[tuple[float, QColor]] = []
-
-        # Value color ranges for the Σ (all processes) total row
-        self._value_ranges_cpu_all: list[tuple[float, QColor]] = []
-        self._value_ranges_memory_all: list[tuple[float, QColor]] = []
-        self._value_ranges_memory_all_total: list[tuple[float, QColor]] = []
-
-        # Network color ranges (download and upload have independent scales)
-        self._value_ranges_net_dl: list[tuple[float, QColor]] = []
-        self._value_ranges_net_ul: list[tuple[float, QColor]] = []
+        # Value color ranges as AUTHORED (theme-neutral hues + thresholds)
+        self._value_ranges: dict[str, list[tuple[float, QColor]]] = {}
+        # The same ranges re-shaded for the ACTIVE theme (what the UI reads)
+        self._themed_ranges: dict[str, list[tuple[float, QColor]]] = {}
 
         self._load_config()
+        theme_manager().changed.connect(self._on_theme_changed)
+
+    # --- configuration ------------------------------------------------
 
     def _load_config(self):
         """Load color configuration from config/config.json.
@@ -251,66 +246,78 @@ class ProcessColorManager:
             except (OSError, ValueError) as e:
                 print(f"[Vitals] Invalid {config_path}: {e} - using default value colors", file=sys.stderr)
 
-        parsed_ranges = [
-            (float(entry["max_pct"]), QColor(entry["color"]))
-            for entry in value_ranges_data
-        ]
+        def parse(entries) -> list[tuple[float, QColor]]:
+            return [(float(e["max_pct"]), QColor(e["color"])) for e in entries]
 
-        # CPU, Memory, and Memory Total start from the same config; each tuned independently
-        self._value_ranges_cpu = list(parsed_ranges)
-        self._value_ranges_memory = list(parsed_ranges)
-        self._value_ranges_memory_total = list(parsed_ranges)
+        # CPU, Memory and Memory Total start from the config ranges; the Σ
+        # total rows and the two network scales have their own defaults.
+        per_process = parse(value_ranges_data)
+        cpu_all = parse(_DEFAULT_VALUE_RANGES_CPU_ALL)
+        mem_all = parse(_DEFAULT_VALUE_RANGES_MEM_ALL)
+        self._value_ranges = {
+            "cpu": list(per_process),
+            "memory": list(per_process),
+            "memory_total": list(per_process),
+            "cpu_all": list(cpu_all),
+            "memory_all": list(mem_all),
+            "memory_all_total": list(mem_all),
+            "net_dl": parse(_DEFAULT_VALUE_RANGES_NET_DL),
+            "net_ul": parse(_DEFAULT_VALUE_RANGES_NET_UL),
+        }
 
-        # All-processes total row ranges use separate defaults per mode
-        parsed_ranges_cpu_all = [
-            (float(entry["max_pct"]), QColor(entry["color"]))
-            for entry in _DEFAULT_VALUE_RANGES_CPU_ALL
-        ]
-        parsed_ranges_mem_all = [
-            (float(entry["max_pct"]), QColor(entry["color"]))
-            for entry in _DEFAULT_VALUE_RANGES_MEM_ALL
-        ]
-        self._value_ranges_cpu_all = list(parsed_ranges_cpu_all)
-        self._value_ranges_memory_all = list(parsed_ranges_mem_all)
-        self._value_ranges_memory_all_total = list(parsed_ranges_mem_all)
-
-        # Network color ranges
-        parsed_ranges_net_dl = [
-            (float(entry["max_pct"]), QColor(entry["color"]))
-            for entry in _DEFAULT_VALUE_RANGES_NET_DL
-        ]
-        parsed_ranges_net_ul = [
-            (float(entry["max_pct"]), QColor(entry["color"]))
-            for entry in _DEFAULT_VALUE_RANGES_NET_UL
-        ]
-        self._value_ranges_net_dl = list(parsed_ranges_net_dl)
-        self._value_ranges_net_ul = list(parsed_ranges_net_ul)
-
-        # Load user-set hue params and color thresholds from last_setup.json.
-        # Shape checks are required: pre-2.0 versions stored color_thresholds
-        # as a flat list — legacy or hand-edited data is discarded, not fatal.
         setup_data = load_last_setup()
-        hue = setup_data.get("hue_params", {})
-        if isinstance(hue, dict):
-            if "saturation" in hue:
-                self._hue_saturation = float(hue["saturation"])
-            if "lightness" in hue:
-                self._hue_lightness = float(hue["lightness"])
+
+        # Per-theme wheel params: seeded from each palette, overridden by the
+        # user's saved values for that theme. Shape checks are required —
+        # pre-2.2 versions stored ONE flat {saturation, lightness} pair, which
+        # is discarded rather than applied to both themes.
+        from .theme import THEMES
+        saved_hue = setup_data.get("hue_params", {})
+        for name, palette in THEMES.items():
+            sat, light = palette.HUE_SATURATION, palette.HUE_LIGHTNESS
+            entry = saved_hue.get(name) if isinstance(saved_hue, dict) else None
+            if isinstance(entry, dict):
+                sat = float(entry.get("saturation", sat))
+                light = float(entry.get("lightness", light))
+            self._hue_params[name] = (sat, light)
+
         # Restore saved color thresholds (overrides defaults)
         saved_thresholds = setup_data.get("color_thresholds", {})
         if isinstance(saved_thresholds, dict):
-            for mode_key in ("cpu", "cpu_all", "memory", "memory_total", "memory_all", "memory_all_total", "net_dl", "net_ul"):
+            for mode_key in _MODE_KEYS:
                 saved = saved_thresholds.get(mode_key)
                 if isinstance(saved, list) and len(saved) == 4:
                     self._apply_threshold_values(mode_key, saved)
+
+        self._rebuild_themed_ranges()
+
+    def _rebuild_themed_ranges(self):
+        """Re-shade every authored value range for the ACTIVE theme.
+
+        Called on load, on a threshold edit and on a theme flip — so
+        get_value_color() stays a plain list walk on the refresh hot path.
+        Must be called while holding self._mutex, or during single-threaded init.
+        """
+        palette = theme()
+        self._themed_ranges = {
+            mode: [(t, shade_for_theme(color, palette)) for t, color in ranges]
+            for mode, ranges in self._value_ranges.items()
+        }
+
+    def _on_theme_changed(self):
+        """Rebuild every theme-derived color cache after a Day/Night flip."""
+        with QMutexLocker(self._mutex):
+            self._rebuild_themed_ranges()
+
+    # --- company discovery --------------------------------------------
 
     def lookup_company(self, name: str, pid: int):
         """
         Register a process name and resolve its company (background thread).
 
         Safe to call on every refresh — fast no-op for already-cached names.
-        When a company's process-name count reaches 2, it is promoted to a
-        multi-company and receives its own hue index.
+        Ranking itself is done by refresh_active_counts(), which runs right
+        after this on the same cycle.
 
         Args:
             name: Display process name (after alias mapping)
@@ -329,30 +336,19 @@ class ProcessColorManager:
             pass
 
         with QMutexLocker(self._mutex):
-            if name in self._company_cache:
-                return  # Another thread beat us (shouldn't happen — single BG thread)
-
-            self._company_cache[name] = company
-
-            if company:
-                prev = self._company_counts.get(company, 0)
-                self._company_counts[company] = prev + 1
-
-                # Promote to multi-company when count goes from 1 → 2.
-                # Hue = multi_idx / multi_count * 360° — recalculated dynamically.
-                if prev == 1:
-                    self._company_multi_idx[company] = self._company_multi_count
-                    self._company_multi_count += 1
+            self._company_cache.setdefault(name, company)
 
     def refresh_active_counts(self, active_names):
-        """Recalculate company counts from the set of currently active process names.
+        """Recalculate company counts and ranks from the ACTIVE process names.
 
-        Called every monitor refresh cycle so counts always reflect running processes.
-        Only names already resolved in _company_cache are counted — new names are
-        handled by lookup_company and will be included on the next cycle.
+        Called every monitor refresh cycle so both counts and colors always
+        reflect the processes actually running. Only names already resolved
+        in _company_cache are counted — new names are handled by
+        lookup_company and are included on the next cycle.
 
-        Hue assignments (_company_multi_idx) are never removed once granted, keeping
-        colors stable even if a company temporarily drops to a single active process.
+        Ranking is by process-name count descending, ties broken by company
+        name, so two companies with equal counts keep a stable order (and
+        therefore stable colors) between cycles.
         """
         counts: dict[str, int] = {}
         with QMutexLocker(self._mutex):
@@ -361,34 +357,45 @@ class ProcessColorManager:
                 if company:
                     counts[company] = counts.get(company, 0) + 1
             self._company_counts = counts
-            for company, count in counts.items():
-                if count > 1 and company not in self._company_multi_idx:
-                    self._company_multi_idx[company] = self._company_multi_count
-                    self._company_multi_count += 1
+
+            multi = sorted(
+                ((c, n) for c, n in counts.items() if n > 1),
+                key=lambda item: (-item[1], item[0]),
+            )
+            self._company_rank = {company: i for i, (company, _n) in enumerate(multi)}
+            # Rank 0 is the plain contrast color, so the wheel carries ranks
+            # 1.. plus the "Other" slot — at least one slot always exists.
+            self._wheel_slots = max(len(multi) - 1, 0) + 1
+
+    # --- company colors -----------------------------------------------
+
+    def _slot_color(self, company: Optional[str]) -> QColor:
+        """Return the wheel/contrast color for a company. Caller holds the mutex."""
+        palette = theme()
+        rank = self._company_rank.get(company)
+        if rank == 0:
+            return QColor(palette.COMPANY_TOP)
+        slots = self._wheel_slots
+        # An unranked company is a singleton — it shares the last ("Other") slot
+        slot = slots - 1 if rank is None else rank - 1
+        sat, light = self._hue_params[palette.name]
+        return wheel_color(slot, slots, sat, light)
 
     def get_process_color(self, name: str) -> Optional[QColor]:
         """
         Return the color for a process name text (main thread).
 
-        Returns None if the name has not been looked up yet.
-        Returns a hue color for multi-company processes (count > 1).
-        Returns a hue color for singleton-company processes (count == 1) — last slot in ring.
-        Returns _no_company_color for processes with no company info.
+        Returns None if the name has not been looked up yet, the theme's
+        COMPANY_UNKNOWN gray for processes with no company info, and the
+        ranked contrast/wheel color otherwise.
         """
         with QMutexLocker(self._mutex):
             if name not in self._company_cache:
                 return None
             company = self._company_cache[name]
             if not company:
-                return self._no_company_color
-            count = self._company_counts.get(company, 0)
-            n = self._company_multi_count
-            total = n + 1  # +1 reserves last slot for "Other"
-            i = n if count <= 1 else self._company_multi_idx.get(company, 0)
-            sat = self._hue_saturation
-            light = self._hue_lightness
-
-        return _company_hue_color(i, total, sat, light)
+                return QColor(theme().COMPANY_UNKNOWN)
+            return self._slot_color(company)
 
     def get_company_name(self, name: str) -> Optional[str]:
         """Return the resolved company name for a process display name, or None if unknown."""
@@ -396,78 +403,53 @@ class ProcessColorManager:
             return self._company_cache.get(name)
 
     def get_hue_params(self) -> tuple[float, float]:
-        """Return current (saturation, lightness) for multi-company hue colors."""
+        """Return the ACTIVE theme's (saturation, lightness) for wheel colors."""
         with QMutexLocker(self._mutex):
-            return self._hue_saturation, self._hue_lightness
+            return self._hue_params[theme().name]
 
     def update_hue_params(self, saturation: float, lightness: float):
-        """Update hue saturation and lightness in-memory and persist to last_setup.json.
+        """Update the ACTIVE theme's wheel saturation/lightness and persist it.
+
+        Each theme keeps its own pair — light mode needs darker, more
+        saturated tints than dark mode, so tuning one never disturbs the other.
 
         Args:
             saturation: 0.0–1.0
             lightness:  0.0–1.0
         """
+        name = theme().name
         with QMutexLocker(self._mutex):
-            self._hue_saturation = saturation
-            self._hue_lightness = lightness
+            self._hue_params[name] = (saturation, lightness)
 
         data = load_last_setup()
-        data["hue_params"] = {"saturation": saturation, "lightness": lightness}
+        # Replace the pre-2.2 flat {saturation, lightness} shape outright
+        if not isinstance(data.get("hue_params"), dict) or "saturation" in data.get("hue_params", {}):
+            data["hue_params"] = {}
+        data["hue_params"][name] = {"saturation": saturation, "lightness": lightness}
         save_last_setup(data)
 
-    def _get_ranges_ref(self, mode: str) -> list[tuple[float, QColor]]:
-        """Return the range list for a given mode key."""
-        mapping = {
-            "cpu": self._value_ranges_cpu,
-            "cpu_all": self._value_ranges_cpu_all,
-            "memory": self._value_ranges_memory,
-            "memory_total": self._value_ranges_memory_total,
-            "memory_all": self._value_ranges_memory_all,
-            "memory_all_total": self._value_ranges_memory_all_total,
-            "net_dl": self._value_ranges_net_dl,
-            "net_ul": self._value_ranges_net_ul,
-        }
-        return mapping.get(mode, self._value_ranges_memory)
-
-    def _set_ranges(self, mode: str, ranges: list[tuple[float, QColor]]):
-        """Set the range list for a given mode key."""
-        if mode == "cpu":
-            self._value_ranges_cpu = ranges
-        elif mode == "cpu_all":
-            self._value_ranges_cpu_all = ranges
-        elif mode == "memory_total":
-            self._value_ranges_memory_total = ranges
-        elif mode == "memory_all":
-            self._value_ranges_memory_all = ranges
-        elif mode == "memory_all_total":
-            self._value_ranges_memory_all_total = ranges
-        elif mode == "net_dl":
-            self._value_ranges_net_dl = ranges
-        elif mode == "net_ul":
-            self._value_ranges_net_ul = ranges
-        else:
-            self._value_ranges_memory = ranges
+    # --- value colors -------------------------------------------------
 
     def _apply_threshold_values(self, mode: str, thresholds: list):
-        """Apply threshold values to the correct range list (in-memory only, no save).
+        """Apply threshold values to the authored range list (no save).
 
         Must be called while holding self._mutex, or during single-threaded init.
         """
-        ranges = self._get_ranges_ref(mode)
-        colors = [color for _, color in ranges]
+        colors = [color for _, color in self._value_ranges[mode]]
         new_ranges = [(float(t), colors[i]) for i, t in enumerate(thresholds)]
         new_ranges.append((100.0, colors[-1]))
-        self._set_ranges(mode, new_ranges)
+        self._value_ranges[mode] = new_ranges
 
     def update_value_thresholds(self, thresholds: list, mode: str):
         """Update the 4 color zone thresholds in-memory and persist to last_setup.json.
 
         Args:
             thresholds: 4 ascending int values [t1, t2, t3, t4] in range 1-99.
-            mode:       "cpu", "cpu_all", "memory", "memory_total", "memory_all", or "memory_all_total"
+            mode:       one of _MODE_KEYS
         """
         with QMutexLocker(self._mutex):
             self._apply_threshold_values(mode, thresholds)
+            self._rebuild_themed_ranges()
 
         data = load_last_setup()
         # Replace legacy list-shaped color_thresholds (pre-2.0 format) outright
@@ -477,49 +459,65 @@ class ProcessColorManager:
         save_last_setup(data)
 
     def get_value_ranges(self, mode: str) -> list[tuple[float, QColor]]:
-        """Return value color ranges for UI display (ColorScaleWidget).
+        """Return theme-shaded value color ranges for UI display (ColorScaleWidget).
 
         Args:
-            mode: "cpu", "memory", "net_dl", "net_ul", etc.
+            mode: one of _MODE_KEYS
         """
         with QMutexLocker(self._mutex):
-            return list(self._get_ranges_ref(mode))
+            return list(self._themed_ranges[mode])
+
+    def get_value_color(self, pct: float, mode: str) -> QColor:
+        """
+        Return a color for a usage percentage mapped to the configured thresholds.
+
+        Args:
+            pct:  Usage as 0-100 (e.g. 20.0 for 20%)
+            mode: one of _MODE_KEYS
+
+        Returns:
+            The theme-shaded color for the zone `pct` falls into.
+        """
+        with QMutexLocker(self._mutex):
+            ranges = self._themed_ranges[mode]
+
+        for max_pct_val, color in ranges:
+            if pct <= max_pct_val:
+                return color
+        return ranges[-1][1]
+
+    # --- legend -------------------------------------------------------
 
     def get_legend(self) -> list[tuple[str, QColor, int]]:
         """Return (label, color, count) sorted by count descending.
 
-        Multi-companies (count > 1) are listed individually; hue index = their multi_idx.
-        Singleton companies (count == 1) are grouped as "Other"; hue index = last slot.
-        Total hue ring size = multi_count + 1 (Other always occupies the last slot).
-        No-company processes appear as "Unknown" with a white swatch at the end.
+        The order IS the color ranking: the first entry carries the plain
+        contrast color, the rest walk the blue->red wheel. Singleton
+        companies are grouped into "Other" (the last, red slot) and
+        processes with no company info appear last as "Unknown" (gray).
         """
         with QMutexLocker(self._mutex):
-            n = self._company_multi_count
-            total = n + 1  # Other occupies the last slot
-            sat = self._hue_saturation
-            light = self._hue_lightness
             result = []
             singleton_count = 0
 
             for company, count in sorted(
-                self._company_counts.items(), key=lambda x: -x[1]
+                self._company_counts.items(), key=lambda x: (-x[1], x[0])
             ):
                 if count > 1:
-                    i = self._company_multi_idx.get(company, 0)
-                    color = _company_hue_color(i, total, sat, light)
-                    result.append((company, color, count))
+                    result.append((company, self._slot_color(company), count))
                 else:
                     singleton_count += 1
 
             if singleton_count > 0:
-                other_color = _company_hue_color(n, total, sat, light)
-                result.append(("Other", other_color, singleton_count))
+                result.append(("Other", self._slot_color(None), singleton_count))
 
             no_company_count = sum(
                 1 for c in self._company_cache.values() if c is None
             )
             if no_company_count > 0:
-                result.append(("Unknown", QColor("#ffffff"), no_company_count))
+                result.append(
+                    ("Unknown", QColor(theme().COMPANY_UNKNOWN), no_company_count)
+                )
 
             return result
 
@@ -541,22 +539,3 @@ class ProcessColorManager:
                 name for name, comp in self._company_cache.items()
                 if comp == company
             )
-
-    def get_value_color(self, pct: float, mode: str) -> QColor:
-        """
-        Return a color for a usage percentage mapped to the configured thresholds.
-
-        Args:
-            pct:  Usage as 0-100 (e.g. 20.0 for 20%)
-            mode: "cpu", "memory", "net_dl", "net_ul", etc.
-
-        Returns:
-            QColor from the configured value_colors ranges for the given mode
-        """
-        with QMutexLocker(self._mutex):
-            ranges = self._get_ranges_ref(mode)
-
-        for max_pct_val, color in ranges:
-            if pct <= max_pct_val:
-                return color
-        return ranges[-1][1]
