@@ -145,6 +145,10 @@ class BaseMonitorWindow(QMainWindow):
         self._layout_restored: bool = False
         self._peer_window: 'BaseMonitorWindow | None' = None
         self._bottom_page: int = 0  # 0 = Peak Usage, 1 = Rolling Average
+        # The last rendered tick, kept so a theme flip can repaint every cell
+        # IMMEDIATELY instead of waiting for the next collector signal — that
+        # wait is what left half the table in the old theme's colors.
+        self._last_data = None
 
         # Font scale base size (set by subclass via _initial_settings before super().__init__)
         self._font_base: int = getattr(self, '_initial_settings', None)
@@ -333,25 +337,54 @@ class BaseMonitorWindow(QMainWindow):
         """Store new settings. NetworkWindow overrides to also recompute max-speed thresholds."""
         self._settings = new_settings
 
-    def _show_settings(self):
-        """Show settings dialog and apply any changes.
+    def _settings_from_initial(self, initial: InitialSettings):
+        """Build this mode's settings dataclass from the shared setup values.
 
-        Compares old vs new settings, applies them to the collector (rebuilding
-        tables if row counts changed), re-applies fonts if the font size changed,
-        and syncs a visible peer window's refresh rate if it changed (NetworkWindow
-        has no peer, so the guard below is always a no-op for it).
+        The setup screen configures all three monitors at once, so each mode
+        has to know how to read itself out of one `InitialSettings`. Used both
+        at construction and whenever the setup screen is re-applied.
+        """
+        raise NotImplementedError("Subclasses must implement _settings_from_initial()")
+
+    def _adopt_settings(self, new_settings):
+        """Apply a new settings object: collector, tables, fonts.
+
+        Returns the PREVIOUS settings, or None when nothing changed.
+        """
+        prev = self._settings
+        if new_settings == prev:
+            return None
+        self._store_settings(new_settings)
+        self._apply_settings(prev)
+        if new_settings.font_size != prev.font_size:
+            self._font_base = new_settings.font_size
+            self._apply_fonts()
+        return prev
+
+    def apply_shared_settings(self, initial: InitialSettings):
+        """Adopt settings coming from the shared setup screen.
+
+        Called by the window manager after the tray's Settings dialog, so one
+        edit reaches every open monitor. No peer sync is needed — the manager
+        pushes the same values into each window itself.
+        """
+        self._initial_settings = initial
+        self._adopt_settings(self._settings_from_initial(initial))
+
+    def _show_settings(self):
+        """Show this window's settings dialog and apply any changes.
+
+        Applies the new settings to the collector (rebuilding tables if row
+        counts changed), re-applies fonts if the font size changed, and syncs
+        a visible peer window's refresh rate if it changed (NetworkWindow has
+        no peer, so the guard below is always a no-op for it).
         """
         dialog = self._create_settings_dialog()
         if dialog.exec():
             new_settings = dialog.get_settings()
-            if new_settings == self._settings:
+            prev = self._adopt_settings(new_settings)
+            if prev is None:
                 return
-            prev = self._settings
-            self._store_settings(new_settings)
-            self._apply_settings(prev)
-            if new_settings.font_size != prev.font_size:
-                self._font_base = new_settings.font_size
-                self._apply_fonts()
             # Keep the peer's refresh rate in sync (both read from the same
             # collector tick). Hidden peers still monitor, so no visibility guard.
             if (
@@ -557,6 +590,14 @@ class BaseMonitorWindow(QMainWindow):
         for table in (self.current_table, self.history_table, self.rolling_table):
             self._style_table(table)
 
+        # Table CELL colors are per-item brushes, not stylesheet properties, so
+        # restyling cannot reach them. Re-render the last tick to recompute
+        # every process and value color in the new palette right now; without
+        # this the tables keep the old theme's colors until the next collector
+        # signal, which at slow refresh rates is a visibly half-flipped window.
+        if self._last_data is not None:
+            self._render_data(self._last_data)
+
     def _style_table(self, table: QTableWidget):
         """Apply the ACTIVE palette's QSS to one process table.
 
@@ -646,27 +687,61 @@ class BaseMonitorWindow(QMainWindow):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(16)
 
-        # Header
+        # Header — a control column on the left, the data column on the right.
+        #
+        #   [pause][gear]   Title .................... Total
+        #   [ ~switch~ ]    Temperature  Power  Electric
+        #
+        # Title and Total ALWAYS share one row (owner 2026-07-24). The switch
+        # sits under the two icon buttons, level with the HWiNFO sensor row;
+        # when there are no sensors to show, both columns centre against each
+        # other so the two-row control block reads as one line with the title.
+        # These controls replaced the old menu bar: it offered nothing but
+        # Pause and Settings, both duplicated, while the title bar's X already
+        # closes the window.
         self.header_widget = QWidget()
-        header_layout = QVBoxLayout(self.header_widget)
+        header_layout = QHBoxLayout(self.header_widget)
         header_layout.setContentsMargins(16, 10, 16, 12)
+        header_layout.setSpacing(14)
 
-        # Title row: the two window controls and the title on the left, the
-        # Day/Night switch stacked above the total value on the right.
-        # These controls replaced the old menu bar (owner 2026-07-24): it
-        # offered nothing but Pause and Settings, both duplicated, while the
-        # title bar's X already closes the window.
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-        title_row.setSpacing(4)
+        controls_widget = QWidget()
+        controls_widget.setStyleSheet("background: transparent;")
+        controls_col = QVBoxLayout(controls_widget)
+        controls_col.setContentsMargins(0, 0, 0, 0)
+        controls_col.setSpacing(2)
 
+        icons_row = QHBoxLayout()
+        icons_row.setContentsMargins(0, 0, 0, 0)
+        icons_row.setSpacing(4)
         self.pause_btn = IconButton(icons.PAUSE, "Pause monitoring")
         self.pause_btn.clicked.connect(self._toggle_pause)
-        title_row.addWidget(self.pause_btn)
-
+        icons_row.addWidget(self.pause_btn)
         self.settings_btn = IconButton(icons.SETTINGS, "Settings")
         self.settings_btn.clicked.connect(self._show_settings)
-        title_row.addWidget(self.settings_btn)
+        icons_row.addWidget(self.settings_btn)
+        icons_row.addStretch()
+        controls_col.addLayout(icons_row)
+
+        switch_row = QHBoxLayout()
+        switch_row.setContentsMargins(0, 0, 0, 0)
+        switch_row.setSpacing(0)
+        self.theme_switch = DayNightSwitch()
+        switch_row.addWidget(self.theme_switch)
+        switch_row.addStretch()
+        controls_col.addLayout(switch_row)
+
+        header_layout.addWidget(
+            controls_widget, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+
+        data_widget = QWidget()
+        data_widget.setStyleSheet("background: transparent;")
+        data_col = QVBoxLayout(data_widget)
+        data_col.setContentsMargins(0, 0, 0, 0)
+        data_col.setSpacing(2)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
 
         self.title_label = QLabel(self._get_title())
         self.title_label.setFont(self._font(FontScale.TITLE, bold=True))
@@ -674,25 +749,12 @@ class BaseMonitorWindow(QMainWindow):
 
         title_row.addStretch()
 
-        right_col = QVBoxLayout()
-        right_col.setContentsMargins(0, 0, 0, 0)
-        right_col.setSpacing(0)
-
-        switch_row = QHBoxLayout()
-        switch_row.setContentsMargins(0, 0, 0, 0)
-        switch_row.addStretch()
-        self.theme_switch = DayNightSwitch()
-        switch_row.addWidget(self.theme_switch)
-        right_col.addLayout(switch_row)
-
         self.total_label = QLabel("")
         self.total_label.setFont(self._font(FontScale.SUBTITLE))
         self.total_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        right_col.addWidget(self.total_label)
+        title_row.addWidget(self.total_label)
 
-        title_row.addLayout(right_col)
-
-        header_layout.addLayout(title_row)
+        data_col.addLayout(title_row)
 
 
         # HWiNFO sensors row (spread across width)
@@ -725,7 +787,11 @@ class BaseMonitorWindow(QMainWindow):
             self.sensor_name_labels.append(name_lbl)
             self.sensor_value_labels.append(value_lbl)
 
-        header_layout.addWidget(self.sensor_widget)
+        data_col.addWidget(self.sensor_widget)
+
+        header_layout.addWidget(
+            data_widget, 1, Qt.AlignmentFlag.AlignVCenter
+        )
 
         layout.addWidget(self.header_widget)
 
@@ -1223,8 +1289,22 @@ class BaseMonitorWindow(QMainWindow):
         )
 
     def _on_data_ready(self, data: MonitorData):
-        """Handle data from collector (runs on main thread via signal)."""
-        raise NotImplementedError("Subclasses must implement _on_data_ready()")
+        """Handle a collector tick (main thread, via signal).
+
+        Remembers the tick before rendering it, so `_apply_theme()` can
+        re-render the very same data in the new palette without waiting for
+        the next signal. While paused nothing is stored or drawn — the
+        displayed data stays frozen, which is the point of pausing, and a
+        theme flip still repaints it from `_last_data`.
+        """
+        if self.is_paused:
+            return
+        self._last_data = data
+        self._render_data(data)
+
+    def _render_data(self, data: MonitorData):
+        """Draw one tick into the header and tables. Implemented per mode."""
+        raise NotImplementedError("Subclasses must implement _render_data()")
 
     def keyPressEvent(self, event):
         """Handle keys."""
@@ -1242,13 +1322,7 @@ class CPUWindow(BaseMonitorWindow):
     def __init__(self, initial_settings: InitialSettings, collector: SharedDataCollector, parent=None):
         self._initial_settings = initial_settings
         self._collector = collector
-        self._settings = CPUSettings(
-            current_rows=initial_settings.current_rows,
-            history_rows=initial_settings.history_rows,
-            refresh_rate_ms=initial_settings.refresh_rate_ms,
-            retention_minutes=initial_settings.retention_minutes,
-            font_size=initial_settings.font_size,
-        )
+        self._settings = self._settings_from_initial(initial_settings)
         super().__init__(parent)
 
         # Connect to collector signal
@@ -1258,6 +1332,15 @@ class CPUWindow(BaseMonitorWindow):
         self._apply_settings()
         if not self._collector.isRunning():
             self._collector.start()
+
+    def _settings_from_initial(self, initial: InitialSettings) -> CPUSettings:
+        return CPUSettings(
+            current_rows=initial.current_rows,
+            history_rows=initial.history_rows,
+            refresh_rate_ms=initial.refresh_rate_ms,
+            retention_minutes=initial.retention_minutes,
+            font_size=initial.font_size,
+        )
 
     def _get_mode(self) -> MonitorMode:
         return MonitorMode.CPU
@@ -1312,11 +1395,8 @@ class CPUWindow(BaseMonitorWindow):
             uptime_item.setForeground(QColor(theme().TEXT_MUTED))
         table.setItem(row, 5, uptime_item)
 
-    def _on_data_ready(self, data: MonitorData):
-        """Handle data from collector."""
-        if self.is_paused:
-            return
-
+    def _render_data(self, data: MonitorData):
+        """Draw one CPU tick into the header and tables."""
         monitor = self._collector.cpu_monitor
 
         # Update header
@@ -1375,14 +1455,7 @@ class MemoryWindow(BaseMonitorWindow):
     def __init__(self, initial_settings: InitialSettings, collector: SharedDataCollector, parent=None):
         self._initial_settings = initial_settings
         self._collector = collector
-        self._settings = MemorySettings(
-            current_rows=initial_settings.current_rows,
-            history_rows=initial_settings.history_rows,
-            refresh_rate_ms=initial_settings.refresh_rate_ms,
-            retention_minutes=initial_settings.retention_minutes,
-            memory_unit=initial_settings.memory_unit,
-            font_size=initial_settings.font_size,
-        )
+        self._settings = self._settings_from_initial(initial_settings)
         self._commit_limit_bytes: int = initial_settings.commit_limit_bytes
         super().__init__(parent)
 
@@ -1393,6 +1466,16 @@ class MemoryWindow(BaseMonitorWindow):
         self._apply_settings()
         if not self._collector.isRunning():
             self._collector.start()
+
+    def _settings_from_initial(self, initial: InitialSettings) -> MemorySettings:
+        return MemorySettings(
+            current_rows=initial.current_rows,
+            history_rows=initial.history_rows,
+            refresh_rate_ms=initial.refresh_rate_ms,
+            retention_minutes=initial.retention_minutes,
+            memory_unit=initial.memory_unit,
+            font_size=initial.font_size,
+        )
 
     def _get_mode(self) -> MonitorMode:
         return MonitorMode.MEMORY
@@ -1453,11 +1536,8 @@ class MemoryWindow(BaseMonitorWindow):
             uptime_item.setForeground(QColor(theme().TEXT_MUTED))
         table.setItem(row, 4, uptime_item)
 
-    def _on_data_ready(self, data: MonitorData):
-        """Handle data from collector."""
-        if self.is_paused:
-            return
-
+    def _render_data(self, data: MonitorData):
+        """Draw one Memory tick into the header and tables."""
         monitor = self._collector.memory_monitor
         unit = self._settings.memory_unit
 
@@ -1524,17 +1604,7 @@ class NetworkWindow(BaseMonitorWindow):
     def __init__(self, initial_settings: InitialSettings, collector: SharedDataCollector, parent=None):
         self._initial_settings = initial_settings
         self._collector = collector
-        self._settings = NetworkSettings(
-            current_rows=initial_settings.current_rows,
-            history_rows=initial_settings.history_rows,
-            refresh_rate_ms=initial_settings.refresh_rate_ms,
-            retention_minutes=initial_settings.retention_minutes,
-            network_unit=initial_settings.network_unit,
-            sort_mode=initial_settings.network_sort_mode,
-            max_download_mbps=initial_settings.network_max_download_mbps,
-            max_upload_mbps=initial_settings.network_max_upload_mbps,
-            font_size=initial_settings.font_size,
-        )
+        self._settings = self._settings_from_initial(initial_settings)
         # Max speed in bytes/sec for color scale percentage calculation
         self._max_dl_bytes = self._resolve_max_bytes(initial_settings.network_max_download_mbps)
         self._max_ul_bytes = self._resolve_max_bytes(initial_settings.network_max_upload_mbps)
@@ -1547,6 +1617,19 @@ class NetworkWindow(BaseMonitorWindow):
         self._apply_settings()
         if not self._collector.isRunning():
             self._collector.start()
+
+    def _settings_from_initial(self, initial: InitialSettings) -> NetworkSettings:
+        return NetworkSettings(
+            current_rows=initial.current_rows,
+            history_rows=initial.history_rows,
+            refresh_rate_ms=initial.refresh_rate_ms,
+            retention_minutes=initial.retention_minutes,
+            network_unit=initial.network_unit,
+            sort_mode=initial.network_sort_mode,
+            max_download_mbps=initial.network_max_download_mbps,
+            max_upload_mbps=initial.network_max_upload_mbps,
+            font_size=initial.font_size,
+        )
 
     @staticmethod
     def _resolve_max_bytes(mbps: int) -> float:
@@ -1628,11 +1711,8 @@ class NetworkWindow(BaseMonitorWindow):
             uptime_item.setForeground(QColor(theme().TEXT_MUTED))
         table.setItem(row, 4, uptime_item)
 
-    def _on_data_ready(self, data: NetworkMonitorData):
-        """Handle data from collector."""
-        if self.is_paused:
-            return
-
+    def _render_data(self, data: NetworkMonitorData):
+        """Draw one Network tick into the header and tables."""
         # ETW tracer unavailable — show the reason instead of zeros
         if data.error:
             self.total_label.setText("↓ --")

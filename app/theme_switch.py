@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QWidget
 from . import icons
 from .styles import Switch
 from .theme import theme_manager
+from .transition import flip_theme
 
 
 class DayNightSwitch(QWidget):
@@ -59,9 +60,14 @@ class DayNightSwitch(QWidget):
     # --- events -------------------------------------------------------
 
     def mousePressEvent(self, event):
-        """Flip the app theme; `_sync_from_theme` runs the knob slide."""
+        """Flip the app theme behind the snapshot cover.
+
+        `flip_theme()` runs the whole transition; the knob slide is driven by
+        the resulting `changed` signal in `_sync_from_theme`, so a switch in
+        another window follows the identical path.
+        """
         if event.button() == Qt.MouseButton.LeftButton:
-            theme_manager().toggle()
+            flip_theme()
         else:
             super().mousePressEvent(event)
 

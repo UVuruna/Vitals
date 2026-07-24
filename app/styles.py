@@ -39,6 +39,16 @@ class Dimensions:
 
 
 @dataclass(frozen=True)
+class Transition:
+    """Theme-flip cover: the snapshot fade that hides the repaint cascade."""
+
+    FADE_MS = 500          # snapshot cover fade-out duration
+    ICON_FRAC = 0.30       # cover icon diameter = this * min(window W, H)
+    ICON_MIN = 64          # never smaller than this, so a short gadget still reads
+    ICON_MAX = 320         # never larger than this on a tall window
+
+
+@dataclass(frozen=True)
 class Switch:
     """Day/Night switch geometry — everything scales from HEIGHT."""
 
