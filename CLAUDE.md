@@ -13,15 +13,19 @@ py-spy profiling) — read that first; only project facts and deltas live here.
   for real-time process monitoring: top N processes by CPU, Memory or Network
   usage, historical peaks with timestamps, CPU cores/threads per process.
   Minimal footprint — always visible without getting in the way.
-- **Naming:** display name is **Vitals**; the local folder (`Gadgets/PMUsage/`)
-  and the GitHub repo (`UVuruna/ProcessMemoryUsage`) keep their old names.
+- **Naming:** display name, local folder (`Gadgets/Vitals/`) and GitHub repo
+  (`UVuruna/Vitals`) are all **Vitals** — the PMUsage / ProcessMemoryUsage
+  names are historical only.
 - **Stack:** Python 3.11+, PySide6 (Qt6), psutil.
-- **Architecture:** single main window (header with total usage, current
-  processes table, historical section); `ProcessMonitor` base class →
-  `CPUMonitor` / `MemoryMonitor`, driven by `QTimer` — Monitor Pattern with
-  shared formatting/display logic in the base (root Rule #5).
-- **Build:** PyInstaller + NSIS, standard user (no UAC elevation), Registry
-  `HKCU` autostart.
+- **Architecture:** up to three gadget windows (CPU, Memory, Network), each a
+  taskbar-less `Qt.Tool` window built from the shared `BaseMonitorWindow`
+  template-method base (root Rule #5). One `SharedDataCollector` QThread feeds
+  all of them — a single bulk `NtQuerySystemInformation` call per tick for
+  CPU/Memory, an ETW kernel trace for Network. A single tray icon is the app's
+  only shell identity and its **Exit** is the only way to quit.
+- **Build:** PyInstaller (`--onedir`, `--uac-admin` — the ETW network trace
+  needs elevation) + NSIS, Task Scheduler `/rl highest` autostart (Registry
+  `Run` is silently skipped for elevated apps).
 
 ## Project Deltas to the Root Rules
 
@@ -46,7 +50,7 @@ py-spy profiling) — read that first; only project facts and deltas live here.
 ## Structure
 
 ```
-📁 PMUsage/
+📁 Vitals/
   🐍 main.py              ← Entry point
   📝 README.md            ← Project documentation
   📝 CLAUDE.md            ← This file
@@ -71,8 +75,11 @@ py-spy profiling) — read that first; only project facts and deltas live here.
 
 ```mermaid
 flowchart LR
-    psutil[psutil API] --> Monitor[ProcessMonitor]
-    Monitor --> Aggregator[Process Aggregator]
-    Aggregator --> UI[PySide6 UI]
-    Timer[QTimer] --> Monitor
+    NtQSI[(NtQuerySystemInformation)] --> Collector[SharedDataCollector — QThread]
+    ETW[(ETW kernel trace)] --> Collector
+    Collector --> Aggregator[Process Aggregator]
+    Aggregator -->|data_ready signals| UI[Monitor windows]
+    PCM[ProcessColorManager] --> UI
+    Theme[ThemeManager] -->|changed| UI
+    Theme --> PCM
 ```
