@@ -6,12 +6,14 @@
 
 ## Purpose
 
-Single source of truth for the application's dark-theme palette, dimensions,
-fonts, and every tunable default/threshold value used across the UI and
-collector. `color_management.py` explicitly does **not** hold palette
-constants — only value-threshold gradient data and process-coloring logic;
-`Colors` here is the one place window chrome, settings dialogs, and the
-shared context menu pull hex values from.
+Config home for every tunable value that is **not** a color: dimensions,
+switch geometry, fonts, defaults, unit tables and the shared formatters.
+
+Colors are **not** here. They must flip at runtime between the dark and light
+palettes, so they live in [Theme](theme.md) and are read through `theme()` at
+restyle time. The one thing this module still builds from a palette is
+`context_menu_style()` — a function, not a constant, precisely so it cannot
+freeze whichever theme was active at import.
 
 ---
 
@@ -19,14 +21,15 @@ shared context menu pull hex values from.
 
 ### Uses
 
-- None — standalone constants and pure functions (no imports from other `app` modules)
+- [Theme](theme.md) — `theme()`, for `context_menu_style()` only
 
 ### Used by
 
-- [Main Window](main_window.md) — `Colors`, `Defaults`, `Fonts`, `FontScale`, `CONTEXT_MENU_STYLE`, `format_speed`, `format_bytes_total`
-- [Settings Dialog](settings_dialog.md) — `Colors`, `Defaults`, `FontScale`, `MEMORY_UNITS`, `NETWORK_UNITS`
+- [Main Window](main_window.md) — `Defaults`, `Dimensions`, `Fonts`, `FontScale`, `context_menu_style`, `format_speed`, `format_bytes_total`
+- [Settings Dialog](settings_dialog.md) — `Defaults`, `FontScale`, `MEMORY_UNITS`, `NETWORK_UNITS`
+- [Day/Night Switch](theme_switch.md) — `Switch` geometry
 - [Monitor](monitor.md) — `Defaults`, `MEMORY_UNITS`, `format_pct`, `format_speed`, `get_process_display_name`
-- [Tray Controller](tray.md) — `CONTEXT_MENU_STYLE`
+- [Tray Controller](tray.md) — `context_menu_style`
 - `process_actions.py` — `get_process_display_name`
 - `process_dialog.py` — `Fonts`
 
@@ -34,24 +37,19 @@ shared context menu pull hex values from.
 
 ## Constants
 
-### Colors (dark theme — single palette source)
-
-| Attribute | Value | Usage |
-|-----------|-------|-------|
-| `BACKGROUND` | `#1e1e2e` | Window background |
-| `CARD` | `#2a2a3e` | Card/panel background |
-| `HEADER` | `#3a3a4e` | Header row / table header background |
-| `BORDER` | `#4a4a5e` | Input borders |
-| `ACCENT` / `ACCENT_HOVER` | `#e94560` / `#ff6b6b` | Buttons, highlights |
-| `TEXT` / `TEXT_MUTED` / `TEXT_DIM` / `TEXT_FAINT` / `TEXT_DISABLED` | `#ffffff` … `#555555` | Text hierarchy, brightest to dimmest |
-| `CURRENT_BG` / `HISTORY_BG` / `ROLLING_BG` | `#2d2d42` / `#2a3a3e` / `#2a382e` | Per-section table backgrounds |
-| `TEMP_WARNING` / `TEMP_CRITICAL` | `#ffa500` / `#ff4444` | HWiNFO temperature thresholds |
-
 ### Dimensions
 
 `WINDOW_WIDTH` (500), `WINDOW_MIN_HEIGHT` (400), `MARGIN` (10), `SPACING` (8),
 `TABLE_ROW_HEIGHT` (28), `HEADER_HEIGHT` (50), `SETTINGS_WIDTH` (450),
-`SETTINGS_HEIGHT` (400).
+`SETTINGS_HEIGHT` (400), `MENU_LINE_CHARS` (34 — popup menus cannot wrap, so
+a long company name is split into rows of this many characters).
+
+### Switch
+
+Day/Night switch geometry, all derived from one height: `HEIGHT` (22),
+`ASPECT` (2.1539), `KNOB_FACTOR` (0.85), `PAD` (4), `ANIM_MS` (420),
+`HOVER_SCALE` (1.05), `SUN_CELL_SCALE` (1.7). See
+[Day/Night Switch](theme_switch.md).
 
 ### Fonts / FontScale
 
@@ -87,10 +85,12 @@ Prefix-match table used by `get_process_display_name()` to group related
 processes under one display name (e.g. `"Code"`/`"code"` →
 `"Visual Studio Code"`, `"chrome"` → `"Chrome"`, `"msedge"` → `"Microsoft Edge"`).
 
-### CONTEXT_MENU_STYLE
+### context_menu_style()
 
-Shared QSS string for every right-click/tray context menu, built from
-`Colors` so menus always match the dark theme.
+Shared QSS **function** for every right-click/tray context menu, built from
+the ACTIVE palette so menus always match the current theme. It is a function
+rather than a constant because a module-level f-string would freeze the
+palette that happened to be active at import time.
 
 ---
 

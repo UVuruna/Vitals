@@ -10,8 +10,11 @@ Monitor, built with PySide6 (Qt6).
 Vitals runs as a **desktop gadget**: up to three monitor windows
 (CPU, Memory, Network), each a taskbar-less `Qt.Tool` window, fed by one
 shared background collector thread and controlled through a single system
-tray icon. Closing a window hides it and pauses its data collection; the
-tray icon (or File > Exit) is the only way to actually quit.
+tray icon. Closing a window only hides it — the collector keeps running; the
+tray icon's **Exit** is the only way to actually quit.
+
+Both a **Dark** and a **Light** theme ship, flipped live by the Day/Night
+switch in every window header.
 
 ---
 
@@ -24,12 +27,16 @@ tray icon (or File > Exit) is the only way to actually quit.
   🐍 settings_dialog.py     ← InitialSettingsDialog, CPUSettingsDialog, MemorySettingsDialog, NetworkSettingsDialog
   🐍 monitor.py             ← SharedDataCollector, ProcessMonitor, NetworkMonitor, RollingWindow
   🐍 network_monitor.py     ← NetworkTracer (ETW kernel trace), get_link_speed_mbps
-  🐍 color_management.py    ← ProcessColorManager (company hues + value color zones)
+  🐍 color_management.py    ← ProcessColorManager (ranked company colors + value color zones)
+  🐍 theme.py               ← Dark/Light palettes, ThemeManager, color-wheel and shading math
+  🐍 theme_switch.py        ← DayNightSwitch (the sun/moon pill in each header)
+  🐍 icons.py               ← SVG rendering, theme tinting, IconButton
   🐍 persistence.py         ← last_setup.json load/save (atomic, corruption-safe), base/data path resolution
   🐍 tray.py                ← TrayController (single tray icon, gadget-mode shell identity)
-  🐍 styles.py               ← Dark theme palette (Colors), dimensions, fonts, formatting helpers
+  🐍 styles.py              ← Dimensions, switch geometry, fonts, defaults, formatting helpers
   🐍 process_actions.py     ← Kill / set priority / open file location (live psutil operations)
   🐍 process_dialog.py      ← Kill-confirm and priority-selection dialogs
+  📁 ../assets/icons/       ← One master SVG per icon (glyphs + switch art)
 ```
 
 ---
@@ -42,10 +49,13 @@ tray icon (or File > Exit) is the only way to actually quit.
 | Settings Dialog | [Settings Dialog](settings_dialog.md) | Launcher and per-mode settings dialogs, color-scale widget, company legend |
 | Monitor | [Monitor](monitor.md) | Background collector thread, per-mode monitors, rolling averages |
 | Network Monitor | [Network Monitor](network_monitor.md) | ETW kernel trace for per-process network bytes |
-| Color Management | [Color Management](color_management.md) | Company hue assignment and value-threshold color mapping |
+| Color Management | [Color Management](color_management.md) | Ranked company colors and value-threshold color mapping |
+| Theme | [Theme](theme.md) | The Dark/Light palettes and the live theme flip — every color in the app |
+| Day/Night Switch | [Day/Night Switch](theme_switch.md) | The sun/moon pill that flips the theme |
+| Icons | [Icons](icons.md) | SVG rendering, per-theme tinting, the header icon buttons |
 | Persistence | [Persistence](persistence.md) | `last_setup.json` access point, bundled vs. writable paths |
 | Tray Controller | [Tray Controller](tray.md) | Single tray icon — the app's shell identity in gadget mode |
-| Styles | [Styles](styles.md) | Dark palette, dimensions, fonts, formatting functions |
+| Styles | [Styles](styles.md) | Dimensions, switch geometry, fonts, defaults, formatting functions |
 
 `process_actions.py` and `process_dialog.py` have no separate module doc —
 see their usage under [Main Window](main_window.md)'s Connections section.
@@ -76,6 +86,7 @@ flowchart TB
 
     subgraph SUPPORT["Shared services"]
         PCM[ProcessColorManager]
+        THEME[ThemeManager]
         PERSIST[(persistence.py)]
         STYLES[styles.py]
     end
@@ -93,7 +104,15 @@ flowchart TB
     WINDOWS --> PCM
     WINDOWS --> PERSIST
     WINDOWS --> STYLES
+    SWITCH[DayNightSwitch] --> THEME
+    WINDOWS --> SWITCH
+    THEME -->|changed| WINDOWS
+    THEME -->|changed| PCM
+    THEME -->|changed| TRAY
+    PCM --> THEME
+    STYLES --> THEME
     PCM --> PERSIST
+    THEME --> PERSIST
 ```
 
 1. **Startup** — `main.py` shows `InitialSettingsDialog`, creates the enabled
@@ -110,5 +129,10 @@ flowchart TB
    once) only hides it — the collector keeps running, so peaks/history stay
    continuous. The tray icon's **double-click toggles** all windows (hides them
    if any is visible, else re-shows them all); the per-window checkbox brings a
-   single one back via `show_from_tray()`. Exit (File menu or tray menu) is the
-   only path to `QApplication.quit()`.
+   single one back via `show_from_tray()`. The tray menu's **Exit** is the only
+   path to `QApplication.quit()`.
+5. **Theme** — the Day/Night switch in any header calls
+   `ThemeManager.set_theme()`, which persists the choice and emits `changed`.
+   Every window restyles itself, the color manager rebuilds its derived
+   colors, the tray menu restyles, and the other windows' switches slide to
+   match.

@@ -1,6 +1,6 @@
 # 🖥️ Vitals
 
-> Real-time CPU, Memory, and Network usage monitoring for Windows — lightweight desktop gadget windows controlled from a single tray icon, with company-based coloring and historical peak tracking. Formerly named PMUsage.
+> Real-time CPU, Memory, and Network usage monitoring for Windows — lightweight desktop gadget windows controlled from a single tray icon, with dark/light themes, company-based coloring and historical peak tracking. Formerly named PMUsage.
 
 ---
 
@@ -14,7 +14,8 @@
 | 🧰 **System Tray Control** | The tray icon's menu shows/hides each window and is the only way to quit — closing a window just hides it |
 | ↩️ **Reopen From Tray** | Double-click the tray icon, or check a window in its menu, to bring back a hidden monitor and resume its data collection |
 | 🌐 **Network Monitor** | Per-process download/upload speed via a Windows ETW kernel trace — requires Administrator privileges |
-| 🎨 **Company Coloring** | Processes colored by company (Microsoft, Adobe, …) — hues distributed evenly across 360° |
+| 🌗 **Dark & Light Themes** | A sun/moon switch in every window header flips the whole app live; the choice is remembered |
+| 🎨 **Company Coloring** | Processes colored by company (Microsoft, Adobe, …) — the busiest company is plain white/black, the rest walk a blue → red scale by process count |
 | 📊 **Value Color Scale** | Usage % mapped to 5 color zones — independent scales for CPU, Memory, and Network (download/upload) |
 | 🗂️ **Process Aggregation** | Groups sub-processes (all Chrome tabs → "Chrome") |
 | 📈 **Historical Tracking** | Records peak usage with timestamps, auto-expires |
@@ -44,7 +45,15 @@ python main.py
 2. **Select monitors** — choose CPU, Memory, and/or Network (any combination)
 3. **Adjust settings** — rows, refresh rate, retention time, memory/network units, color thresholds
 4. **Click "Start Monitoring"** — settings are saved and restored next launch
-5. **Close a window to hide it** — its data collection pauses; use the tray icon's menu (or double-click) to bring it back, or **Exit** (File menu or tray menu) to quit the app entirely
+5. **Close a window to hide it** — the monitor keeps running; use the tray icon's menu (or double-click) to bring it back, or the tray menu's **Exit** to quit the app entirely
+
+### 🎛️ Window Header
+
+| Control | Action |
+|---------|--------|
+| ⏸ / ▶ | Pause / resume the display |
+| ⚙ | Open this monitor's settings |
+| 🌙 / ☀️ pill | Flip between the dark and light theme (all open windows follow) |
 
 ### ⌨️ Keyboard Shortcuts
 
@@ -90,10 +99,16 @@ CPU and Memory maintain **independent** threshold sets — adjusting one doesn't
 
 ### config/config.json
 
-Edit to change default color zones:
+Edit to change the default color zones and the temperature trip points. The
+colors listed here are **hues only** — each theme re-shades them (lighter on
+dark, darker on light), so there is no second table to maintain:
 
 ```json
 {
+  "temp_colors": {
+    "warning_threshold": 60,
+    "critical_threshold": 75
+  },
   "value_colors": {
     "ranges": [
       {"max_pct": 3,   "color": "#5B9BD5"},
@@ -110,12 +125,14 @@ Edit to change default color zones:
 
 ## 🎨 Company Coloring
 
-Process names are colored by the company listed in each executable's PE version info (read via `version.dll`), in three tiers:
+Process names are colored by the company listed in each executable's PE version info (read via `version.dll`), **ranked by how many processes each company runs**:
 
-- 🟣 **Multi-company** (2+ active process names) — individual hue assigned dynamically: `hue = index / N × 360°`.
-  As new multi-companies are discovered N grows and all hues shift, keeping them evenly spread.
-- 🟤 **Singleton company** (exactly 1 active process name) — shares a single "Other" color (last hue slot).
-- ⬜ **No company info** — fixed near-white (`#D2D2D2`)
+- ⬜ **Most processes** — plain contrast: **white** on the dark theme, **black** on the light one. In practice this is the OS vendor, so the busiest name in the table stays neutral.
+- 🔵→🔴 **Every other named company** — a **blue → red** wheel, running counter-clockwise through cyan, green and yellow as the process count drops. Rank 2 is blue; the last slot is red.
+- 🟤 **Singleton company** (exactly 1 active process name) — shares the last ("Other") red slot.
+- ⬛ **No company info** — the reserved **gray**, never part of the wheel.
+
+Ranks are recomputed every refresh from the processes actually running, so the legend's order is exactly the color order. Saturation and lightness are tunable **per theme** from the legend's sliders.
 
 The **Company Legend** button (in the CPU/Memory/Network settings dialogs) shows which color belongs to which company, how many processes each has, and lets you expand "Other"/"Unknown" to see the individual process names.
 
@@ -126,9 +143,9 @@ The **Company Legend** button (in the CPU/Memory/Network settings dialogs) shows
 Vitals runs as a **desktop gadget**: each monitor window is a
 `Qt.Tool` window (no taskbar button, no Alt-Tab entry), and a single system
 tray icon is the app's only persistent shell identity. Closing a window
-hides it and pauses its data collection; the tray icon's menu (or a
-double-click) brings it back, and its **Exit** action — or File > Exit — is
-the only way to quit.
+just hides it — the collector keeps running; the tray icon's menu (or a
+double-click) brings it back, and its **Exit** action is the only way to
+quit.
 
 ```mermaid
 %%{init: {'flowchart': {'subGraphTitleMargin': {'top': 0, 'bottom': 35}}}}%%

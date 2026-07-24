@@ -26,7 +26,10 @@ which settings dialog to open).
 - [Settings Dialog](settings_dialog.md) — `InitialSettings`, `CPUSettings`, `MemorySettings`, `NetworkSettings`, `CPUSettingsDialog`, `MemorySettingsDialog`, `NetworkSettingsDialog`
 - [Process Actions (script)](process_actions.py) — `find_processes`, `kill_processes`, `get_exe_path`, `open_file_location`, `get_current_priority`, `set_priority`
 - [Process Dialog (script)](process_dialog.py) — `KillConfirmDialog`, `PriorityDialog`
-- [Styles](styles.md) — `CONTEXT_MENU_STYLE`, `Colors`, `Defaults`, `Fonts`, `FontScale`, `format_speed`, `format_bytes_total`
+- [Styles](styles.md) — `context_menu_style`, `Defaults`, `Dimensions`, `Fonts`, `FontScale`, `format_speed`, `format_bytes_total`
+- [Theme](theme.md) — `theme()` for every stylesheet, `theme_manager().changed` to restyle on a flip
+- [Icons](icons.md) — `IconButton` (header pause/play and settings), `swatch()` (context-menu company chip)
+- [Day/Night Switch](theme_switch.md) — one switch per window header
 - [Network Monitor](network_monitor.md) — `get_link_speed_mbps()` (via `NetworkWindow._resolve_max_bytes`)
 
 ### Used by
@@ -44,7 +47,8 @@ which settings dialog to open).
 `QStyledItemDelegate` that paints the Σ total row with a distinct background.
 QSS-styled `QTableWidget`s ignore `QTableWidgetItem.setBackground()`, so this
 delegate bypasses the style engine and paints directly — the only way to
-color one specific row differently under a stylesheet.
+color one specific row differently under a stylesheet. It reads the palette
+at **paint time**, so a theme flip needs no delegate rebuild.
 
 ### DoubleClickSplitter / DoubleClickSplitterHandle
 
@@ -52,9 +56,24 @@ color one specific row differently under a stylesheet.
 
 ### BaseMonitorWindow (QMainWindow)
 
-Owns the whole window: header, HWiNFO sensor row, splitter with a
-current-processes table and a toggleable history/rolling-average stack, menu
-bar, context-menu process actions, and window-layout persistence.
+Owns the whole window: header (controls, title, Day/Night switch, total),
+HWiNFO sensor row, splitter with a current-processes table and a toggleable
+history/rolling-average stack, context-menu process actions, theme restyling,
+and window-layout persistence.
+
+#### Header layout
+
+```
+[⏸/▶] [⚙]  CPU Monitor                          (Day/Night switch)
+                                                     54.2% (3.38%)
+              Temperature      Power       Electric
+                 58.9°C        38.4 W       18.5 A
+```
+
+The two icon buttons replaced the old **menu bar** (owner 2026-07-24), which
+carried nothing but Pause and Settings — each duplicated — while the title
+bar's X already closes the window. Exit now lives only in the
+[Tray Controller](tray.md)'s menu.
 
 #### Hooks subclasses must implement
 
@@ -77,10 +96,13 @@ bar, context-menu process actions, and window-layout persistence.
 | `_rebuild_tables()` | Recreates the current/history/rolling tables after a row-count change, reapplying saved column widths. |
 | `_hide_to_tray()` | Saves the window layout and hides the window. The shared collector keeps running (CPU/Memory come from one bulk syscall regardless of visibility), so peaks/history stay continuous. Called by the native title-bar X (`closeEvent`), `Esc`, the tray checkboxes, and the tray "Minimize". |
 | `show_from_tray()` | Shows/raises/activates the window (its monitor never stopped). |
-| `closeEvent(event)` | **Hides to the tray instead of exiting** (`_hide_to_tray()`); accepts the close only during OS session end (`isSavingSession()`) so logoff/shutdown isn't blocked. Real exit goes through `QApplication.quit()` (File > Exit or the tray menu). |
+| `closeEvent(event)` | **Hides to the tray instead of exiting** (`_hide_to_tray()`); accepts the close only during OS session end (`isSavingSession()`) so logoff/shutdown isn't blocked. Real exit goes through `QApplication.quit()` — the tray menu's **Exit**. |
 | `keyPressEvent(event)` | `Esc` → `_hide_to_tray()`; `Space` → `_toggle_pause()`. |
 | `_save_window_layout()` / `_restore_window_layout()` | Persist/restore geometry, font size, splitter sizes, bottom-page toggle, and column widths via [Persistence](persistence.md). |
-| `_on_context_menu(pos, table, has_total_row)` | Right-click menu: copy PIDs/exe path, Kill Process, Open File Location, Set Priority — delegates to [Process Actions (script)](process_actions.py) and shows [Process Dialog (script)](process_dialog.py) confirmation dialogs. |
+| `_on_context_menu(pos, table, has_total_row)` | Right-click menu: the signing **company name** (wrapped over as many rows as it needs, with the row's own color as a swatch), the PIDs, the exe name, then Kill Process, Open File Location, Set Priority. Any info line copies its value to the clipboard. Delegates to [Process Actions (script)](process_actions.py) and shows [Process Dialog (script)](process_dialog.py) confirmation dialogs. |
+| `_apply_theme()` | (Re)styles every widget in the window from the active palette. Runs at startup and on every Day/Night flip. |
+| `_style_table(table)` / `_header_css()` | Build one table's QSS and its header QSS from the active palette and font base. |
+| `_toggle_pause()` | Flips the pause state and swaps the header button's glyph between pause and play. |
 
 ### CPUWindow / MemoryWindow / NetworkWindow (BaseMonitorWindow)
 
@@ -111,6 +133,22 @@ single bulk `NtQuerySystemInformation` call per collector tick, so "pausing" a
 hidden mode would save essentially nothing while breaking continuous
 peak/history tracking. Windows just `hide()`/`show()`; the collector runs for
 the app's whole lifetime and stops only at exit (`main.py`).
+
+**One `_apply_theme()` owns every stylesheet.** Colors are never written at
+widget-construction time and left there; the single restyle method is
+connected to `theme_manager().changed`, so no widget can be left painted in
+the theme that happened to be active when it was built.
+
+**The header stylesheet is applied twice, on purpose.** `_apply_fonts()` sets
+a stylesheet directly on each table's `QHeaderView` (it must restyle the
+header font without rebuilding the table). A per-widget stylesheet wins over
+the parent table's, so `_style_table()` refreshes the header's own sheet too —
+otherwise a theme flip left the column headers in the old palette.
+
+**All three sections share one surface color.** Current, Peak and Rolling used
+to have three different tinted backgrounds; the same data in three colors read
+as three unrelated kinds of table, so they now share `SECTION_BG`
+(owner 2026-07-24).
 
 **One unified `self._settings` attribute** (not separate per-field state)
 holds the current `CPUSettings`/`MemorySettings`/`NetworkSettings` dataclass,

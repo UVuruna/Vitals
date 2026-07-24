@@ -19,7 +19,8 @@ monitor window, and its **Exit** action is the way to quit the application
 
 ### Uses
 
-- [Styles](styles.md) — `CONTEXT_MENU_STYLE` for the tray menu
+- [Styles](styles.md) — `context_menu_style()` for the tray menu
+- [Theme](theme.md) — `theme_manager().changed` to restyle the menu on a flip (the tray outlives every window)
 
 ### Used by
 

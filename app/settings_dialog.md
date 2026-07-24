@@ -24,7 +24,8 @@ the initial launcher screen.
 
 - [Monitor](monitor.md) — `MonitorMode`, `get_commit_limit_bytes()` (Memory dialog's Commit color-scale max)
 - [Persistence](persistence.md) — `get_base_path()` (dialog icon), `load_last_setup()`/`save_last_setup()`
-- [Styles](styles.md) — `Colors`, `Defaults`, `FontScale`, `MEMORY_UNITS`, `NETWORK_UNITS`
+- [Styles](styles.md) — `Defaults`, `FontScale`, `MEMORY_UNITS`, `NETWORK_UNITS`
+- [Theme](theme.md) — `theme()` for every dialog stylesheet, `theme_manager()` for the legend's wording
 - [Color Management](color_management.md) — `ProcessColorManager` (thresholds, hue params, legend data)
 - [Network Monitor](network_monitor.md) — `get_link_speed_mbps()` (default max-speed spinbox value)
 
@@ -57,7 +58,7 @@ Shared scaffolding — not instantiated directly.
 
 | Method | Description |
 |--------|-------------|
-| `_apply_dark_theme()` | Sets the window icon and the shared dark `QPalette`. |
+| `_apply_theme()` | Sets the window icon and the ACTIVE theme's `QPalette`. Dialogs are modal, so the theme cannot change while one is open — reading the palette once at construction is enough. |
 | `_make_label(text, size, bold, color)` / `_make_combo(items, default)` | Styled widget factories used by every dialog. |
 | `_build_common_settings_rows(layout)` | Builds the 5 rows shared by all 4 dialogs: current processes, history records, refresh rate, history retention, font size. Returns the widgets for the caller to store as attributes. |
 | `_build_network_settings_rows(layout, default_speed_mbps)` | Builds the network section (speed unit, sort mode, max download/upload spinboxes where `0` = auto) shared by `InitialSettingsDialog` and `NetworkSettingsDialog`. |
