@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from .persistence import get_base_path, load_last_setup, save_last_setup
 from .styles import Defaults, FontScale, MEMORY_UNITS, NETWORK_UNITS
 from .theme import theme, theme_manager
+from .theme_switch import DayNightSwitch
 from .color_management import ProcessColorManager
 
 
@@ -199,6 +200,62 @@ def _slider_style() -> str:
     QSlider::groove:horizontal {{ height: 6px; background: {palette.HEADER}; border-radius: 3px; }}
     QSlider::handle:horizontal {{ background: {palette.ACCENT}; width: 16px; margin: -5px 0; border-radius: 8px; }}
     QSlider::sub-page:horizontal {{ background: {palette.ACCENT}; border-radius: 3px; }}
+"""
+
+
+def _combo_style() -> str:
+    """QSS for a dropdown, in the ACTIVE theme."""
+    palette = theme()
+    return f"""
+    QComboBox {{
+        background-color: {palette.HEADER}; color: {palette.TEXT};
+        border: 1px solid {palette.BORDER}; border-radius: 4px; padding: 4px 8px;
+    }}
+    QComboBox::drop-down {{ border: none; width: 24px; }}
+    QComboBox::down-arrow {{
+        border-left: 5px solid transparent;
+        border-right: 5px solid transparent;
+        border-top: 5px solid {palette.TEXT};
+    }}
+    QComboBox QAbstractItemView {{
+        background-color: {palette.HEADER}; color: {palette.TEXT};
+        selection-background-color: {palette.ACCENT};
+    }}
+"""
+
+
+def _start_button_style() -> str:
+    """QSS for the setup screen's primary action button, in the ACTIVE theme."""
+    palette = theme()
+    return f"""
+    QPushButton {{
+        background-color: {palette.ACCENT}; color: #ffffff;
+        border: none; border-radius: 8px;
+    }}
+    QPushButton:hover {{ background-color: {palette.ACCENT_HOVER}; }}
+    QPushButton:disabled {{
+        background-color: {palette.TEXT_DISABLED}; color: {palette.TEXT_DIM};
+    }}
+"""
+
+
+def _mode_button_style(active: bool) -> str:
+    """QSS for a selectable mode/toggle button, in the ACTIVE theme."""
+    palette = theme()
+    if active:
+        return f"""
+        QPushButton {{
+            background-color: {palette.ACCENT}; color: #ffffff;
+            border: none; border-radius: 6px;
+        }}
+        QPushButton:hover {{ background-color: {palette.ACCENT_HOVER}; }}
+    """
+    return f"""
+    QPushButton {{
+        background-color: {palette.HEADER}; color: {palette.TEXT_DIM};
+        border: none; border-radius: 6px;
+    }}
+    QPushButton:hover {{ background-color: {palette.BORDER}; }}
 """
 
 
@@ -615,7 +672,7 @@ def _build_color_section(
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.addWidget(make_label(title, 12, bold=True))
         title_row.addStretch()
-        title_row.addWidget(make_label(f"100% = {max_info}", 9, color=theme().TEXT_FAINT))
+        title_row.addWidget(make_label(f"100% = {max_info}", 9, color="TEXT_FAINT"))
         layout.addLayout(title_row)
     else:
         layout.addWidget(make_label(title, 12, bold=True))
@@ -650,15 +707,37 @@ class BaseSettingsDialog(QDialog):
     Shared base for InitialSettingsDialog, CPUSettingsDialog,
     MemorySettingsDialog, and NetworkSettingsDialog.
 
-    Provides the dark theme + window icon setup, label/combo factories, and
-    builders for the settings rows duplicated across all four dialogs.
+    Provides theme + window icon setup, label/combo factories, and builders
+    for the settings rows duplicated across all four dialogs.
+
+    Every widget these factories create registers a **restyler** — a closure
+    that rebuilds its stylesheet from the active palette. `_apply_theme()`
+    runs them all, so a dialog can follow a live theme flip instead of being
+    frozen at the palette that was active when it was built. The per-mode
+    dialogs are modal and never see a flip; the setup screen carries its own
+    Day/Night switch and does.
     """
 
-    def _apply_theme(self) -> None:
-        """Load the window icon and apply the ACTIVE theme's QPalette.
+    def _restylers_list(self) -> list:
+        """The registered restyle closures, created on first use."""
+        if not hasattr(self, "_restylers"):
+            self._restylers: list = []
+        return self._restylers
 
-        Settings dialogs are modal, so the theme cannot change while one is
-        open — reading the palette once at construction is enough.
+    def _register_restyle(self, restyle) -> None:
+        """Register a closure that (re)applies one widget's theme styling."""
+        self._restylers_list().append(restyle)
+        restyle()
+
+    def _themed_sheet(self, widget, builder) -> None:
+        """Apply `builder()` as `widget`'s stylesheet now and on every flip."""
+        self._register_restyle(lambda: widget.setStyleSheet(builder()))
+
+    def _apply_theme(self) -> None:
+        """Load the window icon and apply the ACTIVE theme.
+
+        Re-runs every registered restyler, so this is both the initial styling
+        pass and the theme-flip handler.
         """
         icon_path = get_base_path() / "assets" / "icon.ico"
         if icon_path.exists():
@@ -675,17 +754,26 @@ class BaseSettingsDialog(QDialog):
         self.setPalette(palette)
         self.setAutoFillBackground(True)
 
-    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: Optional[str] = None) -> QLabel:
-        """Build a styled label. `color` defaults to the ACTIVE theme's TEXT.
+        for restyle in self._restylers_list():
+            restyle()
 
-        The default is resolved here rather than in the signature: a default
-        argument is evaluated once at import, which would freeze whichever
-        palette happened to be active then.
+    def _make_label(self, text: str, size: int = 12, bold: bool = False, color: Optional[str] = None) -> QLabel:
+        """Build a styled label that follows the theme.
+
+        `color` is a Palette ATTRIBUTE NAME (e.g. `"TEXT_MUTED"`), not a hex
+        string — the token is what survives a theme flip. It defaults to
+        `"TEXT"`. Resolving it here rather than in the signature matters: a
+        default argument is evaluated once at import, which would freeze
+        whichever palette happened to be active then.
         """
         label = QLabel(text)
         weight = QFont.Weight.Bold if bold else QFont.Weight.Normal
         label.setFont(QFont("Segoe UI", size, weight))
-        label.setStyleSheet(f"color: {color or theme().TEXT}; background: transparent;")
+        token = color or "TEXT"
+        self._themed_sheet(
+            label,
+            lambda: f"color: {getattr(theme(), token)}; background: transparent;",
+        )
         return label
 
     def _make_combo(self, items: list, default: str) -> QComboBox:
@@ -696,22 +784,7 @@ class BaseSettingsDialog(QDialog):
         combo.setMinimumContentsLength(max(len(item) for item in items))
         combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         combo.setFixedHeight(32)
-        combo.setStyleSheet(f"""
-            QComboBox {{
-                background-color: {theme().HEADER}; color: {theme().TEXT};
-                border: 1px solid {theme().BORDER}; border-radius: 4px; padding: 4px 8px;
-            }}
-            QComboBox::drop-down {{ border: none; width: 24px; }}
-            QComboBox::down-arrow {{
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid {theme().TEXT};
-            }}
-            QComboBox QAbstractItemView {{
-                background-color: {theme().HEADER}; color: {theme().TEXT};
-                selection-background-color: {theme().ACCENT};
-            }}
-        """)
+        self._themed_sheet(combo, _combo_style)
         return combo
 
     def _build_common_settings_rows(
@@ -725,27 +798,29 @@ class BaseSettingsDialog(QDialog):
         retention_slider, retention_label, font_slider, font_label).
         """
         row1 = QHBoxLayout()
-        row1.addWidget(self._make_label("Current processes:", 11, color=theme().TEXT_MUTED))
+        row1.addWidget(self._make_label("Current processes:", 11, color="TEXT_MUTED"))
         row1.addStretch()
         current_spin = _make_spinbox(Defaults.CURRENT_ROWS)
+        self._themed_sheet(current_spin, _spinbox_style)
         row1.addWidget(current_spin)
         layout.addLayout(row1)
 
         row2 = QHBoxLayout()
-        row2.addWidget(self._make_label("History records:", 11, color=theme().TEXT_MUTED))
+        row2.addWidget(self._make_label("History records:", 11, color="TEXT_MUTED"))
         row2.addStretch()
         history_spin = _make_spinbox(Defaults.HISTORY_ROWS)
+        self._themed_sheet(history_spin, _spinbox_style)
         row2.addWidget(history_spin)
         layout.addLayout(row2)
 
         row3 = QHBoxLayout()
-        row3.addWidget(self._make_label("Refresh rate:", 11, color=theme().TEXT_MUTED))
+        row3.addWidget(self._make_label("Refresh rate:", 11, color="TEXT_MUTED"))
         row3.addStretch()
         refresh_slider = QSlider(Qt.Orientation.Horizontal)
         refresh_slider.setRange(1, 10)
         refresh_slider.setValue(Defaults.REFRESH_RATE_MS // 500)
         refresh_slider.setFixedWidth(140)
-        refresh_slider.setStyleSheet(_slider_style())
+        self._themed_sheet(refresh_slider, _slider_style)
         row3.addWidget(refresh_slider)
         refresh_label = self._make_label(f"{Defaults.REFRESH_RATE_MS} ms", 11)
         refresh_label.setFixedWidth(65)
@@ -755,13 +830,13 @@ class BaseSettingsDialog(QDialog):
         layout.addLayout(row3)
 
         row4 = QHBoxLayout()
-        row4.addWidget(self._make_label("History retention:", 11, color=theme().TEXT_MUTED))
+        row4.addWidget(self._make_label("History retention:", 11, color="TEXT_MUTED"))
         row4.addStretch()
         retention_slider = QSlider(Qt.Orientation.Horizontal)
         retention_slider.setRange(1, 36)
         retention_slider.setValue(Defaults.RETENTION_MINUTES // 10)
         retention_slider.setFixedWidth(140)
-        retention_slider.setStyleSheet(_slider_style())
+        self._themed_sheet(retention_slider, _slider_style)
         row4.addWidget(retention_slider)
         retention_label = self._make_label(f"{Defaults.RETENTION_MINUTES} min", 11)
         retention_label.setFixedWidth(65)
@@ -772,13 +847,13 @@ class BaseSettingsDialog(QDialog):
 
         # Font size
         row_font = QHBoxLayout()
-        row_font.addWidget(self._make_label("Font size:", 11, color=theme().TEXT_MUTED))
+        row_font.addWidget(self._make_label("Font size:", 11, color="TEXT_MUTED"))
         row_font.addStretch()
         font_slider = QSlider(Qt.Orientation.Horizontal)
         font_slider.setRange(8, 18)
         font_slider.setValue(Defaults.FONT_SIZE)
         font_slider.setFixedWidth(140)
-        font_slider.setStyleSheet(_slider_style())
+        self._themed_sheet(font_slider, _slider_style)
         row_font.addWidget(font_slider)
         font_label = self._make_label(f"{Defaults.FONT_SIZE} pt", 11)
         font_label.setFixedWidth(65)
@@ -805,21 +880,21 @@ class BaseSettingsDialog(QDialog):
         layout.addWidget(self._make_label("Network Settings", 12, bold=True))
 
         row_unit = QHBoxLayout()
-        row_unit.addWidget(self._make_label("Speed unit:", 11, color=theme().TEXT_MUTED))
+        row_unit.addWidget(self._make_label("Speed unit:", 11, color="TEXT_MUTED"))
         row_unit.addStretch()
         unit_combo = self._make_combo(["KB/s", "MB/s"], Defaults.NETWORK_UNIT)
         row_unit.addWidget(unit_combo)
         layout.addLayout(row_unit)
 
         row_sort = QHBoxLayout()
-        row_sort.addWidget(self._make_label("Sort by:", 11, color=theme().TEXT_MUTED))
+        row_sort.addWidget(self._make_label("Sort by:", 11, color="TEXT_MUTED"))
         row_sort.addStretch()
         sort_combo = self._make_combo(["total", "download", "upload"], Defaults.NETWORK_SORT_MODE)
         row_sort.addWidget(sort_combo)
         layout.addLayout(row_sort)
 
         row_dl = QHBoxLayout()
-        row_dl.addWidget(self._make_label("Max download (Mbps):", 11, color=theme().TEXT_MUTED))
+        row_dl.addWidget(self._make_label("Max download (Mbps):", 11, color="TEXT_MUTED"))
         row_dl.addStretch()
         dl_spin = QSpinBox()
         dl_spin.setRange(0, 100000)
@@ -829,12 +904,12 @@ class BaseSettingsDialog(QDialog):
         dl_spin.setFixedHeight(32)
         dl_spin.setFixedWidth(100)
         dl_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dl_spin.setStyleSheet(_spinbox_style())
+        self._themed_sheet(dl_spin, _spinbox_style)
         row_dl.addWidget(dl_spin)
         layout.addLayout(row_dl)
 
         row_ul = QHBoxLayout()
-        row_ul.addWidget(self._make_label("Max upload (Mbps):", 11, color=theme().TEXT_MUTED))
+        row_ul.addWidget(self._make_label("Max upload (Mbps):", 11, color="TEXT_MUTED"))
         row_ul.addStretch()
         ul_spin = QSpinBox()
         ul_spin.setRange(0, 100000)
@@ -844,12 +919,12 @@ class BaseSettingsDialog(QDialog):
         ul_spin.setFixedHeight(32)
         ul_spin.setFixedWidth(100)
         ul_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ul_spin.setStyleSheet(_spinbox_style())
+        self._themed_sheet(ul_spin, _spinbox_style)
         row_ul.addWidget(ul_spin)
         layout.addLayout(row_ul)
 
         speed_hint = self._make_label(
-            "0 = auto-detect from link speed. Test yours at speedtest.net", 9, color=theme().TEXT_FAINT
+            "0 = auto-detect from link speed. Test yours at speedtest.net", 9, color="TEXT_FAINT"
         )
         layout.addWidget(speed_hint)
 
@@ -896,27 +971,50 @@ class InitialSettings:
 # ---------------------------------------------------------------------------
 
 class InitialSettingsDialog(BaseSettingsDialog):
-    """Initial settings dialog with checkbox mode selection."""
+    """The setup screen — every window's settings in one place.
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    Shown once at startup, and again from the tray's **Settings** action so
+    all three monitors can be configured together without hunting through
+    three per-window dialogs (owner 2026-07-24).
+
+    Unlike the per-mode dialogs this one carries a Day/Night switch, so it
+    restyles live: it is the screen the user meets before any window exists,
+    and the theme has to be changeable there.
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None, first_run: bool = True):
         super().__init__(parent)
         self.setWindowTitle("Vitals - Setup")
-        self.resize(480, 560)
+        self.resize(480, 600)
+        self._first_run = first_run
 
         self._apply_theme()
 
         self._setup_ui()
+        theme_manager().changed.connect(self._apply_theme)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
         layout.setContentsMargins(32, 24, 32, 24)
 
+        # Title row — the Day/Night switch sits beside the app name so the
+        # theme can be set before any monitor window exists.
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.addStretch()
         title = self._make_label("Vitals", 20, bold=True)
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch()
+        self.theme_switch = DayNightSwitch()
+        title_row.addWidget(self.theme_switch, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addLayout(title_row)
 
-        subtitle = self._make_label("Select monitors to open", 10, color=theme().TEXT_DIM)
+        subtitle = self._make_label(
+            "Select monitors to open" if self._first_run
+            else "Settings apply to every monitor window",
+            10, color="TEXT_DIM",
+        )
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
 
@@ -952,22 +1050,9 @@ class InitialSettingsDialog(BaseSettingsDialog):
         self.net_btn.clicked.connect(self._update_mode_buttons)
         mode_row.addWidget(self.net_btn)
 
-        active_style = f"""
-            QPushButton {{ background-color: {theme().ACCENT}; color: white; border: none; border-radius: 6px; }}
-        """
-        inactive_style = f"""
-            QPushButton {{
-                background-color: {theme().HEADER}; color: {theme().TEXT_DIM}; border: none; border-radius: 6px;
-            }}
-            QPushButton:hover {{ background-color: {theme().BORDER}; }}
-        """
-        self.cpu_btn.setStyleSheet(active_style)
-        self.mem_btn.setStyleSheet(inactive_style)
-        self.net_btn.setStyleSheet(inactive_style)
-
         layout.addLayout(mode_row)
 
-        hint = self._make_label("Select one or more monitors", 9, color=theme().TEXT_FAINT)
+        hint = self._make_label("Select one or more monitors", 9, color="TEXT_FAINT")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
 
@@ -987,7 +1072,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
         layout.addWidget(self._make_label("Memory Settings", 12, bold=True))
 
         row5 = QHBoxLayout()
-        row5.addWidget(self._make_label("Display unit:", 11, color=theme().TEXT_MUTED))
+        row5.addWidget(self._make_label("Display unit:", 11, color="TEXT_MUTED"))
         row5.addStretch()
         self.unit_combo = self._make_combo(["KB", "MB", "GB"], Defaults.MEMORY_UNIT)
         row5.addWidget(self.unit_combo)
@@ -1013,7 +1098,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
 
         # Start with Windows toggle
         startup_row = QHBoxLayout()
-        startup_row.addWidget(self._make_label("Start with Windows:", 11, color=theme().TEXT_MUTED))
+        startup_row.addWidget(self._make_label("Start with Windows:", 11, color="TEXT_MUTED"))
         startup_row.addStretch()
         self.startup_toggle = QPushButton()
         self.startup_toggle.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
@@ -1026,47 +1111,40 @@ class InitialSettingsDialog(BaseSettingsDialog):
 
         # Init toggle from actual registry state (not from saved settings)
         self.startup_toggle.setChecked(is_startup_registered())
-        self._update_startup_toggle()
 
         # System info
         cpu_threads = psutil.cpu_count()
         ram_gb = round(psutil.virtual_memory().total / (1024 ** 3))
         info_label = self._make_label(
-            f"Detected: {cpu_threads} CPU threads, {ram_gb} GB RAM", 10, color=theme().TEXT_FAINT
+            f"Detected: {cpu_threads} CPU threads, {ram_gb} GB RAM", 10, color="TEXT_FAINT"
         )
         info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(info_label)
 
         layout.addStretch()
 
-        self.start_btn = QPushButton("Start Monitoring")
+        self.start_btn = QPushButton(
+            "Start Monitoring" if self._first_run else "Apply"
+        )
         self.start_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         self.start_btn.setFixedHeight(44)
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.start_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {theme().ACCENT}; color: white; border: none; border-radius: 8px; }}
-            QPushButton:hover {{ background-color: {theme().ACCENT_HOVER}; }}
-            QPushButton:disabled {{ background-color: {theme().TEXT_DISABLED}; color: {theme().TEXT_DIM}; }}
-        """)
+        self._themed_sheet(self.start_btn, _start_button_style)
         self.start_btn.clicked.connect(self._on_start)
         layout.addWidget(self.start_btn)
+
+        # Both toggles carry a checked/unchecked style, so the method that
+        # repaints them on a click IS their restyler. Registered last: they
+        # touch widgets built further down this method.
+        self._register_restyle(self._update_mode_buttons)
+        self._register_restyle(self._update_startup_toggle)
 
         # Restore last session settings (no-op if file doesn't exist)
         self._apply_last_setup(load_last_setup())
 
     def _update_mode_buttons(self):
-        active_style = f"""
-            QPushButton {{ background-color: {theme().ACCENT}; color: white; border: none; border-radius: 6px; }}
-        """
-        inactive_style = f"""
-            QPushButton {{
-                background-color: {theme().HEADER}; color: {theme().TEXT_DIM}; border: none; border-radius: 6px;
-            }}
-            QPushButton:hover {{ background-color: {theme().BORDER}; }}
-        """
-        self.cpu_btn.setStyleSheet(active_style if self.cpu_btn.isChecked() else inactive_style)
-        self.mem_btn.setStyleSheet(active_style if self.mem_btn.isChecked() else inactive_style)
-        self.net_btn.setStyleSheet(active_style if self.net_btn.isChecked() else inactive_style)
+        for btn in (self.cpu_btn, self.mem_btn, self.net_btn):
+            btn.setStyleSheet(_mode_button_style(btn.isChecked()))
         self._net_settings_container.setVisible(self.net_btn.isChecked())
         self.start_btn.setEnabled(
             self.cpu_btn.isChecked() or self.mem_btn.isChecked() or self.net_btn.isChecked()
@@ -1074,17 +1152,9 @@ class InitialSettingsDialog(BaseSettingsDialog):
 
     def _update_startup_toggle(self):
         """Refresh startup toggle button style to match its checked state."""
-        if self.startup_toggle.isChecked():
-            self.startup_toggle.setText("ON")
-            self.startup_toggle.setStyleSheet(f"""
-                QPushButton {{ background-color: {theme().ACCENT}; color: white; border: none; border-radius: 6px; }}
-            """)
-        else:
-            self.startup_toggle.setText("OFF")
-            self.startup_toggle.setStyleSheet(f"""
-                QPushButton {{ background-color: {theme().HEADER}; color: {theme().TEXT_DIM}; border: none; border-radius: 6px; }}
-                QPushButton:hover {{ background-color: {theme().BORDER}; }}
-            """)
+        checked = self.startup_toggle.isChecked()
+        self.startup_toggle.setText("ON" if checked else "OFF")
+        self.startup_toggle.setStyleSheet(_mode_button_style(checked))
 
     def _on_start(self):
         if not self.cpu_btn.isChecked() and not self.mem_btn.isChecked() and not self.net_btn.isChecked():
@@ -1296,7 +1366,7 @@ class MemorySettingsDialog(BaseSettingsDialog):
 
         layout.addWidget(self._make_label("Memory Settings", 12, bold=True))
         row5 = QHBoxLayout()
-        row5.addWidget(self._make_label("Display unit:", 11, color=theme().TEXT_MUTED))
+        row5.addWidget(self._make_label("Display unit:", 11, color="TEXT_MUTED"))
         row5.addStretch()
         self.unit_combo = self._make_combo(["KB", "MB", "GB"], "MB")
         row5.addWidget(self.unit_combo)
