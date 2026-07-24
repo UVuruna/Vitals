@@ -11,11 +11,11 @@ import sys
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from app.main_window import CPUWindow, MemoryWindow, NetworkWindow
 from app.monitor import SharedDataCollector
 from app.persistence import get_base_path
 from app.settings_dialog import InitialSettingsDialog
 from app.tray import TrayController
+from app.window_manager import WindowManager
 
 
 def main():
@@ -59,46 +59,17 @@ def main():
     # Create shared data collector
     collector = SharedDataCollector()
 
-    # Track windows
-    windows = []
-    cpu_window = None
-    memory_window = None
-
-    if settings.cpu_enabled:
-        cpu_window = CPUWindow(settings, collector)
-        cpu_window.show()
-        windows.append(cpu_window)
-
-    if settings.memory_enabled:
-        memory_window = MemoryWindow(settings, collector)
-        if len(windows) > 0:
-            # Default side-by-side position; overridden by saved layout during showEvent
-            memory_window.move(
-                windows[0].x() + windows[0].width() + 20,
-                windows[0].y()
-            )
-        memory_window.show()
-        windows.append(memory_window)
-
-    network_window = None
-    if settings.network_enabled:
-        network_window = NetworkWindow(settings, collector)
-        if len(windows) > 0:
-            last = windows[-1]
-            network_window.move(last.x() + last.width() + 20, last.y())
-        network_window.show()
-        windows.append(network_window)
-
-    # Link refresh rates: changing one window's rate syncs to the other
-    if cpu_window is not None and memory_window is not None:
-        cpu_window._peer_window = memory_window
-        memory_window._peer_window = cpu_window
+    # The window manager owns all three monitors: it creates each one the
+    # first time it is enabled, so a monitor can be switched on later from
+    # the tray's Settings without restarting the app.
+    manager = WindowManager(settings, collector)
+    manager.apply_settings(settings)
 
     # Gadget mode: windows are Qt.Tool (no taskbar/Alt-Tab presence) and
     # closing one only hides it — the tray icon is the app's single identity
     # and its Exit action is the way to quit
     app.setQuitOnLastWindowClosed(False)
-    tray = TrayController(app.windowIcon(), windows)  # noqa: F841 — must outlive app.exec()
+    tray = TrayController(app.windowIcon(), manager)  # noqa: F841 — must outlive app.exec()
 
     # Tray Exit hides everything synchronously in its click handler; the
     # aboutToQuit hook covers any other quit route (an OS session end) the

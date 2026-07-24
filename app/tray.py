@@ -5,21 +5,32 @@ Single tray icon representing the whole application (gadget mode).
 
 The monitor windows use Qt.Tool, so they have no taskbar button and no
 Alt-Tab entry — like desktop gadgets. This tray icon is the application's
-only shell identity: its menu shows/hides each monitor window, and Exit
-is the ONLY way to quit the application (a window's X only hides it, and
-the menu bar that used to carry File > Exit is gone — owner 2026-07-24).
+only shell identity: its menu toggles each monitor window, opens the shared
+**Settings** screen, and its **Exit** is the ONLY way to quit (a window's X
+only hides it, and the menu bar that used to carry File > Exit is gone —
+owner 2026-07-24).
 """
 
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+from .settings_dialog import InitialSettingsDialog
 from .styles import context_menu_style
 from .theme import theme_manager
+from .window_manager import MODES, WindowManager
 
 
 class TrayController:
     """Owns the tray icon and its menu. Keep a reference for the app lifetime."""
 
-    def __init__(self, icon, windows: list):
+    # Menu label per window-manager mode key
+    _TITLES = {
+        "cpu": "CPU Monitor",
+        "memory": "Memory Monitor",
+        "network": "Network Monitor",
+    }
+
+    def __init__(self, icon, manager: WindowManager):
+        self._manager = manager
         self._tray = QSystemTrayIcon(icon)
         self._tray.setToolTip("Vitals")
 
@@ -27,18 +38,23 @@ class TrayController:
         self._apply_theme()
         theme_manager().changed.connect(self._apply_theme)
 
+        # One entry per mode, whether or not its window exists yet — checking
+        # an unopened monitor creates it on the spot.
         self._window_actions = []
-        for window in windows:
-            action = self._menu.addAction(window.windowTitle())
+        for key, _flag in MODES:
+            action = self._menu.addAction(self._TITLES[key])
             action.setCheckable(True)
             action.triggered.connect(
-                lambda checked, w=window: self._toggle_window(w, checked)
+                lambda checked, k=key: self._manager.set_visible(k, checked)
             )
-            self._window_actions.append((action, window))
+            self._window_actions.append((action, key))
 
         self._menu.addSeparator()
+        settings_action = self._menu.addAction("Settings")
+        settings_action.triggered.connect(self._show_settings)
+        self._menu.addSeparator()
         minimize_action = self._menu.addAction("Minimize")
-        minimize_action.triggered.connect(self._minimize_all)
+        minimize_action.triggered.connect(self._manager.hide_all)
         exit_action = self._menu.addAction("Exit")
         exit_action.triggered.connect(self._exit_app)
 
@@ -51,52 +67,43 @@ class TrayController:
         """Restyle the tray menu for the active theme (the tray outlives a flip)."""
         self._menu.setStyleSheet(context_menu_style())
 
+    def _show_settings(self):
+        """Open the shared setup screen — all three monitors in one place.
+
+        The same dialog the app starts with, so there is one place that owns
+        rows, refresh rate, retention, units and fonts for every window. On
+        accept the window manager pushes the values into each monitor and
+        opens or hides windows to match the mode toggles.
+        """
+        dialog = InitialSettingsDialog(first_run=False)
+        if dialog.exec():
+            self._manager.apply_settings(dialog.get_settings())
+
     def prepare_exit(self):
-        """Save visible layouts, then hide the tray icon and ALL windows at once.
+        """Hide the tray icon and every window at once, saving layouts first.
 
         Runs synchronously in the Exit click handler (and again via
-        aboutToQuit for the File > Exit path — the second run is a no-op on
-        already-hidden windows), so every window vanishes together before
-        the slow teardown (collector stop, ETW session stop) begins.
+        aboutToQuit — the second run is a no-op on already-hidden windows), so
+        everything vanishes together before the slow teardown (collector stop,
+        ETW session stop) begins.
         """
         self._tray.hide()
-        for _action, window in self._window_actions:
-            if window.isVisible():
-                window._save_window_layout()
-            window.hide()
+        self._manager.prepare_exit()
 
     def _exit_app(self):
         """Complete application exit: hide everything instantly, then quit."""
         self.prepare_exit()
         QApplication.instance().quit()
 
-    def _minimize_all(self):
-        """Hide every visible monitor window to the tray at once.
-
-        The counterpart to a double-click, which re-shows them all. Monitors
-        keep running while hidden, so peaks/history stay continuous.
-        """
-        for _action, window in self._window_actions:
-            if window.isVisible():
-                window._hide_to_tray()
-
-    def _toggle_window(self, window, visible: bool):
-        """Show or hide a monitor window from its menu checkbox."""
-        if visible:
-            window.show_from_tray()
-        else:
-            window._hide_to_tray()
-
     def _refresh_checks(self):
         """Sync menu checkmarks with actual window visibility."""
-        for action, window in self._window_actions:
-            action.setChecked(window.isVisible())
+        for action, key in self._window_actions:
+            action.setChecked(self._manager.is_visible(key))
 
     def _on_activated(self, reason):
         """Double-click toggles all windows: hide them if any is visible, else show all."""
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
-            if any(window.isVisible() for _action, window in self._window_actions):
-                self._minimize_all()
+            if self._manager.any_visible():
+                self._manager.hide_all()
             else:
-                for _action, window in self._window_actions:
-                    window.show_from_tray()
+                self._manager.show_all()
