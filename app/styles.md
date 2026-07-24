@@ -28,6 +28,7 @@ freeze whichever theme was active at import.
 - [Main Window](main_window.md) — `Defaults`, `Dimensions`, `Fonts`, `FontScale`, `context_menu_style`, `format_speed`, `format_bytes_total`
 - [Settings Dialog](settings_dialog.md) — `Defaults`, `FontScale`, `MEMORY_UNITS`, `NETWORK_UNITS`
 - [Day/Night Switch](theme_switch.md) — `Switch` geometry
+- [Theme Transition](transition.md) — `Transition` timing and sizing
 - [Monitor](monitor.md) — `Defaults`, `MEMORY_UNITS`, `format_pct`, `format_speed`, `get_process_display_name`
 - [Tray Controller](tray.md) — `context_menu_style`
 - `process_actions.py` — `get_process_display_name`
@@ -43,6 +44,12 @@ freeze whichever theme was active at import.
 `TABLE_ROW_HEIGHT` (28), `HEADER_HEIGHT` (50), `SETTINGS_WIDTH` (450),
 `SETTINGS_HEIGHT` (400), `MENU_LINE_CHARS` (34 — popup menus cannot wrap, so
 a long company name is split into rows of this many characters).
+
+### Transition
+
+Theme-flip cover timing and sizing: `FADE_MS` (500), `ICON_FRAC` (0.30 of the
+window's shorter side), `ICON_MIN` (64), `ICON_MAX` (320). See
+[Theme Transition](transition.md).
 
 ### Switch
 

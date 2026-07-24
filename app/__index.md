@@ -31,6 +31,8 @@ switch in every window header.
   🐍 theme.py               ← Dark/Light palettes, ThemeManager, color-wheel and shading math
   🐍 theme_switch.py        ← DayNightSwitch (the sun/moon pill in each header)
   🐍 icons.py               ← SVG rendering, theme tinting, IconButton
+  🐍 transition.py          ← The snapshot-cover fade that hides a theme flip
+  🐍 window_manager.py      ← Owns the three monitor windows (lazy create, shared settings)
   🐍 persistence.py         ← last_setup.json load/save (atomic, corruption-safe), base/data path resolution
   🐍 tray.py                ← TrayController (single tray icon, gadget-mode shell identity)
   🐍 styles.py              ← Dimensions, switch geometry, fonts, defaults, formatting helpers
@@ -53,6 +55,8 @@ switch in every window header.
 | Theme | [Theme](theme.md) | The Dark/Light palettes and the live theme flip — every color in the app |
 | Day/Night Switch | [Day/Night Switch](theme_switch.md) | The sun/moon pill that flips the theme |
 | Icons | [Icons](icons.md) | SVG rendering, per-theme tinting, the header icon buttons |
+| Theme Transition | [Theme Transition](transition.md) | The snapshot cover + sun/moon fade that hides a theme flip |
+| Window Manager | [Window Manager](window_manager.md) | Owns the three monitor windows: lazy creation, shared settings, exit |
 | Persistence | [Persistence](persistence.md) | `last_setup.json` access point, bundled vs. writable paths |
 | Tray Controller | [Tray Controller](tray.md) | Single tray icon — the app's shell identity in gadget mode |
 | Styles | [Styles](styles.md) | Dimensions, switch geometry, fonts, defaults, formatting functions |
@@ -115,8 +119,9 @@ flowchart TB
     THEME --> PERSIST
 ```
 
-1. **Startup** — `main.py` shows `InitialSettingsDialog`, creates the enabled
-   windows, wires CPU/Memory as refresh-rate peers, and starts the one
+1. **Startup** — `main.py` shows `InitialSettingsDialog`, hands its settings
+   to the `WindowManager` (which creates the enabled windows and wires
+   CPU/Memory as refresh-rate peers), and starts the one
    `SharedDataCollector` thread and one `TrayController`.
 2. **Collection** — each tick, the collector makes a single bulk
    `NtQuerySystemInformation` call (CPU/Memory) and reads the ETW tracer's
@@ -131,8 +136,13 @@ flowchart TB
    if any is visible, else re-shows them all); the per-window checkbox brings a
    single one back via `show_from_tray()`. The tray menu's **Exit** is the only
    path to `QApplication.quit()`.
-5. **Theme** — the Day/Night switch in any header calls
-   `ThemeManager.set_theme()`, which persists the choice and emits `changed`.
-   Every window restyles itself, the color manager rebuilds its derived
-   colors, the tray menu restyles, and the other windows' switches slide to
-   match.
+5. **Theme** — the Day/Night switch in any header (or on the setup screen)
+   calls `flip_theme()`. Every visible window is covered by a snapshot with
+   the incoming sun/moon on it; behind the covers `ThemeManager.set_theme()`
+   persists the choice and emits `changed`, so every window restyles and
+   re-renders its last tick, the color manager rebuilds its derived colors,
+   the tray menu restyles, and the other switches slide to match. The covers
+   then fade out.
+6. **Reconfiguring** — the tray's **Settings** action reopens the setup
+   screen; `WindowManager.apply_settings()` pushes the result into every
+   monitor and opens or hides windows to match the mode toggles.

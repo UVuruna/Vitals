@@ -6,12 +6,16 @@
 
 ## Purpose
 
-Every dialog in the app: the startup launcher (`InitialSettingsDialog`) and
-the per-mode settings dialogs (`CPUSettingsDialog`, `MemorySettingsDialog`,
+Every dialog in the app: the shared setup screen (`InitialSettingsDialog`)
+and the per-mode settings dialogs (`CPUSettingsDialog`, `MemorySettingsDialog`,
 `NetworkSettingsDialog`), plus the draggable color-scale widget and the
-Company Legend popup. `BaseSettingsDialog` centralizes the dark palette,
-window icon, and the row-builders duplicated across all four dialogs
+Company Legend popup. `BaseSettingsDialog` centralizes the theme, window
+icon, and the row-builders duplicated across all four dialogs
 (current/history rows, refresh rate, retention, font size, network options).
+
+The **setup screen** is now reachable at any time from the tray's Settings
+action, not just at startup, and configures all three monitors in one place
+(owner 2026-07-24).
 
 Also owns Windows autostart registration and the `last_setup.json` write for
 the initial launcher screen.
@@ -25,13 +29,16 @@ the initial launcher screen.
 - [Monitor](monitor.md) — `MonitorMode`, `get_commit_limit_bytes()` (Memory dialog's Commit color-scale max)
 - [Persistence](persistence.md) — `get_base_path()` (dialog icon), `load_last_setup()`/`save_last_setup()`
 - [Styles](styles.md) — `Defaults`, `FontScale`, `MEMORY_UNITS`, `NETWORK_UNITS`
-- [Theme](theme.md) — `theme()` for every dialog stylesheet, `theme_manager()` for the legend's wording
+- [Theme](theme.md) — `theme()` for every dialog stylesheet, `theme_manager().changed` so the setup screen follows a live flip
+- [Day/Night Switch](theme_switch.md) — the setup screen's own theme toggle
 - [Color Management](color_management.md) — `ProcessColorManager` (thresholds, hue params, legend data)
 - [Network Monitor](network_monitor.md) — `get_link_speed_mbps()` (default max-speed spinbox value)
 
 ### Used by
 
 - [Main Window](main_window.md) — `CPUWindow`/`MemoryWindow`/`NetworkWindow` open `CPUSettingsDialog`/`MemorySettingsDialog`/`NetworkSettingsDialog` from `_create_settings_dialog()`
+- [Tray Controller](tray.md) — opens `InitialSettingsDialog` from the menu's **Settings** action
+- [Window Manager](window_manager.md) — consumes the `InitialSettings` the setup screen returns
 - `main.py` — shows `InitialSettingsDialog` before any window is created
 
 ---
@@ -58,10 +65,31 @@ Shared scaffolding — not instantiated directly.
 
 | Method | Description |
 |--------|-------------|
-| `_apply_theme()` | Sets the window icon and the ACTIVE theme's `QPalette`. Dialogs are modal, so the theme cannot change while one is open — reading the palette once at construction is enough. |
-| `_make_label(text, size, bold, color)` / `_make_combo(items, default)` | Styled widget factories used by every dialog. |
+| `_apply_theme()` | Sets the window icon, the ACTIVE theme's `QPalette`, and re-runs every registered restyler. Both the initial styling pass and the theme-flip handler. |
+| `_register_restyle(fn)` / `_themed_sheet(widget, builder)` | Register a closure that (re)applies one widget's theme styling, and run it now. |
+| `_make_label(text, size, bold, color)` / `_make_combo(items, default)` | Styled widget factories used by every dialog; both self-register as restylers. `color` is a Palette ATTRIBUTE NAME (`"TEXT_MUTED"`), not a hex — the token is what survives a flip. |
 | `_build_common_settings_rows(layout)` | Builds the 5 rows shared by all 4 dialogs: current processes, history records, refresh rate, history retention, font size. Returns the widgets for the caller to store as attributes. |
 | `_build_network_settings_rows(layout, default_speed_mbps)` | Builds the network section (speed unit, sort mode, max download/upload spinboxes where `0` = auto) shared by `InitialSettingsDialog` and `NetworkSettingsDialog`. |
+
+#### The restyle registry
+
+Every widget these factories build registers a closure that rebuilds its
+stylesheet from the active palette, so `_apply_theme()` can be re-run on a
+flip. The per-mode dialogs are modal and never see one; the setup screen
+carries its own Day/Night switch and connects to `theme_manager().changed`,
+so it restyles live.
+
+Toggle buttons (the three mode buttons, the autostart switch) already had a
+method that repaints them for their checked state — that method IS their
+restyler, registered rather than duplicated. It is registered LAST, because
+it touches widgets built further down `_setup_ui()`.
+
+### InitialSettingsDialog
+
+The setup screen. `first_run=False` (the tray's Settings action) changes the
+subtitle and labels the primary button **Apply** instead of **Start
+Monitoring**; everything else is identical, so there is one screen rather
+than two.
 
 ### InitialSettings / CPUSettings / MemorySettings / NetworkSettings (dataclasses)
 

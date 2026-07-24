@@ -28,11 +28,13 @@ Memory and Network switches too — the three gadgets are never out of sync.
 
 - [Icons](icons.md) — `art()` for the two track pills and the sun/moon knobs
 - [Styles](styles.md) — `Switch` geometry constants
-- [Theme](theme.md) — `theme_manager()` to flip the theme and to follow another window's flip
+- [Theme Transition](transition.md) — `flip_theme()`, the covered flip a click triggers
+- [Theme](theme.md) — `theme_manager().changed`, to follow a flip started anywhere
 
 ### Used by
 
-- [Main Window](main_window.md) — one instance in each window header, stacked above the total value
+- [Main Window](main_window.md) — one instance in each window header, under the pause/settings icons
+- [Settings Dialog](settings_dialog.md) — one on the setup screen, beside the app name
 
 ---
 
@@ -57,8 +59,9 @@ rescales the whole control.
 
 #### Methods
 
-- `mousePressEvent()`: left click flips the theme; the slide is driven by the
-  resulting `changed` signal, not by the click itself
+- `mousePressEvent()`: left click calls `flip_theme()` — the whole covered
+  transition; the slide is driven by the resulting `changed` signal, not by
+  the click itself
 - `_sync_from_theme()`: animate the knob to match the now-active theme —
   the one path that moves the knob, whichever window was clicked
 - `paintEvent()`: blit the track pill, then the knob at its animated x
@@ -79,9 +82,10 @@ ON EACH PAINT:
 ## Design Decisions
 
 **Why the flip happens before the animation.** The theme swaps synchronously
-on click, so the app is coherent instantly; the 420 ms slide is pure
-flourish. Reversing the order would leave the window half-repainted for the
-length of the animation.
+inside `flip_theme()`, so the app is coherent the moment the click returns;
+the 420 ms slide is pure flourish, running while the cover fades out over it.
+Reversing the order would leave the window half-repainted for the length of
+the animation.
 
 **Why the slide is driven by the signal, not the click.** `_sync_from_theme`
 is the only code that moves the knob. A switch in another window and the one

@@ -14,7 +14,8 @@
 | 🧰 **System Tray Control** | The tray icon's menu shows/hides each window and is the only way to quit — closing a window just hides it |
 | ↩️ **Reopen From Tray** | Double-click the tray icon, or check a window in its menu, to bring back a hidden monitor and resume its data collection |
 | 🌐 **Network Monitor** | Per-process download/upload speed via a Windows ETW kernel trace — requires Administrator privileges |
-| 🌗 **Dark & Light Themes** | A sun/moon switch in every window header flips the whole app live; the choice is remembered |
+| 🌗 **Dark & Light Themes** | A sun/moon switch in every window header (and on the setup screen) flips the whole app behind a sun/moon fade; the choice is remembered |
+| 🎛️ **One Settings Screen** | The tray's **Settings** opens the setup screen — every monitor's rows, refresh rate, retention, units and fonts in one place |
 | 🎨 **Company Coloring** | Processes colored by company (Microsoft, Adobe, …) — the busiest company is plain white/black, the rest walk a blue → red scale by process count |
 | 📊 **Value Color Scale** | Usage % mapped to 5 color zones — independent scales for CPU, Memory, and Network (download/upload) |
 | 🗂️ **Process Aggregation** | Groups sub-processes (all Chrome tabs → "Chrome") |
@@ -46,14 +47,25 @@ python main.py
 3. **Adjust settings** — rows, refresh rate, retention time, memory/network units, color thresholds
 4. **Click "Start Monitoring"** — settings are saved and restored next launch
 5. **Close a window to hide it** — the monitor keeps running; use the tray icon's menu (or double-click) to bring it back, or the tray menu's **Exit** to quit the app entirely
+6. **Reconfigure any time** — the tray menu's **Settings** reopens this same screen; enabling a monitor there opens its window on the spot
 
 ### 🎛️ Window Header
+
+```
+[⏸/▶] [⚙]     CPU Monitor ................. 54.2% (3.38%)
+[ ~switch~ ]   Temperature     Power      Electric
+                 58.9°C        38.4 W      18.5 A
+```
 
 | Control | Action |
 |---------|--------|
 | ⏸ / ▶ | Pause / resume the display |
 | ⚙ | Open this monitor's settings |
 | 🌙 / ☀️ pill | Flip between the dark and light theme (all open windows follow) |
+
+The title and the total value always share one row. When no HWiNFO sensors
+are available the sensor row disappears and the control block centres against
+the title.
 
 ### ⌨️ Keyboard Shortcuts
 

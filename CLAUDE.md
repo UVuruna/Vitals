@@ -40,8 +40,15 @@ py-spy profiling) — read that first; only project facts and deltas live here.
   - Before hardcoding ANY value, ask which of the two it belongs in.
 - **Theme flips at runtime.** Any widget that owns a stylesheet must rebuild
   it from `theme()` in a restyle method connected to
-  `theme_manager().changed`. Modal dialogs are exempt — the theme cannot
-  change while one is open, so they read the palette once at construction.
+  `theme_manager().changed`. The per-mode dialogs are exempt — they are modal
+  and cannot see a flip — but the setup screen carries its own switch, so
+  `BaseSettingsDialog` widgets register a restyler instead of styling once.
+- **Per-item colors need a re-render, not a restyle.** Table cell brushes are
+  invisible to stylesheets; `_apply_theme()` re-runs `_render_data()` on the
+  last tick so they change with the theme.
+- **Flip through `flip_theme()`, never `set_theme()` directly** — the covered
+  transition is what the owner asked for; a bare `set_theme()` shows the
+  repaint cascade.
 - **Compute color variants, never author them twice (root Rule #19).** One
   authored hue set is re-shaded per theme by `shade_for_theme()`. Do not add
   a second light-mode color table.
@@ -62,6 +69,8 @@ py-spy profiling) — read that first; only project facts and deltas live here.
     🐍 theme.py           ← Dark/Light palettes + ThemeManager (the COLOR config home)
     🐍 theme_switch.py    ← DayNightSwitch (sun/moon pill in each header)
     🐍 icons.py           ← SVG rendering + per-theme tinting
+    🐍 transition.py      ← Snapshot-cover fade that hides a theme flip
+    🐍 window_manager.py  ← Owns the three monitor windows (lazy create, shared settings)
     🐍 persistence.py     ← last_setup.json load/save (atomic, corruption-safe)
     🐍 styles.py          ← Dimensions, fonts, defaults, formatters (non-color config home)
     🐍 tray.py            ← System tray icon (single app identity, gadget mode)

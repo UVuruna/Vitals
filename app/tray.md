@@ -21,6 +21,8 @@ monitor window, and its **Exit** action is the way to quit the application
 
 - [Styles](styles.md) — `context_menu_style()` for the tray menu
 - [Theme](theme.md) — `theme_manager().changed` to restyle the menu on a flip (the tray outlives every window)
+- [Window Manager](window_manager.md) — toggles each monitor, drives Minimize and the exit sequence; `MODES` builds the menu entries
+- [Settings Dialog](settings_dialog.md) — `InitialSettingsDialog`, opened by the menu's **Settings** action
 
 ### Used by
 
