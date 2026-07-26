@@ -22,7 +22,18 @@ class Dimensions:
     """Window and widget dimensions."""
 
     WINDOW_WIDTH = 500
+    WINDOW_MIN_WIDTH = 340
     WINDOW_MIN_HEIGHT = 400
+
+    # Gap between two monitor windows when the manager cascades a new one
+    WINDOW_GAP = 20
+
+    # A window is only usable while part of its TITLE BAR can be clicked, so
+    # placement keeps at least this much of the window's width on a screen.
+    # Below this there is no drag area left and the gadget is stranded — the
+    # owner hit exactly that (a saved y of 0 put the whole caption above the
+    # screen, and a Qt.Tool window has no taskbar or Alt-Tab route back).
+    MIN_GRAB_WIDTH = 200
 
     MARGIN = 10
     SPACING = 8

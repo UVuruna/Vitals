@@ -8,8 +8,8 @@ from pathlib import Path
 from textwrap import wrap
 from typing import Optional
 
-from PySide6.QtCore import Qt, QEvent, QRect
-from PySide6.QtGui import QFont, QIcon, QPalette, QColor
+from PySide6.QtCore import Qt, QEvent, QMargins
+from PySide6.QtGui import QFont, QIcon, QPalette, QColor, QScreen
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 from . import icons
 from .icons import IconButton
 from .monitor import MonitorMode, MonitorData, NetworkMonitorData, SharedDataCollector
+from .network_monitor import NEEDS_ADMIN
 from .color_management import ProcessColorManager
 from .persistence import get_base_path, load_last_setup, save_last_setup
 from .theme import ThemeScope, window_theme
@@ -105,6 +106,122 @@ class TotalRowDelegate(QStyledItemDelegate):
         )
         painter.drawText(rect, align, text)
         painter.restore()
+
+
+def relaunch_elevated() -> None:
+    """Restart Vitals with Administrator rights, then quit this instance.
+
+    The ETW kernel trace cannot be started from a medium-integrity process, so
+    an in-process retry can never fix NEEDS_ADMIN — only a new elevated
+    process can. A refused UAC prompt leaves the current instance running and
+    is reported, never swallowed (root Rule #1).
+    """
+    import ctypes
+
+    if getattr(sys, 'frozen', False):
+        target, params = sys.executable, ""
+    else:
+        target = sys.executable
+        params = f'"{Path(__file__).parent.parent / "main.py"}"'
+
+    # >32 means the shell accepted it; anything else (including 5, the user
+    # declining the prompt) means we are staying where we are.
+    result = ctypes.windll.shell32.ShellExecuteW(None, "runas", target, params, None, 1)
+    if result > 32:
+        QApplication.instance().quit()
+    else:
+        print(f"[Vitals] Elevated relaunch declined or failed (code {result})", file=sys.stderr)
+
+
+def target_screen(window: QWidget) -> QScreen:
+    """The screen a window belongs to, even when it sits fully off-screen.
+
+    `QApplication.screenAt()` returns None for a point no screen contains, so
+    it cannot be the only answer — a stranded window must still be rescued
+    onto something.
+    """
+    frame = window.frameGeometry()
+    screen = QApplication.screenAt(frame.center())
+    if screen is not None:
+        return screen
+    best, best_area = None, 0
+    for candidate in QApplication.screens():
+        overlap = candidate.availableGeometry().intersected(frame)
+        area = overlap.width() * overlap.height()
+        if area > best_area:
+            best, best_area = candidate, area
+    return best or window.screen() or QApplication.primaryScreen()
+
+
+def place_on_screen(window: QWidget) -> None:
+    """Clamp a window so a grabbable strip of its TITLE BAR stays reachable.
+
+    This is the ONLY authority on window placement, and it is the one place
+    that thinks in FRAME coordinates. That distinction is the whole bug it
+    exists to prevent (owner 2026-07-26):
+
+      - `geometry()` / `setGeometry()` address the CLIENT rect — the caption
+        and borders are NOT in it.
+      - `pos()` / `move()` / `frameGeometry()` address the FRAME rect, which
+        on Windows starts one caption height ABOVE the client.
+
+    So `setGeometry(0, 0, w, h)` — a perfectly ordinary saved position —
+    leaves `frameGeometry() == (0, -30, w, h + 30)`: the entire title bar, its
+    drag strip and its close button sit above the screen. The old guard asked
+    "does the frame touch a screen?", which is true here, so it did nothing
+    and the window was stranded: `Qt.Tool` means no taskbar button and no
+    Alt-Tab entry, and Windows only rescues a window the user can focus.
+
+    A window merely hanging off an edge is left exactly where it was put — a
+    gadget deliberately parked half off-screen is a valid layout. Only an
+    unreachable caption is corrected.
+    """
+    available = target_screen(window).availableGeometry()
+    handle = window.windowHandle()
+    margins = handle.frameMargins() if handle is not None else QMargins()
+
+    # Size first, so the position clamp sees the frame it will actually move.
+    # resize() is client space, matching what the saved width/height mean.
+    max_width = available.width() - margins.left() - margins.right()
+    max_height = available.height() - margins.top() - margins.bottom()
+    width = max(Dimensions.WINDOW_MIN_WIDTH, min(window.width(), max_width))
+    height = max(Dimensions.WINDOW_MIN_HEIGHT, min(window.height(), max_height))
+    if (width, height) != (window.width(), window.height()):
+        window.resize(width, height)
+
+    frame = window.frameGeometry()
+    # frameMargins() is empty until the native window exists; fall back to the
+    # strut the frame itself reveals so a pre-show call still clamps sanely.
+    caption = margins.top() or max(0, frame.height() - window.height())
+
+    # Fully stranded — no screen shows a single pixel of it, so there is no
+    # position worth preserving (a monitor was unplugged, or the saved layout
+    # came from a machine with a different desktop). Centre it and let the
+    # clamp below finish the job.
+    if not any(
+        screen.availableGeometry().intersects(frame)
+        for screen in QApplication.screens()
+    ):
+        window.move(
+            available.x() + (available.width() - frame.width()) // 2,
+            available.y() + (available.height() - frame.height()) // 2,
+        )
+        frame = window.frameGeometry()
+
+    # The caption must clear the top edge, and stay above the taskbar.
+    top = min(
+        max(frame.y(), available.top()),
+        max(available.top(), available.bottom() - caption + 1),
+    )
+    # Horizontally, keep a real strip of the window on the screen either way.
+    grab = min(Dimensions.MIN_GRAB_WIDTH, frame.width())
+    left = min(
+        max(frame.x(), available.left() - frame.width() + grab),
+        available.right() - grab + 1,
+    )
+
+    if (left, top) != (frame.x(), frame.y()):
+        window.move(left, top)
 
 
 class ContentWidthHeader(QHeaderView):
@@ -219,6 +336,10 @@ class BaseMonitorWindow(QMainWindow):
         self._layout_restored: bool = False
         self._peer_window: 'BaseMonitorWindow | None' = None
         self._bottom_page: int = 0  # 0 = Peak Usage, 1 = Rolling Average
+        # Splitter sizes stashed while the status banner is up, and the code
+        # of the failure it is showing (which remedy its button offers)
+        self._split_before_status: list[int] | None = None
+        self._status_code: str = ""
         # The last rendered tick, kept so a theme flip can repaint every cell
         # IMMEDIATELY instead of waiting for the next collector signal — that
         # wait is what left half the table in the old theme's colors.
@@ -247,7 +368,12 @@ class BaseMonitorWindow(QMainWindow):
             app.applicationStateChanged.connect(self._on_app_state_changed)
 
     def showEvent(self, event):
-        """Set native Windows icon after window is shown for taskbar."""
+        """Set the native icon, restore the layout once, and always re-clamp.
+
+        The clamp runs on EVERY show, not just the first: the screen layout can
+        change while a gadget is hidden in the tray, and coming back stranded
+        is exactly as unusable as starting stranded.
+        """
         super().showEvent(event)
         if not getattr(self, '_native_icon_set', False):
             self._native_icon_set = True
@@ -255,21 +381,7 @@ class BaseMonitorWindow(QMainWindow):
         if not self._layout_restored:
             self._layout_restored = True
             self._restore_window_layout()
-            self._ensure_on_screen()
-
-    def _ensure_on_screen(self):
-        """Move window onto visible screen area if it is fully off-screen."""
-        rect = self.frameGeometry()
-        on_screen = any(
-            screen.availableGeometry().intersects(rect)
-            for screen in QApplication.screens()
-        )
-        if not on_screen:
-            primary = QApplication.primaryScreen().availableGeometry()
-            self.move(
-                primary.x() + (primary.width() - rect.width()) // 2,
-                primary.y() + (primary.height() - rect.height()) // 2,
-            )
+        place_on_screen(self)
 
     def _set_native_taskbar_icon(self):
         """Set per-window icon via COM IPropertyStore + WM_SETICON.
@@ -454,7 +566,10 @@ class BaseMonitorWindow(QMainWindow):
         no peer, so the guard below is always a no-op for it).
         """
         dialog = self._create_settings_dialog()
-        if dialog.exec():
+        accepted = dialog.exec()
+        try:
+            if not accepted:
+                return
             new_settings = dialog.get_settings()
             prev = self._adopt_settings(new_settings)
             if prev is None:
@@ -466,6 +581,10 @@ class BaseMonitorWindow(QMainWindow):
                 and new_settings.refresh_rate_ms != prev.refresh_rate_ms
             ):
                 self._peer_window._sync_refresh_rate(new_settings.refresh_rate_ms)
+        finally:
+            # Parented to this window, so C++ owns it — but without this every
+            # open leaves another dialog alive as a child for the app's lifetime.
+            dialog.deleteLater()
 
     def _sync_refresh_rate(self, refresh_rate_ms: int):
         """Sync refresh rate from peer window without rebuilding tables."""
@@ -498,7 +617,14 @@ class BaseMonitorWindow(QMainWindow):
         The entry is UPDATED, never replaced: the same slot also holds this
         window's remembered theme, which is owned by its ThemeScope and would
         be wiped by a wholesale assignment.
+
+        A window whose layout was never restored writes NOTHING. Until the
+        first show it still carries Qt's default 640x480 at the origin, and
+        persisting that would both overwrite a real saved layout and store the
+        position whose caption lands above the screen.
         """
+        if not self._layout_restored:
+            return
         data = load_last_setup()
         entry = data.setdefault("windows", {}).setdefault(self._get_window_key(), {})
         geo = self.geometry()
@@ -524,25 +650,22 @@ class BaseMonitorWindow(QMainWindow):
         save_last_setup(data)
 
     def _restore_window_layout(self):
-        """Restore window geometry, splitter sizes, and column widths from last_setup.json."""
+        """Restore window geometry, splitter sizes, and column widths from last_setup.json.
+
+        The saved x/y/width/height are CLIENT coordinates (what
+        `_save_window_layout` wrote from `geometry()`), so they go back through
+        `setGeometry()` unchanged — the units match and nothing drifts. Judging
+        whether that position is usable is NOT done here: `place_on_screen()`
+        owns it, and it is the only code that can, because the answer lives in
+        frame coordinates this method never sees.
+        """
         data = load_last_setup()
         layout = data.get("windows", {}).get(self._get_window_key())
         if not layout:
             return
         x, y, w, h = layout.get("x"), layout.get("y"), layout.get("width"), layout.get("height")
         if all(v is not None for v in [x, y, w, h]):
-            saved_rect = QRect(x, y, w, h)
-            on_screen = any(
-                screen.availableGeometry().intersects(saved_rect)
-                for screen in QApplication.screens()
-            )
-            if on_screen:
-                self.setGeometry(x, y, w, h)
-            else:
-                primary = QApplication.primaryScreen().availableGeometry()
-                new_x = primary.x() + (primary.width() - w) // 2
-                new_y = primary.y() + (primary.height() - h) // 2
-                self.setGeometry(new_x, new_y, w, h)
+            self.setGeometry(x, y, w, h)
         saved_font = layout.get("font_size")
         if saved_font is not None and saved_font != self._font_base:
             self._font_base = int(saved_font)
@@ -645,6 +768,29 @@ class BaseMonitorWindow(QMainWindow):
         # recomputes; reset them to plain text so a flip is never stale.
         for lbl in self.sensor_value_labels:
             lbl.setStyleSheet(f"color: {palette.TEXT}; background: transparent;")
+        # Status banner — the one surface allowed to shout. It borrows the
+        # existing TEMP_CRITICAL token rather than introducing a colour, so it
+        # follows the theme like everything else.
+        self.status_banner.setStyleSheet(f"""
+            QWidget {{
+                background-color: {palette.CARD};
+                border: 1px solid {palette.TEMP_CRITICAL};
+                border-radius: 8px;
+            }}
+        """)
+        self.status_reason.setStyleSheet(
+            f"color: {palette.TEMP_CRITICAL}; background: transparent; border: none;"
+        )
+        self.status_action.setStyleSheet(
+            f"color: {palette.TEXT_MUTED}; background: transparent; border: none;"
+        )
+        self.status_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {palette.ACCENT}; color: #ffffff;
+                border: none; border-radius: 6px; padding: 4px 16px;
+            }}
+            QPushButton:hover {{ background-color: {palette.ACCENT_HOVER}; }}
+        """)
         self.current_title.setStyleSheet(f"color: {palette.TEXT};")
         self.peak_label.setStyleSheet(
             f"color: {palette.TEXT_MUTED}; background: transparent;"
@@ -760,8 +906,8 @@ class BaseMonitorWindow(QMainWindow):
     def _setup_ui(self):
         """Initialize the main UI."""
         self.setWindowTitle(self._get_title())
-        self.setMinimumWidth(340)
-        self.setMinimumHeight(400)
+        self.setMinimumWidth(Dimensions.WINDOW_MIN_WIDTH)
+        self.setMinimumHeight(Dimensions.WINDOW_MIN_HEIGHT)
 
         # Central widget
         central = QWidget()
@@ -881,6 +1027,40 @@ class BaseMonitorWindow(QMainWindow):
 
         layout.addWidget(self.header_widget)
 
+        # Status banner — hidden until something is actually wrong. It sits
+        # between the header and the data because a failure that only whispers
+        # from a corner label reads as "no traffic", not "broken" (root Rule
+        # #1): the owner reported the Network window as "showing nothing" when
+        # it was in fact refusing to trace and saying so in 10pt muted grey.
+        self.status_banner = QWidget()
+        self.status_banner.setVisible(False)
+        banner_layout = QVBoxLayout(self.status_banner)
+        banner_layout.setContentsMargins(14, 10, 14, 12)
+        banner_layout.setSpacing(4)
+
+        self.status_reason = QLabel("")
+        self.status_reason.setFont(self._font(FontScale.SUBTITLE, bold=True))
+        self.status_reason.setWordWrap(True)
+        banner_layout.addWidget(self.status_reason)
+
+        self.status_action = QLabel("")
+        self.status_action.setFont(self._font(FontScale.SMALL))
+        self.status_action.setWordWrap(True)
+        banner_layout.addWidget(self.status_action)
+
+        button_row = QHBoxLayout()
+        button_row.setContentsMargins(0, 4, 0, 0)
+        button_row.addStretch()
+        self.status_button = QPushButton("")
+        self.status_button.setFont(self._font(FontScale.BODY, bold=True))
+        self.status_button.setFixedHeight(30)
+        self.status_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.status_button.clicked.connect(self._on_status_action)
+        button_row.addWidget(self.status_button)
+        banner_layout.addLayout(button_row)
+
+        layout.addWidget(self.status_banner)
+
         # Splitter for resizable sections (double-click resets to 50-50)
         self.splitter = DoubleClickSplitter(Qt.Orientation.Vertical)
 
@@ -932,6 +1112,43 @@ class BaseMonitorWindow(QMainWindow):
         self.splitter.setSizes([300, 150])
 
         layout.addWidget(self.splitter)
+
+    def show_status(self, failure) -> None:
+        """Raise the banner for a capture failure, or hide it when None.
+
+        The splitter sizes are captured before the banner appears and restored
+        after it goes: inserting a widget above the splitter otherwise squeezes
+        it, and the next `_save_window_layout()` would persist that squeeze as
+        the user's chosen split.
+        """
+        if failure is None:
+            if self.status_banner.isVisible():
+                self.status_banner.setVisible(False)
+                if self._split_before_status is not None:
+                    self.splitter.setSizes(self._split_before_status)
+                    self._split_before_status = None
+            return
+
+        if not self.status_banner.isVisible():
+            self._split_before_status = self.splitter.sizes()
+        self.status_reason.setText(failure.reason)
+        self.status_action.setText(failure.action)
+        # Relaunching cannot fix "another instance", and retrying in-process
+        # can never gain Administrator — so the remedy follows the code.
+        self._status_code = failure.code
+        self.status_button.setText(
+            "Restart as administrator" if failure.code == NEEDS_ADMIN else "Retry"
+        )
+        self.status_banner.setVisible(True)
+
+    def _on_status_action(self):
+        """Run the remedy the banner is offering."""
+        if self._status_code == NEEDS_ADMIN:
+            relaunch_elevated()
+            return
+        # Re-entering configure_* rebuilds the tracer: it was set to None when
+        # it failed, so this genuinely retries rather than reusing a dead one.
+        self._configure_collector()
 
     def _toggle_bottom_table(self):
         """Switch between Peak Usage (index 0) and Rolling Average (index 1)."""
@@ -1816,13 +2033,21 @@ class NetworkWindow(BaseMonitorWindow):
 
     def _render_data(self, data: NetworkMonitorData):
         """Draw one Network tick into the header and tables."""
-        # ETW tracer unavailable — show the reason instead of zeros
+        # Capture unavailable — raise the banner and clear the stale numbers.
+        # The tables are emptied too: leaving the last live rows up next to a
+        # failure notice reads as "these are current", which they are not.
         if data.error:
+            self.show_status(data.error)
             self.total_label.setText("↓ --")
-            self.peak_label.setText(data.error)
+            self.peak_label.setText("Peak: --")
             self.sensor_widget.setVisible(False)
+            for table in (self.current_table, self.history_table, self.rolling_table):
+                for row in range(table.rowCount()):
+                    for col in range(table.columnCount()):
+                        table.setItem(row, col, QTableWidgetItem(""))
             return
 
+        self.show_status(None)
         unit = self._settings.network_unit
 
         # Update header — big number = current download speed

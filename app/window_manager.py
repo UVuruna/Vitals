@@ -17,9 +17,14 @@ keeps running so peaks and history stay continuous.
 
 from typing import Optional
 
-from .main_window import BaseMonitorWindow, CPUWindow, MemoryWindow, NetworkWindow
+from .main_window import (
+    BaseMonitorWindow, CPUWindow, MemoryWindow, NetworkWindow,
+    place_on_screen, target_screen,
+)
 from .monitor import SharedDataCollector
+from .persistence import load_last_setup, save_last_setup
 from .settings_dialog import InitialSettings
+from .styles import Dimensions
 
 # Display order, and the InitialSettings flag that enables each mode
 MODES: tuple[tuple[str, str], ...] = (
@@ -66,15 +71,41 @@ class WindowManager:
     # --- lifecycle ----------------------------------------------------
 
     def _create(self, key: str) -> BaseMonitorWindow:
-        """Build a mode's window and place it beside the ones already open."""
+        """Build a mode's window and place it beside the ones already open.
+
+        Only a window with no REMEMBERED position is placed here — otherwise
+        the cascade would shove a gadget the user parked deliberately. The
+        first such window is centred rather than left at Qt's default origin,
+        whose caption would start above the screen; every later one steps to
+        the right of the last.
+
+        Both operands are frame-space (`frameGeometry()`, `move()`): mixing a
+        frame x with a client width, as this did, drifts the gap by the window
+        border on every step. `place_on_screen()` still gets the final say when
+        the window is shown.
+        """
         window = _WINDOW_TYPES[key](self._settings, self._collector)
-        previous = self.existing()
-        if previous:
-            last = previous[-1]
-            window.move(last.x() + last.width() + 20, last.y())
+        if not self._has_saved_position(key):
+            previous = self.existing()
+            if previous:
+                last = previous[-1].frameGeometry()
+                window.move(last.x() + last.width() + Dimensions.WINDOW_GAP, last.y())
+            else:
+                available = target_screen(window).availableGeometry()
+                frame = window.frameGeometry()
+                window.move(
+                    available.x() + (available.width() - frame.width()) // 2,
+                    available.y() + (available.height() - frame.height()) // 2,
+                )
         self._windows[key] = window
         self._link_peers()
         return window
+
+    @staticmethod
+    def _has_saved_position(key: str) -> bool:
+        """Whether last_setup.json remembers where this window was left."""
+        entry = load_last_setup().get("windows", {}).get(key, {})
+        return entry.get("x") is not None and entry.get("y") is not None
 
     def _link_peers(self) -> None:
         """Wire CPU and Memory as refresh-rate peers once both exist.
@@ -144,6 +175,28 @@ class WindowManager:
                 window.show_from_tray()
             else:
                 self.hide(key)
+
+    def reset_positions(self) -> None:
+        """Forget every remembered POSITION and re-place the open windows.
+
+        The in-app way out of a stranded gadget. Only x/y are dropped: the
+        saved size, splitter, column widths and — critically — the per-window
+        `theme` share that same slot and are the user's, not the accident's.
+        """
+        data = load_last_setup()
+        for entry in data.get("windows", {}).values():
+            entry.pop("x", None)
+            entry.pop("y", None)
+        save_last_setup(data)
+
+        for window in self.existing():
+            available = target_screen(window).availableGeometry()
+            frame = window.frameGeometry()
+            window.move(
+                available.x() + (available.width() - frame.width()) // 2,
+                available.y() + (available.height() - frame.height()) // 2,
+            )
+            place_on_screen(window)
 
     def prepare_exit(self) -> None:
         """Save every visible window's layout, then hide them all at once.
