@@ -136,6 +136,13 @@ flowchart TB
    if any is visible, else re-shows them all); the per-window checkbox brings a
    single one back via `show_from_tray()`. The tray menu's **Exit** is the only
    path to `QApplication.quit()`.
+   Every show also runs `place_on_screen()`, the single authority on window
+   placement and the only code that reasons in FRAME rather than CLIENT
+   coordinates — a saved position whose title bar would land above the screen
+   is corrected instead of stranding a gadget that has no taskbar or Alt-Tab
+   route back. The tray's **Reset window positions** is the manual escape
+   hatch. See [Main Window](main_window.md) and
+   [Window Manager](window_manager.md).
 5. **Theme** — each monitor window owns its own `ThemeScope`
    (`window_theme(key)`); the app owns one more (`app_theme()`) for the tray
    menu and the setup screen. Two switches trigger two different flips:

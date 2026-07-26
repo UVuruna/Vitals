@@ -21,7 +21,7 @@ HWiNFO sensor data (CPU temperature/power, DRAM bandwidth) from shared memory.
 
 - [Styles](styles.md) — `Defaults`, `MEMORY_UNITS`, `format_pct`, `format_speed`, `get_process_display_name`
 - [Color Management](color_management.md) — `ProcessColorManager` (company lookup runs inside the collector loop)
-- [Network Monitor](network_monitor.md) — `NetworkTracer`, lazily imported by `configure_network()`
+- [Network Monitor](network_monitor.md) — `NetworkTracer` (lazily imported by `configure_network()`); `TraceFailure`, `CONSUMER_DIED`, `START_FAILED` (imported at module level — the collector builds fallback failures without needing the tracer itself)
 - `psutil` — CPU count, virtual memory totals
 - Windows APIs (`ctypes`) — `ntdll.NtQuerySystemInformation` (bulk process data), `psapi.GetPerformanceInfo` (commit limit), HWiNFO shared-memory section
 
@@ -51,8 +51,11 @@ Per-process snapshot, peak-history record, running totals, and the bundle
 ### NetworkProcessInfo / NetworkHistoryRecord / NetworkMonitorData
 
 Network equivalents (`download`/`upload` bytes/sec instead of a single
-`value`). `NetworkMonitorData.error` is non-empty when the ETW tracer failed
-to start — the Network window shows this string instead of zeros.
+`value`). `NetworkMonitorData.error` is an `Optional[TraceFailure]` — a
+structured reason (see [Network Monitor](network_monitor.md)), not a bare
+string — set whenever the ETW tracer is unavailable, whether it never
+started or died mid-session; the Network window's status banner reads
+`.reason`/`.action` from it instead of showing zeros.
 
 ### RollingWindow
 
@@ -108,7 +111,7 @@ Signals: `cpu_data_ready(MonitorData)`, `memory_data_ready(MonitorData)`,
 | Method | Description |
 |--------|-------------|
 | `configure_cpu(...)` / `configure_memory(...)` / `configure_network(...)` | Called by the owning window at startup and whenever settings change; lazily creates the mode's `ProcessMonitor`/`NetworkMonitor` and (for network) starts the `NetworkTracer`. A configured mode stays enabled for the app's lifetime — hiding a window no longer disables it (CPU/Memory share one bulk syscall, so pausing saves nothing). |
-| `run()` | Main loop: one bulk collect per tick, dispatches to whichever modes are enabled, sleeps in chunks. |
+| `run()` | Main loop: retires a dead network tracer if present (see Design Decisions), one bulk collect per tick, dispatches to whichever modes are enabled, sleeps in chunks. |
 | `stop()` | Signals the loop to exit, stops the tracer if running, joins the thread (2s timeout). |
 | `cpu_monitor` / `memory_monitor` / `network_monitor` (properties) | Access the underlying per-mode monitor instances. |
 | `reset_instance()` (classmethod) | Stops and clears the singleton — used at app shutdown. |
@@ -146,6 +149,14 @@ at 120 min retention and 1s refresh that's 7200 snapshots. Merging ticks into
 O(buckets × names), ~45× less, at the cost of values leaving the window in
 bucket-sized groups (up to one bucket span late) — negligible for a
 multi-minute average.
+
+**A dead network tracer is retired outside the collector mutex.** When
+`net_tracer.is_dead()` (see [Network Monitor](network_monitor.md)) is true,
+`run()` calls `tracer.stop()` — which joins the consumer thread with a 5s
+timeout — BEFORE re-acquiring the mutex to null `_network_tracer` and record
+the failure. Holding the mutex across that join would block any
+`configure_*()` call (e.g. the settings dialog's Apply, on any window) for
+up to 5 seconds for no reason.
 
 **The collector sleeps in `Defaults.COLLECTOR_SLEEP_CHUNK_MS` chunks**, not
 one `msleep(interval)` call, so `stop()` interrupts within one chunk instead

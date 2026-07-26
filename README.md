@@ -48,6 +48,7 @@ python main.py
 4. **Click "Start Monitoring"** — settings are saved and restored next launch
 5. **Close a window to hide it** — the monitor keeps running; use the tray icon's menu (or double-click) to bring it back, or the tray menu's **Exit** to quit the app entirely
 6. **Reconfigure any time** — the tray menu's **Settings** reopens this same screen; enabling a monitor there opens its window on the spot
+7. **Lost a window?** — the tray menu's **Reset window positions** brings every gadget back to the centre of the screen (sizes, themes and column widths are kept)
 
 ### 🎛️ Window Header
 

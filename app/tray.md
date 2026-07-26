@@ -45,8 +45,9 @@ reference is required, since nothing else keeps the `QSystemTrayIcon` alive.
 TrayController(icon: QIcon, windows: list[BaseMonitorWindow])
 ```
 
-Builds one checkable menu action per window (`window.windowTitle()`) plus a
-separator, **Minimize**, and **Exit**, and shows the tray icon immediately.
+Builds one checkable menu action per window (`window.windowTitle()`), a
+separator, **Settings**, **Reset window positions**, another separator,
+**Minimize**, and **Exit** — and shows the tray icon immediately.
 
 #### Methods (internal callbacks — this is the entire behavior surface)
 
@@ -83,3 +84,15 @@ scope.** Each of the three windows now carries its own independent theme;
 the tray menu cannot follow one of them without arbitrarily picking a
 favorite, so it restyles from `app_theme()` instead — the same scope the
 setup screen's GLOBAL Day/Night switch moves.
+
+**`_show_settings()` reads `get_settings()` before calling `deleteLater()`,
+never `WA_DeleteOnClose`.** `QDialog.exec()` destroys a `WA_DeleteOnClose`
+dialog before returning, so the `get_settings()` call right after would hit
+an already-freed C++ object and raise `RuntimeError`. The dialog is also
+parentless — it belongs to no monitor window — so nothing else would ever
+free it either; reading the settings, THEN calling `deleteLater()`, is the
+only ordering that both works and cleans up.
+
+**Reset window positions is one line, not a tray method.** The menu action
+wires straight to `manager.reset_positions()` — the tray has no state of
+its own to update, so a wrapper method here would only forward the call.

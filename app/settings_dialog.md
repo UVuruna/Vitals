@@ -83,6 +83,7 @@ the Memory one is light at the same time.
 | `_show_legend()` | Opens `CompanyLegendDialog` bound to this dialog's own scope. |
 | `_build_common_settings_rows(layout)` | Builds the 5 rows shared by all 4 dialogs: current processes, history records, refresh rate, history retention, font size. Returns the widgets for the caller to store as attributes. |
 | `_build_network_settings_rows(layout, default_speed_mbps)` | Builds the network section (speed unit, sort mode, max download/upload spinboxes where `0` = auto) shared by `InitialSettingsDialog` and `NetworkSettingsDialog`. |
+| `done(result)` | Override: clears the registered restyler list, then calls `super().done(result)`. Breaks the dialog's self-reference cycle so it can be freed deterministically — see Design Decisions. |
 
 #### The restyle registry
 
@@ -170,3 +171,14 @@ it never touches `ProcessColorManager` itself. Only `accept()` reads the
 widget's final `.thresholds` and calls
 `ProcessColorManager.update_value_thresholds()`, so canceling the dialog
 leaves the persisted (and in-memory) thresholds completely untouched.
+
+**`done()` clears the restyler list — the fix for a real zombie-dialog
+leak.** Every restyler registered via `_register_restyle()`/`_themed_sheet()`
+is a closure over `self`, so as long as one survives, the dialog holds a
+live reference to itself. A parentless dialog (the setup screen opened from
+the tray's **Settings** action) therefore outlived its own close as a
+zombie with its `changed` connection to the theme still live, until
+Python's cyclic collector happened to run — one more zombie accumulating
+per open. Clearing `self._restylers_list()` in `done()`, before
+`super().done()` runs, makes destruction deterministic instead of leaving
+it to gc.
