@@ -44,12 +44,7 @@ freeze whichever theme was active at import.
 `WINDOW_WIDTH` (500), `WINDOW_MIN_HEIGHT` (400), `MARGIN` (10), `SPACING` (8),
 `TABLE_ROW_HEIGHT` (28), `HEADER_HEIGHT` (50), `SETTINGS_WIDTH` (450),
 `SETTINGS_HEIGHT` (400), `MENU_LINE_CHARS` (34 — popup menus cannot wrap, so
-a long company name is split into rows of this many characters),
-`COLUMN_FIT_PADDING` (16 — the per-cell padding added back when
-[Main Window](main_window.md)'s `ContentWidthHeader` fits a column to its row
-values; the view's content hint is measured without the table QSS's
-`padding: 4px 8px`, so a fit without it clips the widest value. Keep the two
-in sync).
+a long company name is split into rows of this many characters).
 
 ### Transition
 

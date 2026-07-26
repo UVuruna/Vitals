@@ -63,13 +63,14 @@ handle fits that column to its **row values**, never to its title (owner
 Qt's own auto-fit resizes to `sectionSizeHint()`, which is the larger of the
 column contents and the header label. In a gadget that is the wrong end of the
 trade — `Parallel` and `Threads` are long words holding two-digit numbers, so
-Qt's fit leaves those columns roughly a third wider than the data needs and
-eats the width the process names want. Measured on a real CPU window:
+Qt's fit leaves those columns roughly twice as wide as the data needs and
+eats the width the process names want. Measured on a real CPU window with the
+owner's data (values 38/4/1 and 766/170/12):
 
 | Column | Qt's fit (title-aware) | This header's fit (rows only) |
 |--------|-----------------------|-------------------------------|
-| `Parallel` | 69 px | 52 px |
-| `Threads` | 73 px | 59 px |
+| `Parallel` | 69 px | 36 px — title clipped, values whole |
+| `Threads` | 73 px | 43 px — title clipped, values whole |
 
 ```
 ON DOUBLE-CLICK at x:
@@ -78,14 +79,17 @@ ON DOUBLE-CLICK at x:
         hand the event back to Qt        # dragging, other resize modes, header body
     ELSE:
         width = view's content hint for that column   # rendered ROWS only
-        resize the section to max(minimum section width, width + cell padding)
+        resize the section to max(minimum section width, width)
 ```
 
 `_handle_at()` mirrors Qt's own (private) hit test: the grip on a section's
 LEFT edge resizes the PREVIOUS section, the grip on its right edge resizes the
-section itself. The padding added back is `Dimensions.COLUMN_FIT_PADDING` —
-the view's content hint is measured without the table QSS's per-cell padding,
-so a fit without it would clip the widest value.
+section itself. Nothing is added on top of the content hint: it ALREADY
+includes the table QSS's per-cell padding (measured — "49" at the app font
+hints 36 px = 14 px text + 16 px QSS padding + style margins). The first
+version added that padding again, which left every fitted column ~16 px too
+wide — just enough to still show its title, i.e. indistinguishable from the
+Qt behaviour it replaced.
 
 ### DoubleClickSplitter / DoubleClickSplitterHandle
 

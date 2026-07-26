@@ -235,8 +235,13 @@ class ContentWidthHeader(QHeaderView):
     the width the process names want (owner 2026-07-26).
 
     This header takes that gesture over and resizes to the view's
-    `sizeHintForColumn()`, which measures the rendered ROWS only. Everything
-    else — dragging a handle, the other resize modes — is left to Qt.
+    `sizeHintForColumn()`, which measures the rendered ROWS only — and which
+    ALREADY includes the table QSS's per-cell padding (measured: "49" at the
+    app font hints 36px = 14px text + 16px QSS padding + style margins).
+    Nothing is added on top: adding the padding again was exactly the bug
+    that left the fitted column wide enough to still show its title.
+    Everything else — dragging a handle, the other resize modes — is left
+    to Qt.
     """
 
     def __init__(self, table: QTableWidget):
@@ -275,10 +280,7 @@ class ContentWidthHeader(QHeaderView):
             super().mouseDoubleClickEvent(event)
             return
         content = self._table.sizeHintForColumn(logical)
-        self.resizeSection(
-            logical,
-            max(self.minimumSectionSize(), content + Dimensions.COLUMN_FIT_PADDING),
-        )
+        self.resizeSection(logical, max(self.minimumSectionSize(), content))
 
 
 class DoubleClickSplitterHandle(QSplitterHandle):

@@ -49,13 +49,6 @@ class Dimensions:
     # split into this many characters per menu row.
     MENU_LINE_CHARS = 34
 
-    # Double-clicking a column's resize handle fits it to the ROW VALUES only
-    # (never the column title — owner 2026-07-26). The view's content hint is
-    # measured without the table QSS's per-cell padding, so that padding is
-    # added back here; otherwise the fitted column clips its widest value.
-    # Keep in sync with the `QTableWidget::item` padding in _style_table.
-    COLUMN_FIT_PADDING = 16   # 8px left + 8px right
-
 
 @dataclass(frozen=True)
 class Transition:
