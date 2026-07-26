@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QSplitterHandle,
     QStackedWidget,
+    QStyle,
     QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
@@ -104,6 +105,63 @@ class TotalRowDelegate(QStyledItemDelegate):
         )
         painter.drawText(rect, align, text)
         painter.restore()
+
+
+class ContentWidthHeader(QHeaderView):
+    """Header whose auto-fit sizes a column to its ROW VALUES, not its title.
+
+    Double-clicking a section's resize handle is Qt's "fit to contents"
+    gesture, and Qt resizes to `sectionSizeHint()` — the LARGER of the column
+    contents and the header label. In a gadget this is the wrong end of the
+    trade: "Parallel" and "Threads" are long words holding two-digit numbers,
+    so the fit leaves a column three times wider than the data needs and eats
+    the width the process names want (owner 2026-07-26).
+
+    This header takes that gesture over and resizes to the view's
+    `sizeHintForColumn()`, which measures the rendered ROWS only. Everything
+    else — dragging a handle, the other resize modes — is left to Qt.
+    """
+
+    def __init__(self, table: QTableWidget):
+        super().__init__(Qt.Orientation.Horizontal, table)
+        self._table = table
+
+    def _handle_at(self, position: int) -> int:
+        """Logical index of the section whose resize handle is at `position`.
+
+        Mirrors Qt's own (private) hit test: the grip on a section's LEFT edge
+        resizes the PREVIOUS section, the grip on its right edge resizes the
+        section itself. Returns -1 when the position is not on a handle.
+        """
+        visual = self.visualIndexAt(position)
+        if visual < 0:
+            return -1
+        logical = self.logicalIndex(visual)
+        start = self.sectionViewportPosition(logical)
+        grip = self.style().pixelMetric(
+            QStyle.PixelMetric.PM_HeaderGripMargin, None, self
+        )
+        if position < start + grip:
+            return self.logicalIndex(visual - 1) if visual > 0 else -1
+        if position > start + self.sectionSize(logical) - grip:
+            return logical
+        return -1
+
+    def mouseDoubleClickEvent(self, event):
+        """Fit the double-clicked column to its row values.
+
+        Anything that is not an interactive section's handle falls through to
+        Qt — only the auto-fit gesture is being redefined here.
+        """
+        logical = self._handle_at(round(event.position().x()))
+        if logical < 0 or self.sectionResizeMode(logical) != QHeaderView.ResizeMode.Interactive:
+            super().mouseDoubleClickEvent(event)
+            return
+        content = self._table.sizeHintForColumn(logical)
+        self.resizeSection(
+            logical,
+            max(self.minimumSectionSize(), content + Dimensions.COLUMN_FIT_PADDING),
+        )
 
 
 class DoubleClickSplitterHandle(QSplitterHandle):
@@ -959,6 +1017,9 @@ class BaseMonitorWindow(QMainWindow):
             headers.append("Uptime")
 
         table = QTableWidget(rows + 1 if has_total_row else rows, cols)
+        # Swapped in before any header configuration: double-clicking a resize
+        # handle must fit the column to its values, not to the column title.
+        table.setHorizontalHeader(ContentWidthHeader(table))
         table.setHorizontalHeaderLabels(headers)
         table.verticalHeader().setVisible(False)
         table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)

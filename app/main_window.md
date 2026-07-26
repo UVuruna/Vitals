@@ -54,6 +54,39 @@ reads its owning window's `ThemeScope.palette` at **paint time**, so a theme
 flip needs no delegate rebuild — and a table in the Memory window keeps
 painting Memory's theme while CPU flips to the other.
 
+### ContentWidthHeader
+
+`QHeaderView` that redefines ONE gesture: double-clicking a column's resize
+handle fits that column to its **row values**, never to its title (owner
+2026-07-26).
+
+Qt's own auto-fit resizes to `sectionSizeHint()`, which is the larger of the
+column contents and the header label. In a gadget that is the wrong end of the
+trade — `Parallel` and `Threads` are long words holding two-digit numbers, so
+Qt's fit leaves those columns roughly a third wider than the data needs and
+eats the width the process names want. Measured on a real CPU window:
+
+| Column | Qt's fit (title-aware) | This header's fit (rows only) |
+|--------|-----------------------|-------------------------------|
+| `Parallel` | 69 px | 52 px |
+| `Threads` | 73 px | 59 px |
+
+```
+ON DOUBLE-CLICK at x:
+    section = the resize handle under x, else none
+    IF no section OR that section is not Interactive:
+        hand the event back to Qt        # dragging, other resize modes, header body
+    ELSE:
+        width = view's content hint for that column   # rendered ROWS only
+        resize the section to max(minimum section width, width + cell padding)
+```
+
+`_handle_at()` mirrors Qt's own (private) hit test: the grip on a section's
+LEFT edge resizes the PREVIOUS section, the grip on its right edge resizes the
+section itself. The padding added back is `Dimensions.COLUMN_FIT_PADDING` —
+the view's content hint is measured without the table QSS's per-cell padding,
+so a fit without it would clip the widest value.
+
 ### DoubleClickSplitter / DoubleClickSplitterHandle
 
 `QSplitter` whose handle resets to an equal 50/50 split on double-click.
