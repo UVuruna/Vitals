@@ -52,6 +52,11 @@ class TrayController:
         self._menu.addSeparator()
         settings_action = self._menu.addAction("Settings")
         settings_action.triggered.connect(self._show_settings)
+        reset_action = self._menu.addAction("Reset window positions")
+        reset_action.setToolTip(
+            "Bring every monitor window back to the centre of the screen"
+        )
+        reset_action.triggered.connect(self._manager.reset_positions)
         self._menu.addSeparator()
         minimize_action = self._menu.addAction("Minimize")
         minimize_action.triggered.connect(self._manager.hide_all)
@@ -81,8 +86,13 @@ class TrayController:
         opens or hides windows to match the mode toggles.
         """
         dialog = InitialSettingsDialog(first_run=False)
-        if dialog.exec():
+        accepted = dialog.exec()
+        if accepted:
             self._manager.apply_settings(dialog.get_settings())
+        # Parentless, so nothing else will ever free it. Destroyed only AFTER
+        # get_settings() is read — WA_DeleteOnClose would kill it inside
+        # exec() and the read above would raise.
+        dialog.deleteLater()
 
     def prepare_exit(self):
         """Hide the tray icon and every window at once, saving layouts first.

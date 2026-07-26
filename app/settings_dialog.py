@@ -684,6 +684,19 @@ class BaseSettingsDialog(QDialog):
         super().__init__(parent)
         self._theme = scope
 
+    def done(self, result: int) -> None:
+        """Drop the restylers before closing, breaking the dialog's ref cycle.
+
+        Every restyler is a closure over `self`, so a dialog holds a reference
+        to itself. A parentless dialog (the tray's setup screen) therefore
+        survives its own close as a zombie whose `changed` connection is still
+        live, until the cyclic collector happens to run — and it accumulates
+        one more zombie per open. Clearing the list here makes destruction
+        deterministic instead of leaving it to gc.
+        """
+        self._restylers_list().clear()
+        super().done(result)
+
     def _restylers_list(self) -> list:
         """The registered restyle closures, created on first use."""
         if not hasattr(self, "_restylers"):
