@@ -34,8 +34,9 @@ from .icons import IconButton
 from .monitor import MonitorMode, MonitorData, NetworkMonitorData, SharedDataCollector
 from .color_management import ProcessColorManager
 from .persistence import get_base_path, load_last_setup, save_last_setup
-from .theme import theme, theme_manager
+from .theme import ThemeScope, window_theme
 from .theme_switch import DayNightSwitch
+from .transition import flip_window_theme
 from .settings_dialog import (
     InitialSettings,
     CPUSettings,
@@ -65,18 +66,23 @@ class TotalRowDelegate(QStyledItemDelegate):
 
     QSS-styled tables ignore QTableWidgetItem.setBackground(); this delegate
     bypasses the style engine and paints the background directly. Colors are
-    read from the ACTIVE palette at paint time, so a theme flip needs no
-    delegate rebuild.
+    read from the owning window's scope at paint time, so a theme flip needs
+    no delegate rebuild — and a table in the Memory window keeps painting
+    Memory's theme while CPU is on the other one.
     """
 
     ROLE = Qt.ItemDataRole.UserRole + 100
+
+    def __init__(self, table: QTableWidget, scope: ThemeScope):
+        super().__init__(table)
+        self._theme = scope
 
     def paint(self, painter, option, index):
         if not index.data(self.ROLE):
             super().paint(painter, option, index)
             return
 
-        palette = theme()
+        palette = self._theme.palette
         painter.save()
         painter.fillRect(option.rect, QColor(palette.HEADER))
 
@@ -122,7 +128,14 @@ class DoubleClickSplitter(QSplitter):
 
 
 class BaseMonitorWindow(QMainWindow):
-    """Base class for monitor windows (CPU and Memory)."""
+    """Base class for monitor windows (CPU, Memory and Network).
+
+    Each window owns its own `ThemeScope` (owner 2026-07-26): the Day/Night
+    switch in its header flips THIS window only, and every color it paints —
+    chrome, table QSS, per-cell brushes — is read from `self._theme.palette`.
+    Nothing here may reach for an app-wide theme, or a flip would leak into
+    the other two gadgets.
+    """
 
     # Temperature thresholds in °C — the COLORS themselves come from the
     # active palette (TEXT / TEMP_WARNING / TEMP_CRITICAL) so they follow the
@@ -138,6 +151,9 @@ class BaseMonitorWindow(QMainWindow):
         # entry — the tray icon (app/tray.py) is the app's single identity.
         # The native title bar keeps normal move/resize/close behavior.
         self.setWindowFlag(Qt.WindowType.Tool, True)
+        # This window's own theme — resolved before any widget is built, so
+        # every child can be handed the scope it must follow.
+        self._theme = window_theme(self._get_window_key())
         self.is_paused = False
         self._saved_col_widths_current: list[int] | None = None
         self._saved_col_widths_history: list[int] | None = None
@@ -166,7 +182,7 @@ class BaseMonitorWindow(QMainWindow):
         self._load_config()
         self._setup_ui()
         self._apply_theme()
-        theme_manager().changed.connect(self._apply_theme)
+        self._theme.changed.connect(self._apply_theme)
 
         app = QApplication.instance()
         if app:
@@ -419,12 +435,16 @@ class BaseMonitorWindow(QMainWindow):
                 table.setColumnWidth(col, w)
 
     def _save_window_layout(self):
-        """Save window geometry, splitter sizes, and column widths to last_setup.json."""
+        """Save window geometry, splitter sizes, and column widths to last_setup.json.
+
+        The entry is UPDATED, never replaced: the same slot also holds this
+        window's remembered theme, which is owned by its ThemeScope and would
+        be wiped by a wholesale assignment.
+        """
         data = load_last_setup()
-        if "windows" not in data:
-            data["windows"] = {}
+        entry = data.setdefault("windows", {}).setdefault(self._get_window_key(), {})
         geo = self.geometry()
-        data["windows"][self._get_window_key()] = {
+        entry.update({
             "x": geo.x(), "y": geo.y(),
             "width": geo.width(), "height": geo.height(),
             "font_size": self._font_base,
@@ -442,7 +462,7 @@ class BaseMonitorWindow(QMainWindow):
                 self.rolling_table.columnWidth(c)
                 for c in range(2, self.rolling_table.columnCount())
             ],
-        }
+        })
         save_last_setup(data)
 
     def _restore_window_layout(self):
@@ -517,8 +537,8 @@ class BaseMonitorWindow(QMainWindow):
                 print(f"[Vitals] Invalid {config_path}: {e} - using default temp thresholds", file=sys.stderr)
 
     def _get_temp_color(self, temp: Optional[float]) -> str:
-        """Get the active theme's color for a temperature value."""
-        palette = theme()
+        """Get this window's theme color for a temperature value."""
+        palette = self._theme.palette
         if temp is None:
             return palette.TEXT
 
@@ -529,14 +549,19 @@ class BaseMonitorWindow(QMainWindow):
         else:
             return palette.TEXT
 
-    def _apply_theme(self):
-        """(Re)style every widget in this window from the ACTIVE palette.
+    def _flip_theme(self):
+        """Flip THIS window's theme (the header switch), covering it alone."""
+        flip_window_theme(self._theme, self)
 
-        Runs once at startup and again on every Day/Night flip — it is the
-        single place that owns the window's stylesheets, so no color can be
-        left frozen at the theme that happened to be active at build time.
+    def _apply_theme(self):
+        """(Re)style every widget in this window from ITS palette.
+
+        Runs once at startup and again on every Day/Night flip of this
+        window's scope — it is the single place that owns the window's
+        stylesheets, so no color can be left frozen at the theme that
+        happened to be active at build time.
         """
-        palette = theme()
+        palette = self._theme.palette
 
         qpalette = QPalette()
         qpalette.setColor(QPalette.ColorRole.Window, QColor(palette.BACKGROUND))
@@ -599,13 +624,13 @@ class BaseMonitorWindow(QMainWindow):
             self._render_data(self._last_data)
 
     def _style_table(self, table: QTableWidget):
-        """Apply the ACTIVE palette's QSS to one process table.
+        """Apply this window's palette as QSS to one process table.
 
         All three sections (current, peak, rolling) share one surface color —
         a per-section tint made the same data look like three different kinds
         of table for no reason (owner 2026-07-24).
         """
-        palette = theme()
+        palette = self._theme.palette
         table.setStyleSheet(f"""
             QTableWidget {{
                 background-color: {palette.SECTION_BG};
@@ -631,8 +656,8 @@ class BaseMonitorWindow(QMainWindow):
         table.horizontalHeader().setStyleSheet(self._header_css())
 
     def _header_css(self) -> str:
-        """QSS for a table's horizontal header, in the active theme and font."""
-        palette = theme()
+        """QSS for a table's horizontal header, in this window's theme and font."""
+        palette = self._theme.palette
         return f"""
             QHeaderView::section {{
                 background-color: {palette.HEADER};
@@ -713,10 +738,10 @@ class BaseMonitorWindow(QMainWindow):
         icons_row = QHBoxLayout()
         icons_row.setContentsMargins(0, 0, 0, 0)
         icons_row.setSpacing(4)
-        self.pause_btn = IconButton(icons.PAUSE, "Pause monitoring")
+        self.pause_btn = IconButton(icons.PAUSE, "Pause monitoring", self._theme)
         self.pause_btn.clicked.connect(self._toggle_pause)
         icons_row.addWidget(self.pause_btn)
-        self.settings_btn = IconButton(icons.SETTINGS, "Settings")
+        self.settings_btn = IconButton(icons.SETTINGS, "Settings", self._theme)
         self.settings_btn.clicked.connect(self._show_settings)
         icons_row.addWidget(self.settings_btn)
         icons_row.addStretch()
@@ -725,7 +750,10 @@ class BaseMonitorWindow(QMainWindow):
         switch_row = QHBoxLayout()
         switch_row.setContentsMargins(0, 0, 0, 0)
         switch_row.setSpacing(0)
-        self.theme_switch = DayNightSwitch()
+        # A per-window switch: it flips this gadget alone. The global one
+        # lives on the setup screen (tray > Settings).
+        self.theme_switch = DayNightSwitch(self._theme, self._flip_theme)
+        self.theme_switch.setToolTip("Switch this window between dark and light theme")
         switch_row.addWidget(self.theme_switch)
         switch_row.addStretch()
         controls_col.addLayout(switch_row)
@@ -861,7 +889,7 @@ class BaseMonitorWindow(QMainWindow):
         """Create a styled QTableWidgetItem for the Σ total row."""
         item = QTableWidgetItem(text)
         item.setData(TotalRowDelegate.ROLE, True)
-        item.setForeground(QColor(theme().TEXT))
+        item.setForeground(QColor(self._theme.palette.TEXT))
         item.setFont(self._font(FontScale.SMALL, bold=True))
         return item
 
@@ -875,6 +903,7 @@ class BaseMonitorWindow(QMainWindow):
             limit: Max rows to fill (defaults to table.rowCount()).
         """
         color_mgr = ProcessColorManager()
+        palette = self._theme.palette
         max_rows = limit if limit is not None else table.rowCount()
 
         for row, item in enumerate(data):
@@ -883,7 +912,7 @@ class BaseMonitorWindow(QMainWindow):
             table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
 
             name_item = QTableWidgetItem(item.name)
-            proc_color = color_mgr.get_process_color(item.name)
+            proc_color = color_mgr.get_process_color(item.name, palette)
             if proc_color:
                 name_item.setForeground(proc_color)
             company = color_mgr.get_company_name(item.name)
@@ -998,7 +1027,7 @@ class BaseMonitorWindow(QMainWindow):
 
         # Enable hover events for tooltips and install delegate for total row background
         table.viewport().setMouseTracking(True)
-        table.setItemDelegate(TotalRowDelegate(table))
+        table.setItemDelegate(TotalRowDelegate(table, self._theme))
 
         return table
 
@@ -1169,8 +1198,9 @@ class BaseMonitorWindow(QMainWindow):
         # Full PID string for clipboard copy
         pid_clipboard = ", ".join(str(p) for p in pids)
 
+        palette = self._theme.palette
         menu = QMenu(self)
-        menu.setStyleSheet(context_menu_style())
+        menu.setStyleSheet(context_menu_style(palette))
 
         # Info section — the company that signed the exe leads it, wrapped
         # across as many lines as the name needs (owner 2026-07-24), with the
@@ -1179,7 +1209,7 @@ class BaseMonitorWindow(QMainWindow):
         company = color_mgr.get_company_name(process_name)
         company_actions: list = []
         if company:
-            proc_color = color_mgr.get_process_color(process_name)
+            proc_color = color_mgr.get_process_color(process_name, palette)
             for i, line in enumerate(wrap(company, Dimensions.MENU_LINE_CHARS)):
                 act = menu.addAction(line)
                 if i == 0 and proc_color:
@@ -1237,9 +1267,9 @@ class BaseMonitorWindow(QMainWindow):
         if not procs:
             QMessageBox.information(self, "Kill Process", f"No running instances of '{process_name}' found.")
             return
-        color_mgr = ProcessColorManager()
-        proc_color = color_mgr.get_process_color(process_name)
-        dialog = KillConfirmDialog(self, process_name, len(procs), proc_color)
+        palette = self._theme.palette
+        proc_color = ProcessColorManager().get_process_color(process_name, palette)
+        dialog = KillConfirmDialog(self, process_name, len(procs), palette, proc_color)
         if dialog.exec():
             killed, errors = kill_processes(procs)
             if errors:
@@ -1266,10 +1296,10 @@ class BaseMonitorWindow(QMainWindow):
         if not procs:
             QMessageBox.information(self, "Set Priority", f"No running instances of '{process_name}' found.")
             return
-        color_mgr = ProcessColorManager()
-        proc_color = color_mgr.get_process_color(process_name)
+        palette = self._theme.palette
+        proc_color = ProcessColorManager().get_process_color(process_name, palette)
         current_prio = get_current_priority(procs)
-        dialog = PriorityDialog(self, process_name, current_prio, proc_color)
+        dialog = PriorityDialog(self, process_name, current_prio, palette, proc_color)
         if dialog.exec():
             new_prio = dialog.get_selected_priority()
             if new_prio is not None:
@@ -1366,8 +1396,8 @@ class CPUWindow(BaseMonitorWindow):
         )
 
     def _create_settings_dialog(self):
-        """Create the CPU settings dialog."""
-        return CPUSettingsDialog(self, self._settings)
+        """Create the CPU settings dialog, in this window's theme."""
+        return CPUSettingsDialog(self._theme, self, self._settings)
 
     def _fill_cpu_cols(self, table, row, item, color_mgr):
         """Fill CPU-specific columns: Usage, Count, Threads."""
@@ -1376,7 +1406,9 @@ class CPUWindow(BaseMonitorWindow):
         value_item = QTableWidgetItem(value_str)
         if monitor:
             pct = item.value / (monitor.cpu_threads * 100) * 100
-            value_item.setForeground(color_mgr.get_value_color(pct, "cpu"))
+            value_item.setForeground(
+                color_mgr.get_value_color(pct, "cpu", self._theme.palette)
+            )
         table.setItem(row, 2, value_item)
         table.setItem(row, 3, QTableWidgetItem(str(item.count)))
         table.setItem(row, 4, QTableWidgetItem(str(item.threads) if item.threads > 0 else ""))
@@ -1392,7 +1424,7 @@ class CPUWindow(BaseMonitorWindow):
         uptime_min = round(item.uptime_seconds / 60)
         uptime_item = QTableWidgetItem(f"{uptime_min}m")
         if uptime_min >= self._settings.retention_minutes:
-            uptime_item.setForeground(QColor(theme().TEXT_MUTED))
+            uptime_item.setForeground(QColor(self._theme.palette.TEXT_MUTED))
         table.setItem(row, 5, uptime_item)
 
     def _render_data(self, data: MonitorData):
@@ -1436,7 +1468,9 @@ class CPUWindow(BaseMonitorWindow):
         usage_item = self._make_total_item(usage_str)
         if monitor:
             pct = totals.value / (monitor.cpu_threads * 100) * 100
-            usage_item.setForeground(color_mgr.get_value_color(pct, "cpu_all"))
+            usage_item.setForeground(
+                color_mgr.get_value_color(pct, "cpu_all", self._theme.palette)
+            )
         self.current_table.setItem(total_row, 2, usage_item)
         self.current_table.setItem(total_row, 3, self._make_total_item(str(totals.count)))
         self.current_table.setItem(total_row, 4, self._make_total_item(str(totals.threads) if totals.threads > 0 else ""))
@@ -1502,24 +1536,27 @@ class MemoryWindow(BaseMonitorWindow):
         )
 
     def _create_settings_dialog(self):
-        """Create the Memory settings dialog."""
-        return MemorySettingsDialog(self, self._settings)
+        """Create the Memory settings dialog, in this window's theme."""
+        return MemorySettingsDialog(self._theme, self, self._settings)
 
     def _fill_memory_cols(self, table, row, item, color_mgr):
         """Fill Memory-specific columns: Usage, Commit."""
         monitor = self._collector.memory_monitor
         unit = self._settings.memory_unit
+        palette = self._theme.palette
         value_str = monitor.format_value(item.value, unit) if monitor else f"{item.value:.0f}"
         value_item = QTableWidgetItem(value_str)
         if monitor:
             pct = item.value / monitor.ram_bytes * 100
-            value_item.setForeground(color_mgr.get_value_color(pct, "memory"))
+            value_item.setForeground(color_mgr.get_value_color(pct, "memory", palette))
         table.setItem(row, 2, value_item)
         commit_str = monitor.format_value(item.vms, unit) if monitor else ""
         commit_item = QTableWidgetItem(commit_str)
         if monitor and self._commit_limit_bytes > 0:
             commit_pct = item.vms / self._commit_limit_bytes * 100
-            commit_item.setForeground(color_mgr.get_value_color(commit_pct, "memory_total"))
+            commit_item.setForeground(
+                color_mgr.get_value_color(commit_pct, "memory_total", palette)
+            )
         table.setItem(row, 3, commit_item)
 
     def _fill_memory_history_cols(self, table, row, item, color_mgr):
@@ -1533,7 +1570,7 @@ class MemoryWindow(BaseMonitorWindow):
         uptime_min = round(item.uptime_seconds / 60)
         uptime_item = QTableWidgetItem(f"{uptime_min}m")
         if uptime_min >= self._settings.retention_minutes:
-            uptime_item.setForeground(QColor(theme().TEXT_MUTED))
+            uptime_item.setForeground(QColor(self._theme.palette.TEXT_MUTED))
         table.setItem(row, 4, uptime_item)
 
     def _render_data(self, data: MonitorData):
@@ -1563,10 +1600,11 @@ class MemoryWindow(BaseMonitorWindow):
                 f"{hwinfo.dram_read:,.0f} MB/s" if hwinfo.dram_read else "—",
                 f"{hwinfo.dram_write:,.0f} MB/s" if hwinfo.dram_write else "—",
             ]
+            text_color = self._theme.palette.TEXT
             for i, (name, value_text) in enumerate(zip(sensor_names, sensor_values)):
                 self.sensor_name_labels[i].setText(name)
                 self.sensor_value_labels[i].setText(value_text)
-                self.sensor_value_labels[i].setStyleSheet(f"color: {theme().TEXT}; background: transparent;")
+                self.sensor_value_labels[i].setStyleSheet(f"color: {text_color}; background: transparent;")
 
         # Update current table
         total_row = self.current_table.rowCount() - 1
@@ -1579,15 +1617,18 @@ class MemoryWindow(BaseMonitorWindow):
         self.current_table.setItem(total_row, 1, self._make_total_item("Total"))
         usage_str = monitor.format_value(totals.value, unit) if monitor else f"{totals.value:.0f}"
         usage_item = self._make_total_item(usage_str)
+        palette = self._theme.palette
         if monitor:
             pct = totals.value / monitor.ram_bytes * 100
-            usage_item.setForeground(color_mgr.get_value_color(pct, "memory_all"))
+            usage_item.setForeground(color_mgr.get_value_color(pct, "memory_all", palette))
         self.current_table.setItem(total_row, 2, usage_item)
         total_commit_str = monitor.format_value(totals.vms, unit) if monitor else ""
         total_commit_item = self._make_total_item(total_commit_str)
         if monitor and self._commit_limit_bytes > 0:
             total_commit_pct = totals.vms / self._commit_limit_bytes * 100
-            total_commit_item.setForeground(color_mgr.get_value_color(total_commit_pct, "memory_all_total"))
+            total_commit_item.setForeground(
+                color_mgr.get_value_color(total_commit_pct, "memory_all_total", palette)
+            )
         self.current_table.setItem(total_row, 3, total_commit_item)
 
         # Update history table
@@ -1671,8 +1712,8 @@ class NetworkWindow(BaseMonitorWindow):
         )
 
     def _create_settings_dialog(self):
-        """Create the Network settings dialog."""
-        return NetworkSettingsDialog(self, self._settings)
+        """Create the Network settings dialog, in this window's theme."""
+        return NetworkSettingsDialog(self._theme, self, self._settings)
 
     def _store_settings(self, new_settings):
         """Store new settings and recompute max-speed color thresholds."""
@@ -1683,18 +1724,19 @@ class NetworkWindow(BaseMonitorWindow):
     def _fill_net_cols(self, table, row, item, color_mgr):
         """Fill Network-specific columns: Download, Upload."""
         unit = self._settings.network_unit
+        palette = self._theme.palette
         dl_str = format_speed(item.download, unit)
         dl_item = QTableWidgetItem(dl_str)
         if self._max_dl_bytes > 0:
             dl_pct = item.download / self._max_dl_bytes * 100
-            dl_item.setForeground(color_mgr.get_value_color(dl_pct, "net_dl"))
+            dl_item.setForeground(color_mgr.get_value_color(dl_pct, "net_dl", palette))
         table.setItem(row, 2, dl_item)
 
         ul_str = format_speed(item.upload, unit)
         ul_item = QTableWidgetItem(ul_str)
         if self._max_ul_bytes > 0:
             ul_pct = item.upload / self._max_ul_bytes * 100
-            ul_item.setForeground(color_mgr.get_value_color(ul_pct, "net_ul"))
+            ul_item.setForeground(color_mgr.get_value_color(ul_pct, "net_ul", palette))
         table.setItem(row, 3, ul_item)
 
     def _fill_net_history_cols(self, table, row, item, color_mgr):
@@ -1708,7 +1750,7 @@ class NetworkWindow(BaseMonitorWindow):
         uptime_min = round(item.uptime_seconds / 60)
         uptime_item = QTableWidgetItem(f"{uptime_min}m")
         if uptime_min >= self._settings.retention_minutes:
-            uptime_item.setForeground(QColor(theme().TEXT_MUTED))
+            uptime_item.setForeground(QColor(self._theme.palette.TEXT_MUTED))
         table.setItem(row, 4, uptime_item)
 
     def _render_data(self, data: NetworkMonitorData):
@@ -1727,18 +1769,19 @@ class NetworkWindow(BaseMonitorWindow):
         self.peak_label.setText(data.peak_display)
 
         # Sensor row: Upload speed, Total Download, Total Upload
+        value_style = f"color: {self._theme.palette.TEXT}; background: transparent;"
         self.sensor_widget.setVisible(True)
         self.sensor_name_labels[0].setText("Upload")
         self.sensor_value_labels[0].setText(f"↑ {format_speed(data.current_upload, unit)}")
-        self.sensor_value_labels[0].setStyleSheet(f"color: {theme().TEXT}; background: transparent;")
+        self.sensor_value_labels[0].setStyleSheet(value_style)
 
         self.sensor_name_labels[1].setText("Total ↓")
         self.sensor_value_labels[1].setText(format_bytes_total(data.cumulative_download, unit))
-        self.sensor_value_labels[1].setStyleSheet(f"color: {theme().TEXT}; background: transparent;")
+        self.sensor_value_labels[1].setStyleSheet(value_style)
 
         self.sensor_name_labels[2].setText("Total ↑")
         self.sensor_value_labels[2].setText(format_bytes_total(data.cumulative_upload, unit))
-        self.sensor_value_labels[2].setStyleSheet(f"color: {theme().TEXT}; background: transparent;")
+        self.sensor_value_labels[2].setStyleSheet(value_style)
 
         # Update current table (no total row for network)
         self._fill_process_rows(
