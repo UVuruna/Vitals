@@ -2,7 +2,7 @@
 
 from .main_window import CPUWindow, MemoryWindow, NetworkWindow, BaseMonitorWindow
 from .monitor import MonitorMode, ProcessMonitor, SharedDataCollector
-from .theme import ThemeManager, theme, theme_manager
+from .theme import ThemeScope, app_theme, window_theme
 from .window_manager import WindowManager
 from .settings_dialog import (
     InitialSettingsDialog,
@@ -23,9 +23,9 @@ __all__ = [
     "MonitorMode",
     "ProcessMonitor",
     "SharedDataCollector",
-    "ThemeManager",
-    "theme",
-    "theme_manager",
+    "ThemeScope",
+    "app_theme",
+    "window_theme",
     "WindowManager",
     "InitialSettingsDialog",
     "CPUSettingsDialog",

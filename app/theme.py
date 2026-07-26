@@ -2,15 +2,22 @@
 Theme Engine — Dark / Light palettes and the live theme flip.
 
 The single source of truth for every color in the app. Two coordinated
-palettes (DARK, LIGHT) are flipped as one by the Day/Night switch in each
-window header; every widget that paints a color reads it through `theme()`
-at paint/restyle time, never at import time.
+palettes (DARK, LIGHT) are selected per **scope**: every widget that paints
+a color reads it from the `ThemeScope` that governs it, at paint/restyle
+time, never at import time.
 
-Why `theme()` and not a module constant: the old `styles.Colors` was a
+Scopes, not one global theme (owner 2026-07-26): each monitor window owns
+its own scope, so the Day/Night switch in the CPU header flips the CPU
+window ALONE — Memory and Network keep theirs. The app-wide scope
+(`app_theme()`) styles the tray menu and the setup screen, and the setup
+screen's switch is the GLOBAL one: it forces its choice on every window
+through `set_theme_everywhere()`.
+
+Why a live lookup and not a module constant: the old `styles.Colors` was a
 frozen dataclass read as `Colors.TEXT` inside module-level f-strings, so
 every stylesheet froze the dark palette at import. A runtime flip requires
-a LIVE lookup, so all call sites now go through `theme()` and re-run their
-stylesheet builders when `theme_manager().changed` fires.
+reading `scope.palette` at restyle time and re-running the stylesheet
+builders when `scope.changed` fires.
 
 Color derivation (root Rule #19 — compute, don't generate): the LIGHT
 palette's process/value colors are NOT a second hand-authored table. One
@@ -190,26 +197,41 @@ def shade_for_theme(color: QColor, palette: Palette) -> QColor:
 
 
 # ---------------------------------------------------------------------------
-# ThemeManager — the live active theme
+# ThemeScope — one independently themed surface
 # ---------------------------------------------------------------------------
 
-class ThemeManager(QObject):
-    """Owns the active palette and notifies every themed widget on a flip.
+class ThemeScope(QObject):
+    """The active palette for one surface, plus a flip notification.
 
-    `changed` fires AFTER the active palette is swapped, so a slot can
-    simply re-read `theme()` and rebuild its stylesheets.
+    A scope is what makes per-window themes possible: a monitor window reads
+    every color from ITS scope, so flipping one window leaves the others
+    exactly as they were. `changed` fires AFTER the palette is swapped, so a
+    slot can simply re-read `scope.palette` and rebuild its stylesheets.
+
+    `key` is the `last_setup.json` slot the choice is remembered in:
+      - `None` — the app-wide scope, saved as `theme`
+      - a window key ('cpu' / 'memory' / 'network') — saved as
+        `windows.<key>.theme`
+
+    A window that has never been themed on its own starts from the app-wide
+    choice, so a fresh install still opens all three gadgets in one look.
     """
 
     changed = Signal()
 
-    def __init__(self):
+    def __init__(self, key: Optional[str] = None):
         super().__init__()
-        saved = load_last_setup().get("theme")
+        self._key = key
+        data = load_last_setup()
+        if key is None:
+            saved = data.get("theme")
+        else:
+            saved = data.get("windows", {}).get(key, {}).get("theme") or data.get("theme")
         self._palette = THEMES.get(saved, THEMES[DEFAULT_THEME])
 
     @property
     def palette(self) -> Palette:
-        """The active palette."""
+        """The palette this scope currently paints with."""
         return self._palette
 
     @property
@@ -221,38 +243,78 @@ class ThemeManager(QObject):
         """True when the dark palette is active."""
         return self._palette is DARK
 
-    def set_theme(self, name: str) -> None:
-        """Activate a theme by name, persist it, and notify every listener.
+    def next_name(self) -> str:
+        """The name of the OTHER theme — what a flip would activate."""
+        return LIGHT.name if self.is_dark() else DARK.name
 
-        A no-op when the theme is already active, so a switch reflecting an
-        external change cannot cause a redundant full restyle.
+    def set_theme(self, name: str) -> None:
+        """Activate a theme by name, remember it, and notify every listener.
+
+        A no-op when the theme is already active, so a global flip that
+        matches a window's current theme costs nothing and a switch
+        reflecting an external change cannot cause a redundant restyle.
         """
         palette = THEMES[name]
         if palette is self._palette:
             return
         self._palette = palette
-        data = load_last_setup()
-        data["theme"] = name
-        save_last_setup(data)
+        self._persist(name)
         self.changed.emit()
 
-    def toggle(self) -> str:
-        """Flip between dark and light. Returns the newly active name."""
-        self.set_theme(LIGHT.name if self.is_dark() else DARK.name)
-        return self.name
+    def _persist(self, name: str) -> None:
+        """Write this scope's choice into its own last_setup.json slot."""
+        data = load_last_setup()
+        if self._key is None:
+            data["theme"] = name
+        else:
+            data.setdefault("windows", {}).setdefault(self._key, {})["theme"] = name
+        save_last_setup(data)
 
 
-_manager: Optional[ThemeManager] = None
+_app_scope: Optional[ThemeScope] = None
+_window_scopes: dict[str, ThemeScope] = {}
 
 
-def theme_manager() -> ThemeManager:
-    """Return the process-wide ThemeManager, creating it on first use."""
-    global _manager
-    if _manager is None:
-        _manager = ThemeManager()
-    return _manager
+def app_theme() -> ThemeScope:
+    """The app-wide scope — tray menu, setup screen, default for a new window."""
+    global _app_scope
+    if _app_scope is None:
+        _app_scope = ThemeScope()
+    return _app_scope
 
 
-def theme() -> Palette:
-    """Return the ACTIVE palette. Call at paint/restyle time, never at import."""
-    return theme_manager().palette
+def window_theme(key: str) -> ThemeScope:
+    """The scope for one monitor window ('cpu' | 'memory' | 'network').
+
+    Created on first use and kept for the app's lifetime, so a window that is
+    hidden and shown again comes back in the theme the user left it in.
+    """
+    scope = _window_scopes.get(key)
+    if scope is None:
+        scope = ThemeScope(key)
+        _window_scopes[key] = scope
+    return scope
+
+
+def set_theme_everywhere(name: str) -> None:
+    """Force one theme on the app AND on every monitor window.
+
+    This is what the setup screen's switch does (owner 2026-07-26): unlike a
+    window header switch it is global. It moves the app scope, every live
+    window scope, and the REMEMBERED choice of a window that is not open yet
+    — without that last step, opening that window later would resurrect the
+    theme it carried before the global change.
+    """
+    app_theme().set_theme(name)
+    for scope in _window_scopes.values():
+        scope.set_theme(name)
+
+    data = load_last_setup()
+    stale = [
+        entry for entry in data.get("windows", {}).values()
+        if entry.get("theme", name) != name
+    ]
+    for entry in stale:
+        entry["theme"] = name
+    if stale:
+        save_last_setup(data)

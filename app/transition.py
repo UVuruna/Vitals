@@ -8,11 +8,15 @@ reported exactly this — a "partial change" with light-theme chrome behind
 dark-theme process names).
 
 The fix is the mechanism PromptPainter uses (root Rule #5 — reuse the shape
-that already works): grab EVERY visible window into a borderless, always-on-
-top cover, composite the NEXT theme's big sun or moon in the middle, force the
+that already works): grab the affected windows into borderless, always-on-top
+covers, composite the NEXT theme's big sun or moon in the middle, force the
 covers painted, flip the theme hidden behind them, then fade the covers out.
 The user sees the old theme, a sun/moon, and the finished new theme — never
 the cascade.
+
+Which windows get covered is exactly the flip's reach: `flip_window_theme()`
+covers the one window it changes, `flip_app_theme()` covers every visible
+window because it changes all of them.
 
 The cover is a pure visual nicety. Any failure to build one is reported and
 the flip still happens instantly (root Rule #1's documented-fallback case):
@@ -20,6 +24,7 @@ the cover must never be the reason the theme toggle stops working.
 """
 
 import sys
+from typing import Sequence
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt
 from PySide6.QtGui import QPainter
@@ -27,7 +32,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from . import icons
 from .styles import Transition
-from .theme import DARK, LIGHT, theme_manager
+from .theme import LIGHT, ThemeScope, app_theme, set_theme_everywhere
 
 
 class _Cover(QWidget):
@@ -95,20 +100,12 @@ def _visible_windows() -> list[QWidget]:
     ]
 
 
-def flip_theme() -> str:
-    """Flip Dark <-> Light behind a snapshot cover on EVERY visible window.
-
-    Covering all windows (not just the one that was clicked) matters because
-    the three gadgets and any open dialog flip together — one uncovered window
-    would show the cascade the cover exists to hide.
-
-    Returns the newly active theme name.
-    """
-    next_name = LIGHT.name if theme_manager().is_dark() else DARK.name
+def _raise_covers(targets: Sequence[QWidget], next_name: str) -> list[_Cover]:
+    """Freeze every target under a painted cover carrying the next theme's icon."""
     icon = icons.KNOB_SUN if next_name == LIGHT.name else icons.KNOB_MOON
 
     covers: list[_Cover] = []
-    for window in _visible_windows():
+    for window in targets:
         try:
             covers.append(_Cover(window, icon))
         except Exception as e:
@@ -120,13 +117,43 @@ def flip_theme() -> str:
         cover.raise_()
     # Force the covers actually painted BEFORE anything under them changes
     QApplication.processEvents()
+    return covers
 
-    theme_manager().set_theme(next_name)
 
-    # Let the whole restyle cascade settle while it is still hidden
+def _drop_covers(covers: list[_Cover]) -> None:
+    """Let the restyle cascade settle while still hidden, then fade the covers."""
     QApplication.processEvents()
-
     for cover in covers:
         cover.fade_out()
 
+
+def flip_window_theme(scope: ThemeScope, window: QWidget) -> str:
+    """Flip ONE window's theme behind a cover on that window alone.
+
+    The switch in a monitor window's header reaches only that window (owner
+    2026-07-26), so only that window is covered — the other two gadgets are
+    not repainting and must not be frozen for the fade.
+
+    Returns the newly active theme name.
+    """
+    next_name = scope.next_name()
+    covers = _raise_covers([window], next_name)
+    scope.set_theme(next_name)
+    _drop_covers(covers)
+    return next_name
+
+
+def flip_app_theme() -> str:
+    """Flip the app theme and force it on every monitor window, covering all.
+
+    This is the setup screen's switch — the global one. Every visible window
+    changes, so every visible window is covered: one uncovered gadget would
+    show the cascade the cover exists to hide.
+
+    Returns the newly active theme name.
+    """
+    next_name = app_theme().next_name()
+    covers = _raise_covers(_visible_windows(), next_name)
+    set_theme_everywhere(next_name)
+    _drop_covers(covers)
     return next_name
