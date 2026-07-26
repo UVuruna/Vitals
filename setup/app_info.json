@@ -1,5 +1,5 @@
 {
-    "version": "2.3.004",
+    "version": "2.3.010",
     "name": "Vitals",
     "description": "Real-time CPU, Memory, and Network usage monitor",
     "exe_name": "Vitals.exe",
