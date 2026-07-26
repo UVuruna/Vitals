@@ -29,7 +29,8 @@ the initial launcher screen.
 - [Monitor](monitor.md) — `MonitorMode`, `get_commit_limit_bytes()` (Memory dialog's Commit color-scale max)
 - [Persistence](persistence.md) — `get_base_path()` (dialog icon), `load_last_setup()`/`save_last_setup()`
 - [Styles](styles.md) — `Defaults`, `FontScale`, `MEMORY_UNITS`, `NETWORK_UNITS`
-- [Theme](theme.md) — `theme()` for every dialog stylesheet, `theme_manager().changed` so the setup screen follows a live flip
+- [Theme](theme.md) — `Palette`, `ThemeScope`, `app_theme()`. Every dialog is bound to ONE scope at construction — a per-mode dialog to the window that opened it, `InitialSettingsDialog` to the app-wide `app_theme()` — and every stylesheet builder takes that scope's palette
+- [Theme Transition](transition.md) — `flip_app_theme()`, the setup screen's own switch (the GLOBAL flip)
 - [Day/Night Switch](theme_switch.md) — the setup screen's own theme toggle
 - [Color Management](color_management.md) — `ProcessColorManager` (thresholds, hue params, legend data)
 - [Network Monitor](network_monitor.md) — `get_link_speed_mbps()` (default max-speed spinbox value)
@@ -48,36 +49,48 @@ the initial launcher screen.
 ### ColorScaleWidget
 
 Paints a 5-color gradient bar with 4 draggable diamond handles marking zone
-boundaries. Emits `thresholds_changed(list[int])` while dragging; each
-settings dialog reads `.thresholds` on accept and persists it via
+boundaries. `ColorScaleWidget(colors, thresholds, scope, parent=None, scale_max=100)`
+— the `scope` decides which theme its handle outline and percentage labels
+follow. Emits `thresholds_changed(list[int])` while dragging; each settings
+dialog reads `.thresholds` on accept and persists it via
 `ProcessColorManager.update_value_thresholds()`.
 
 ### CompanyLegendDialog
 
-Shows every detected company with its assigned color and active process
-count (expandable to list the individual process names), plus hue
+`CompanyLegendDialog(scope, parent=None)` — opened from a per-mode settings
+dialog, so it renders in the theme of the window that owns it, and its
+Saturation/Lightness sliders tune THAT theme's wheel params only. Shows every
+detected company with its assigned color and active process count
+(expandable to list the individual process names), plus hue
 saturation/lightness sliders. Self-refreshes every second
 (`QTimer`) so it stays live while the collector discovers new companies.
 
 ### BaseSettingsDialog (QDialog)
 
-Shared scaffolding — not instantiated directly.
+Shared scaffolding — not instantiated directly. `BaseSettingsDialog(scope, parent=None)`
+binds the dialog to ONE `ThemeScope` for its whole lifetime: a per-mode
+dialog gets the scope of the window that opened it, `InitialSettingsDialog`
+gets `app_theme()`. That is what lets the CPU settings dialog be dark while
+the Memory one is light at the same time.
 
 | Method | Description |
 |--------|-------------|
-| `_apply_theme()` | Sets the window icon, the ACTIVE theme's `QPalette`, and re-runs every registered restyler. Both the initial styling pass and the theme-flip handler. |
-| `_register_restyle(fn)` / `_themed_sheet(widget, builder)` | Register a closure that (re)applies one widget's theme styling, and run it now. |
+| `_apply_theme()` | Sets the window icon, this dialog's `self._theme.palette` as `QPalette`, and re-runs every registered restyler. Both the initial styling pass and the theme-flip handler. |
+| `_register_restyle(fn)` / `_themed_sheet(widget, builder)` | Register a closure that (re)applies one widget's theme styling, and run it now. `_themed_sheet` calls `builder(self._theme.palette)`. |
 | `_make_label(text, size, bold, color)` / `_make_combo(items, default)` | Styled widget factories used by every dialog; both self-register as restylers. `color` is a Palette ATTRIBUTE NAME (`"TEXT_MUTED"`), not a hex — the token is what survives a flip. |
+| `_make_legend_btn()` | Builds the themed "Company Legend" button shared by all three per-mode dialogs. |
+| `_build_color_section(layout, show_legend=True, mode="cpu", title=..., max_info="", scale_max=100)` | Adds one color-settings section (label + `ColorScaleWidget` + optional Legend button) to a dialog's layout; returns the `ColorScaleWidget` so the caller reads `.thresholds` on accept. |
+| `_show_legend()` | Opens `CompanyLegendDialog` bound to this dialog's own scope. |
 | `_build_common_settings_rows(layout)` | Builds the 5 rows shared by all 4 dialogs: current processes, history records, refresh rate, history retention, font size. Returns the widgets for the caller to store as attributes. |
 | `_build_network_settings_rows(layout, default_speed_mbps)` | Builds the network section (speed unit, sort mode, max download/upload spinboxes where `0` = auto) shared by `InitialSettingsDialog` and `NetworkSettingsDialog`. |
 
 #### The restyle registry
 
 Every widget these factories build registers a closure that rebuilds its
-stylesheet from the active palette, so `_apply_theme()` can be re-run on a
+stylesheet from `self._theme.palette`, so `_apply_theme()` can be re-run on a
 flip. The per-mode dialogs are modal and never see one; the setup screen
-carries its own Day/Night switch and connects to `theme_manager().changed`,
-so it restyles live.
+carries its own Day/Night switch and connects to `app_theme().changed`, so
+it restyles live.
 
 Toggle buttons (the three mode buttons, the autostart switch) already had a
 method that repaints them for their checked state — that method IS their
@@ -90,6 +103,13 @@ The setup screen. `first_run=False` (the tray's Settings action) changes the
 subtitle and labels the primary button **Apply** instead of **Start
 Monitoring**; everything else is identical, so there is one screen rather
 than two.
+
+Bound to `app_theme()`, not any window's scope — it exists before any
+monitor window does. Its Day/Night switch is the GLOBAL one: unlike a
+monitor header's switch, which flips that window alone, this one calls
+`flip_app_theme()`, forcing one theme onto the app scope and every monitor
+window (open or not). That is the whole reason the setup screen still
+carries a switch now that each window has its own.
 
 ### InitialSettings / CPUSettings / MemorySettings / NetworkSettings (dataclasses)
 
@@ -110,9 +130,12 @@ section; restores the previous session via `_apply_last_setup(load_last_setup())
 
 Per-mode dialogs built from the shared rows plus mode-specific color-scale
 sections (CPU: usage + Σ-total; Memory: usage + commit + their Σ-total
-variants; Network: download + upload). Each dialog's `accept()` persists its
-`ColorScaleWidget` thresholds via `ProcessColorManager.update_value_thresholds()`
-before calling `super().accept()`.
+variants; Network: download + upload). Each takes
+`(scope, parent=None, settings=None)` — the OPENING window hands in its own
+`ThemeScope`, so the dialog matches that window's theme rather than a global
+one. Each dialog's `accept()` persists its `ColorScaleWidget` thresholds via
+`ProcessColorManager.update_value_thresholds()` before calling
+`super().accept()`.
 
 ---
 

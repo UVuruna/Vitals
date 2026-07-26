@@ -20,9 +20,9 @@ monitor window, and its **Exit** action is the way to quit the application
 ### Uses
 
 - [Styles](styles.md) — `context_menu_style()` for the tray menu
-- [Theme](theme.md) — `theme_manager().changed` to restyle the menu on a flip (the tray outlives every window)
+- [Theme](theme.md) — `app_theme()`, whose `changed` signal restyles the menu on a flip. The tray follows the APP-WIDE scope, never a monitor window's — it outlives every window and belongs to none of them
 - [Window Manager](window_manager.md) — toggles each monitor, drives Minimize and the exit sequence; `MODES` builds the menu entries
-- [Settings Dialog](settings_dialog.md) — `InitialSettingsDialog`, opened by the menu's **Settings** action
+- [Settings Dialog](settings_dialog.md) — `InitialSettingsDialog`, opened by the menu's **Settings** action, carrying the GLOBAL Day/Night switch that pushes one theme into every monitor window at once
 
 ### Used by
 
@@ -77,3 +77,9 @@ resume its paused monitor and restart the shared collector thread if it had
 fully stopped (see `BaseMonitorWindow.show_from_tray()` in
 [Main Window](main_window.md)) — plain `show()` would display stale, frozen
 data.
+
+**The tray belongs to no monitor window, so it follows the app-wide theme
+scope.** Each of the three windows now carries its own independent theme;
+the tray menu cannot follow one of them without arbitrarily picking a
+favorite, so it restyles from `app_theme()` instead — the same scope the
+setup screen's GLOBAL Day/Night switch moves.

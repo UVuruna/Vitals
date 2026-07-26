@@ -34,11 +34,12 @@ that already works), ported to Qt.
 
 - [Icons](icons.md) — `art()` for the big sun/moon cover icon
 - [Styles](styles.md) — `Transition` timing and sizing constants
-- [Theme](theme.md) — `theme_manager().set_theme()` — the flip itself
+- [Theme](theme.md) — `scope.set_theme()` and `set_theme_everywhere()` — the flips themselves
 
 ### Used by
 
-- [Day/Night Switch](theme_switch.md) — a click calls `flip_theme()`
+- [Main Window](main_window.md) — its header switch calls `flip_window_theme()`
+- [Settings Dialog](settings_dialog.md) — the setup screen's switch calls `flip_app_theme()`
 
 ---
 
@@ -46,32 +47,36 @@ that already works), ported to Qt.
 
 | Function | Description |
 |----------|-------------|
-| `flip_theme()` | Flip Dark ↔ Light behind a cover on EVERY visible window. Returns the new theme name. |
+| `flip_window_theme(scope, window)` | Flip ONE window's theme behind a cover on that window alone. Returns the new theme name. |
+| `flip_app_theme()` | Flip the app theme and force it on every monitor window, covering all of them. Returns the new theme name. |
+
+**Coverage is exactly the flip's reach.** A per-window flip covers one
+window; the other two gadgets are not repainting and must not be frozen for
+the length of a fade they have no part in. A global flip changes everything,
+so it covers everything — one uncovered gadget would show the very cascade
+the cover exists to hide.
 
 ### The transition
 
 ```
-FUNCTION flip_theme():
+FUNCTION flip(scope-or-all, targets):
     next = the theme we are switching TO
     icon = SUN if next is light, else MOON
 
-    FOR EACH visible top-level window:
+    FOR EACH target window:
         cover = a frozen snapshot of that window, with `icon` drawn centred
         show the cover on top of it
 
-    process pending events        # FORCE the covers actually painted first
-    switch the active theme        # the whole cascade happens hidden
+    process pending events         # FORCE the covers actually painted first
+    switch the theme(s)            # the whole cascade happens hidden
     process pending events         # let the restyle settle, still hidden
     fade every cover's opacity 1 -> 0, then destroy it
 ```
 
 The ORDER is what removes the visible jump: the covers must be painted
 **before** anything under them changes, and the flip must settle **before**
-the fade starts. Otherwise the cascade shows through.
-
-Every visible window is covered, not just the one that was clicked — the
-three gadgets and any open dialog flip together, so one uncovered window
-would show the very cascade the cover exists to hide.
+the fade starts. Otherwise the cascade shows through. Both public functions
+share this body — only "which scopes" and "which targets" differ.
 
 ---
 
@@ -103,10 +108,16 @@ documented-fallback case). The cover must never be the reason the theme
 toggle stops working.
 
 **`processEvents()` rather than a timer chain.** The flip has to be
-synchronous — the app must be coherent the moment `flip_theme()` returns, so
-the switch's knob animation and the cover fade both start from a settled
-state. Two explicit event-loop pumps do that without spreading the flip
-across callbacks.
+synchronous — the app must be coherent the moment the flip returns, so the
+switch's knob animation and the cover fade both start from a settled state.
+Two explicit event-loop pumps do that without spreading the flip across
+callbacks.
+
+**Two named functions, not one with a `global` flag.** The two flips differ
+in both *what changes* and *what is covered*, and those two must always
+agree. Naming each combination makes a mismatch impossible to write; a
+boolean parameter would leave "flip one window but cover all three" a
+reachable state.
 
 **The animation object is held on the cover.** A `QPropertyAnimation` in a
 local variable is garbage-collected the instant the function returns, and the

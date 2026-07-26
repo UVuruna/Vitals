@@ -10,7 +10,8 @@ Config home for every tunable value that is **not** a color: dimensions,
 switch geometry, fonts, defaults, unit tables and the shared formatters.
 
 Colors are **not** here. They must flip at runtime between the dark and light
-palettes, so they live in [Theme](theme.md) and are read through `theme()` at
+palettes — and each window may be on a different one — so they live in
+[Theme](theme.md) and are always passed in as a `Palette` by the caller at
 restyle time. The one thing this module still builds from a palette is
 `context_menu_style()` — a function, not a constant, precisely so it cannot
 freeze whichever theme was active at import.
@@ -21,7 +22,7 @@ freeze whichever theme was active at import.
 
 ### Uses
 
-- [Theme](theme.md) — `theme()`, for `context_menu_style()` only
+- [Theme](theme.md) — `Palette`, for `context_menu_style(palette)`'s type only
 
 ### Used by
 
@@ -92,12 +93,13 @@ Prefix-match table used by `get_process_display_name()` to group related
 processes under one display name (e.g. `"Code"`/`"code"` →
 `"Visual Studio Code"`, `"chrome"` → `"Chrome"`, `"msedge"` → `"Microsoft Edge"`).
 
-### context_menu_style()
+### context_menu_style(palette)
 
 Shared QSS **function** for every right-click/tray context menu, built from
-the ACTIVE palette so menus always match the current theme. It is a function
-rather than a constant because a module-level f-string would freeze the
-palette that happened to be active at import time.
+the CALLER's palette so the menu matches the theme of whichever window (or
+the tray's app-wide scope) opened it — there is no single "current" theme to
+read anymore. It is a function rather than a constant because a module-level
+f-string would freeze one palette at import time.
 
 ---
 

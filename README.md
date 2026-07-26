@@ -14,7 +14,7 @@
 | 🧰 **System Tray Control** | The tray icon's menu shows/hides each window and is the only way to quit — closing a window just hides it |
 | ↩️ **Reopen From Tray** | Double-click the tray icon, or check a window in its menu, to bring back a hidden monitor and resume its data collection |
 | 🌐 **Network Monitor** | Per-process download/upload speed via a Windows ETW kernel trace — requires Administrator privileges |
-| 🌗 **Dark & Light Themes** | A sun/moon switch in every window header (and on the setup screen) flips the whole app behind a sun/moon fade; the choice is remembered |
+| 🌗 **Dark & Light Themes** | A sun/moon switch in every window header flips **that window alone**, so CPU can be dark while Memory is light; the switch on the setup screen is the global one and flips all three. Every flip runs behind a sun/moon fade, and each window remembers its own choice |
 | 🎛️ **One Settings Screen** | The tray's **Settings** opens the setup screen — every monitor's rows, refresh rate, retention, units and fonts in one place |
 | 🎨 **Company Coloring** | Processes colored by company (Microsoft, Adobe, …) — the busiest company is plain white/black, the rest walk a blue → red scale by process count |
 | 📊 **Value Color Scale** | Usage % mapped to 5 color zones — independent scales for CPU, Memory, and Network (download/upload) |
@@ -61,7 +61,7 @@ python main.py
 |---------|--------|
 | ⏸ / ▶ | Pause / resume the display |
 | ⚙ | Open this monitor's settings |
-| 🌙 / ☀️ pill | Flip between the dark and light theme (all open windows follow) |
+| 🌙 / ☀️ pill | Flip **this window** between the dark and light theme. The other windows keep theirs — use the switch on the setup screen (tray → **Settings**) to flip all three at once |
 
 The title and the total value always share one row. When no HWiNFO sensors
 are available the sensor row disappears and the control block centres against
@@ -218,7 +218,7 @@ sequenceDiagram
         SDC->>PM: bulk collect (NtQuerySystemInformation / ETW snapshot)
         PM->>SDC: aggregated process/network data
         SDC->>W: cpu_data_ready / memory_data_ready / network_data_ready
-        W->>PCM: get_process_color(name) / get_value_color(pct, mode)
+        W->>PCM: get_process_color(name, palette) / get_value_color(pct, mode, palette)
         PCM->>W: QColor
         W->>W: render current / history / rolling tables
     end

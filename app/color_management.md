@@ -18,9 +18,13 @@ not here — this module owns:
   Memory, Memory-Commit, Memory-Σ-total, Memory-Commit-Σ-total, Network
   download, Network upload) each map 0–100% to one of 5 colors.
 
-Both are **theme-aware**: the wheel's saturation/lightness and the value
-lightness come from the active palette, and every derived color is rebuilt
-when the theme flips.
+Both are **theme-aware**, but the manager itself is **theme-LESS**: every
+getter takes the `Palette` it must answer for, rather than reading one
+"active" theme. Each monitor window carries its own theme now, so one dark
+and one light table can be on screen at the same time — a single active-theme
+cache would simply answer one of them wrong. Both themes' shaded value ranges
+are held at once and rebuilt on load and on a threshold edit, never on a
+flip.
 
 Default thresholds are read from `config/config.json`; user overrides
 persist to `config/last_setup.json` via [Persistence](persistence.md).
@@ -32,15 +36,15 @@ persist to `config/last_setup.json` via [Persistence](persistence.md).
 ### Uses
 
 - `config/config.json` — `value_colors.ranges` default thresholds
-- [Theme](theme.md) — the active palette, `wheel_color()`, `shade_for_theme()`, and `theme_manager().changed` to rebuild caches on a flip
+- [Theme](theme.md) — `Palette`, `THEMES`, `wheel_color()`, `shade_for_theme()` — every getter takes the palette its caller wants answered, so the manager never reads a "current" theme of its own
 - [Persistence](persistence.md) — `load_last_setup()`/`save_last_setup()` for per-theme hue params and saved thresholds
 - `psutil` — resolves an exe path per process for company lookup
 - Windows `version.dll` (via `ctypes`) — reads `CompanyName` from PE version info
 
 ### Used by
 
-- [Main Window](main_window.md) — `get_process_color()`, `get_value_color()`, `get_company_name()`, `lookup_company()`, `refresh_active_counts()` (called every tick by [Monitor](monitor.md)'s collector loop)
-- [Settings Dialog](settings_dialog.md) — `get_value_ranges()`, `update_value_thresholds()`, `get_legend()`, `get_hue_params()`, `update_hue_params()`, `get_singleton_companies()`, `get_company_processes()`
+- [Main Window](main_window.md) — `get_process_color(name, palette)`, `get_value_color(pct, mode, palette)`, `get_company_name()`, `lookup_company()`, `refresh_active_counts()` (the last two called every tick by [Monitor](monitor.md)'s collector loop). Each window passes ITS OWN palette.
+- [Settings Dialog](settings_dialog.md) — `get_value_ranges(mode, palette)`, `update_value_thresholds()`, `get_legend(palette)`, `get_hue_params(palette)`, `update_hue_params(palette, sat, light)`, `get_singleton_companies()`, `get_company_processes()` — the palette is the one of the window whose dialog is open
 
 ---
 
@@ -86,13 +90,13 @@ tuning one theme never disturbs the other.
 |--------|--------|--------------|
 | `lookup_company(name, pid)` | Background (collector) | Registers a process name and resolves its company via PE version info. Fast no-op for already-cached names. |
 | `refresh_active_counts(active_names)` | Background (collector) | Recomputes per-company counts AND ranks from the current tick's active names every cycle. |
-| `get_process_color(name)` | Main | `QColor` for a process name, or `None` if not yet looked up. |
+| `get_process_color(name, palette)` | Main | `QColor` for a process name in the caller's theme, or `None` if not yet looked up. |
 | `get_company_name(name)` | Main | Resolved company name, or `None`. |
-| `get_value_color(pct, mode)` | Any | `QColor` for a 0–100 usage percentage under the given mode's thresholds. |
-| `get_value_ranges(mode)` | Main | `list[tuple[float, QColor]]` for `ColorScaleWidget` display. |
-| `update_value_thresholds(thresholds, mode)` | Main | Updates the 4 threshold values in-memory and persists them. |
-| `get_hue_params()` / `update_hue_params(sat, light)` | Main | Read/write the ACTIVE theme's wheel saturation and lightness. |
-| `get_legend()` | Main | `list[tuple[str, QColor, int]]` — `(label, color, process_count)` sorted by count descending; the order IS the color ranking. Includes `"Other"` (singletons, red slot) and `"Unknown"` (no company info, gray). |
+| `get_value_color(pct, mode, palette)` | Any | `QColor` for a 0–100 usage percentage under the given mode's thresholds, shaded for the caller's theme. |
+| `get_value_ranges(mode, palette)` | Main | `list[tuple[float, QColor]]` for `ColorScaleWidget` display, shaded for the caller's theme. |
+| `update_value_thresholds(thresholds, mode)` | Main | Updates the 4 threshold values in-memory and persists them. Unchanged by the per-window theme split — thresholds are shared, only the shading differs. |
+| `get_hue_params(palette)` / `update_hue_params(palette, sat, light)` | Main | Read/write ONE theme's wheel saturation and lightness — the palette says which. |
+| `get_legend(palette)` | Main | `list[tuple[str, QColor, int]]` — `(label, color, process_count)` sorted by count descending, shaded for the caller's theme; the order IS the color ranking. Includes `"Other"` (singletons, red slot) and `"Unknown"` (no company info, gray). |
 | `get_singleton_companies()` / `get_company_processes(company)` | Main | Drill-down lists for the Company Legend dialog's expandable rows. |
 
 `mode` is one of: `"cpu"`, `"cpu_all"`, `"memory"`, `"memory_total"`,
@@ -116,10 +120,14 @@ it. The cost is that a company changing rank changes color; in practice the
 top ranks are stable (the OS vendor dominates), and the name tie-break keeps
 equal counts from swapping back and forth.
 
-**Theme-derived colors are cached, not recomputed per cell.**
-`_rebuild_themed_ranges()` re-shades all eight threshold lists once — on
-load, on a threshold edit, and on a theme flip — so `get_value_color()` stays
-a plain list walk on the per-cell refresh hot path (root Priority A).
+**Theme-derived colors are cached, not recomputed per cell — and BOTH themes
+are cached at once.** `_rebuild_themed_ranges()` re-shades all eight
+threshold lists for every theme in `THEMES`, on load and on a threshold edit.
+There is no "on a flip" case anymore: since two windows can be dark and light
+simultaneously, invalidating one cached shade on a flip would leave the other
+window's colors stale. `get_value_color()` stays a dict lookup (by theme
+name) plus a plain list walk on the per-cell refresh hot path (root
+Priority A).
 
 **One authored hue set serves both themes.** The value colors in
 `config/config.json` are hues only; each theme re-shades them via

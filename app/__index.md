@@ -13,8 +13,9 @@ shared background collector thread and controlled through a single system
 tray icon. Closing a window only hides it — the collector keeps running; the
 tray icon's **Exit** is the only way to actually quit.
 
-Both a **Dark** and a **Light** theme ship, flipped live by the Day/Night
-switch in every window header.
+Both a **Dark** and a **Light** theme ship. Each window owns its own theme —
+the Day/Night switch in its header flips that window alone — while the setup
+screen carries a second, GLOBAL switch that flips every window at once.
 
 ---
 
@@ -28,7 +29,7 @@ switch in every window header.
   🐍 monitor.py             ← SharedDataCollector, ProcessMonitor, NetworkMonitor, RollingWindow
   🐍 network_monitor.py     ← NetworkTracer (ETW kernel trace), get_link_speed_mbps
   🐍 color_management.py    ← ProcessColorManager (ranked company colors + value color zones)
-  🐍 theme.py               ← Dark/Light palettes, ThemeManager, color-wheel and shading math
+  🐍 theme.py               ← Dark/Light palettes, ThemeScope (per-window + app-wide), color-wheel and shading math
   🐍 theme_switch.py        ← DayNightSwitch (the sun/moon pill in each header)
   🐍 icons.py               ← SVG rendering, theme tinting, IconButton
   🐍 transition.py          ← The snapshot-cover fade that hides a theme flip
@@ -90,7 +91,7 @@ flowchart TB
 
     subgraph SUPPORT["Shared services"]
         PCM[ProcessColorManager]
-        THEME[ThemeManager]
+        THEME[Theme Scopes — app_theme + one per window]
         PERSIST[(persistence.py)]
         STYLES[styles.py]
     end
@@ -111,7 +112,6 @@ flowchart TB
     SWITCH[DayNightSwitch] --> THEME
     WINDOWS --> SWITCH
     THEME -->|changed| WINDOWS
-    THEME -->|changed| PCM
     THEME -->|changed| TRAY
     PCM --> THEME
     STYLES --> THEME
@@ -136,13 +136,24 @@ flowchart TB
    if any is visible, else re-shows them all); the per-window checkbox brings a
    single one back via `show_from_tray()`. The tray menu's **Exit** is the only
    path to `QApplication.quit()`.
-5. **Theme** — the Day/Night switch in any header (or on the setup screen)
-   calls `flip_theme()`. Every visible window is covered by a snapshot with
-   the incoming sun/moon on it; behind the covers `ThemeManager.set_theme()`
-   persists the choice and emits `changed`, so every window restyles and
-   re-renders its last tick, the color manager rebuilds its derived colors,
-   the tray menu restyles, and the other switches slide to match. The covers
-   then fade out.
+5. **Theme** — each monitor window owns its own `ThemeScope`
+   (`window_theme(key)`); the app owns one more (`app_theme()`) for the tray
+   menu and the setup screen. Two switches trigger two different flips:
+     - A window header's switch calls `flip_window_theme(scope, window)`:
+       ONLY that window is covered by a snapshot with the incoming sun/moon
+       on it; behind the cover the window's own scope persists the choice
+       and emits `changed`, so only that window restyles, re-renders its
+       last tick, and its own switch slides to match — the other two
+       gadgets never repaint.
+     - The setup screen's switch calls `flip_app_theme()`: every VISIBLE
+       window is covered, then `set_theme_everywhere()` moves the app scope,
+       every live window scope, and the remembered theme of any window not
+       currently open, so a window opened later doesn't resurrect a stale
+       choice. Every covered window restyles/re-renders and the tray menu
+       restyles. The covers then fade out either way.
+   `ProcessColorManager` needs no signal from either flip: it holds BOTH
+   themes' derived colors at once and simply answers whichever palette the
+   caller passes in.
 6. **Reconfiguring** — the tray's **Settings** action reopens the setup
    screen; `WindowManager.apply_settings()` pushes the result into every
    monitor and opens or hides windows to match the mode toggles.

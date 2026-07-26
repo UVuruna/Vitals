@@ -27,9 +27,10 @@ which settings dialog to open).
 - [Process Actions (script)](process_actions.py) — `find_processes`, `kill_processes`, `get_exe_path`, `open_file_location`, `get_current_priority`, `set_priority`
 - [Process Dialog (script)](process_dialog.py) — `KillConfirmDialog`, `PriorityDialog`
 - [Styles](styles.md) — `context_menu_style`, `Defaults`, `Dimensions`, `Fonts`, `FontScale`, `format_speed`, `format_bytes_total`
-- [Theme](theme.md) — `theme()` for every stylesheet, `theme_manager().changed` to restyle on a flip
+- [Theme](theme.md) — `window_theme(key)` resolves this window's own `ThemeScope` (`self._theme`); every stylesheet reads `self._theme.palette`, and `self._theme.changed` triggers a restyle
+- [Theme Transition](transition.md) — `flip_window_theme()` for the header switch's own-window-only flip
 - [Icons](icons.md) — `IconButton` (header pause/play and settings), `swatch()` (context-menu company chip)
-- [Day/Night Switch](theme_switch.md) — one switch per window header
+- [Day/Night Switch](theme_switch.md) — one switch per window header, flipping that window alone
 - [Settings Dialog](settings_dialog.md) — `InitialSettings` for `_settings_from_initial()`
 - [Network Monitor](network_monitor.md) — `get_link_speed_mbps()` (via `NetworkWindow._resolve_max_bytes`)
 
@@ -48,8 +49,10 @@ which settings dialog to open).
 `QStyledItemDelegate` that paints the Σ total row with a distinct background.
 QSS-styled `QTableWidget`s ignore `QTableWidgetItem.setBackground()`, so this
 delegate bypasses the style engine and paints directly — the only way to
-color one specific row differently under a stylesheet. It reads the palette
-at **paint time**, so a theme flip needs no delegate rebuild.
+color one specific row differently under a stylesheet. `TotalRowDelegate(table, scope)`
+reads its owning window's `ThemeScope.palette` at **paint time**, so a theme
+flip needs no delegate rebuild — and a table in the Memory window keeps
+painting Memory's theme while CPU flips to the other.
 
 ### DoubleClickSplitter / DoubleClickSplitterHandle
 
@@ -61,6 +64,13 @@ Owns the whole window: header (controls, title, Day/Night switch, total),
 HWiNFO sensor row, splitter with a current-processes table and a toggleable
 history/rolling-average stack, context-menu process actions, theme restyling,
 and window-layout persistence.
+
+Each window owns its own theme. At the top of `__init__`, `self._theme` is
+resolved from `window_theme(self._get_window_key())` — the CPU, Memory and
+Network windows each get their own independent `ThemeScope`, so the switch in
+one header can never leak into the other two. Every stylesheet in the class
+reads `self._theme.palette`, and the window connects `self._theme.changed`
+to `_apply_theme()`.
 
 #### Header layout
 
@@ -115,7 +125,8 @@ the window. Exit now lives only in the [Tray Controller](tray.md)'s menu.
 | `keyPressEvent(event)` | `Esc` → `_hide_to_tray()`; `Space` → `_toggle_pause()`. |
 | `_save_window_layout()` / `_restore_window_layout()` | Persist/restore geometry, font size, splitter sizes, bottom-page toggle, and column widths via [Persistence](persistence.md). |
 | `_on_context_menu(pos, table, has_total_row)` | Right-click menu: the signing **company name** (wrapped over as many rows as it needs, with the row's own color as a swatch), the PIDs, the exe name, then Kill Process, Open File Location, Set Priority. Any info line copies its value to the clipboard. Delegates to [Process Actions (script)](process_actions.py) and shows [Process Dialog (script)](process_dialog.py) confirmation dialogs. |
-| `_apply_theme()` | (Re)styles every widget in the window from the active palette. Runs at startup and on every Day/Night flip. |
+| `_flip_theme()` | Flips THIS window's theme via `flip_window_theme(self._theme, self)` — the header switch's action, covering this window alone. |
+| `_apply_theme()` | (Re)styles every widget in the window from `self._theme.palette`. Runs at startup and on every flip of this window's own scope. |
 | `_style_table(table)` / `_header_css()` | Build one table's QSS and its header QSS from the active palette and font base. |
 | `_toggle_pause()` | Flips the pause state and swaps the header button's glyph between pause and play. |
 
@@ -159,8 +170,9 @@ process and value color is recomputed in the new palette immediately. The
 
 **One `_apply_theme()` owns every stylesheet.** Colors are never written at
 widget-construction time and left there; the single restyle method is
-connected to `theme_manager().changed`, so no widget can be left painted in
-the theme that happened to be active when it was built.
+connected to `self._theme.changed` — this window's OWN scope, not a global
+one — so no widget can be left painted in the theme that happened to be
+active when it was built, and a flip of one window can never repaint another.
 
 **The header stylesheet is applied twice, on purpose.** `_apply_fonts()` sets
 a stylesheet directly on each table's `QHeaderView` (it must restyle the

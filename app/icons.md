@@ -29,7 +29,7 @@ rather than re-authored (root Rule #5).
 
 ### Uses
 
-- [Theme](theme.md) — `theme()` for the tint color, `theme_manager()` to re-tint on a flip
+- [Theme](theme.md) — `ThemeScope` for the tint color and its `changed` signal to re-tint on a flip; each `IconButton` follows the ONE scope handed to it, never a global theme
 - [Persistence](persistence.md) — `get_base_path()` to locate `assets/icons/` frozen or from source
 
 ### Used by
@@ -43,15 +43,19 @@ rather than re-authored (root Rule #5).
 
 ### IconButton
 
-Flat, borderless icon button that re-tints itself whenever the theme flips.
+Flat, borderless icon button that re-tints itself whenever ITS theme flips.
 Used for the two header controls that replaced the old menu bar.
+
+`IconButton(name, tooltip, scope, size=18, parent=None)` — the scope is
+passed in rather than looked up: a button belongs to one window (or the
+setup screen), and that owner's `ThemeScope` is the only one it may follow.
 
 #### Methods
 
 - `set_glyph(name)`: swap the displayed glyph, so one button toggles between
   pause and play
 - `apply_theme()`: re-tint the glyph and rebuild the hover surface from the
-  active palette (connected to `theme_manager().changed`)
+  bound scope's palette (connected to that scope's `changed` signal)
 
 ---
 

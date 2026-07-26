@@ -7,14 +7,19 @@
 ## Purpose
 
 The single source of truth for **every color** in Vitals, and the engine that
-flips the whole app between the **Dark** and **Light** palettes at runtime.
+flips a **scope** between the **Dark** and **Light** palettes at runtime.
 
 Colors used to live in [Styles](styles.md) as a frozen `Colors` table read
 directly inside module-level f-strings — which froze the dark palette at
 import time and made a runtime theme impossible. This module replaces that
-with a **live lookup**: every widget calls `theme()` when it builds or
-rebuilds a stylesheet, and re-runs that build when `theme_manager().changed`
-fires.
+with a **live lookup**: every widget reads `scope.palette` when it builds or
+rebuilds a stylesheet, and re-runs that build when `scope.changed` fires.
+
+**Themes are per scope, not per app** (owner 2026-07-26). Each monitor
+window owns a `ThemeScope`, so the Day/Night switch in the CPU header flips
+the CPU window **alone** — Memory and Network keep theirs. The app-wide
+scope styles the tray and the setup screen, and the setup screen's switch is
+the GLOBAL one: `set_theme_everywhere()` forces its choice on all three.
 
 Colors are also **computed, not enumerated** (root Rule #19). There is no
 second hand-authored table of light-mode process colors: one set of hues is
@@ -22,22 +27,35 @@ re-shaded per theme by `shade_for_theme()`.
 
 ---
 
+## Scopes at a glance
+
+| Scope | Reached by | Styles | Flipped by |
+|-------|-----------|--------|-----------|
+| App-wide | `app_theme()` | tray menu, setup screen; the default for a window with no remembered theme | the setup screen's switch (global) |
+| `cpu` / `memory` / `network` | `window_theme(key)` | that monitor window and everything it opens (settings dialog, legend, kill/priority dialogs, context menu) | that window's header switch — **and** a global flip |
+
+Each scope remembers its own choice: the app-wide one in `theme`, a window's
+in `windows.<key>.theme`.
+
+---
+
 ## Connections
 
 ### Uses
 
-- [Persistence](persistence.md) — reads/writes the chosen theme in `last_setup.json`
+- [Persistence](persistence.md) — reads/writes each scope's theme in `last_setup.json`
 
 ### Used by
 
-- [Styles](styles.md) — `theme()` for `context_menu_style()`
-- [Color Management](color_management.md) — `theme()`, `wheel_color()`, `shade_for_theme()`, `theme_manager()`
-- [Main Window](main_window.md) — `theme()` for every window stylesheet, `theme_manager().changed` to restyle
-- [Settings Dialog](settings_dialog.md) — `theme()`, `theme_manager()`
-- [Icons](icons.md) — `theme()` for glyph tinting
-- [Day/Night Switch](theme_switch.md) — `theme_manager()` to flip and to follow other windows
-- [Tray Controller](tray.md) — restyles its menu on a flip
-- `process_dialog.py` — `theme()` for the kill/priority dialogs
+- [Styles](styles.md) — takes a `Palette` in `context_menu_style()`
+- [Color Management](color_management.md) — `Palette`, `THEMES`, `wheel_color()`, `shade_for_theme()`
+- [Main Window](main_window.md) — `window_theme()`; every window stylesheet reads its own scope, `scope.changed` restyles
+- [Settings Dialog](settings_dialog.md) — `app_theme()` for the setup screen; a window's scope for the per-mode dialogs
+- [Icons](icons.md) — a scope per `IconButton`, for glyph tinting
+- [Day/Night Switch](theme_switch.md) — the scope it renders and follows
+- [Theme Transition](transition.md) — `app_theme()`, `set_theme_everywhere()`
+- [Tray Controller](tray.md) — `app_theme()`; restyles its menu on a global flip
+- `process_dialog.py` — takes the calling window's `Palette`
 
 ---
 
@@ -91,25 +109,37 @@ colors).
 Light mode is **darker everywhere text is concerned** and dark mode lighter —
 the contrast rule the owner set for every color in the app.
 
-### ThemeManager
+### ThemeScope
 
-`QObject` singleton owning the active palette. Reached through
-`theme_manager()`; never constructed directly.
+`QObject` owning the palette of **one** surface. Reached through
+`app_theme()` or `window_theme(key)`; never constructed directly, so the same
+window always gets the same scope object.
 
 #### Attributes
 
 - `changed`: `Signal()` — emitted **after** the palette swaps, so a slot can
-  simply re-read `theme()`
-- `palette`: the active `Palette`
+  simply re-read `scope.palette`
+- `palette`: this scope's active `Palette`
 - `name`: `"dark"` or `"light"`
 
 #### Methods
 
 - `is_dark()`: True when the dark palette is active
-- `set_theme(name)`: activate, persist to `last_setup.json`, emit `changed`.
-  A no-op if that theme is already active, so a switch reflecting someone
+- `next_name()`: the name of the OTHER theme — what a flip would activate
+- `set_theme(name)`: activate, remember in this scope's `last_setup.json`
+  slot, emit `changed`. A no-op if that theme is already active, so a global
+  flip that matches a window costs nothing and a switch reflecting someone
   else's flip cannot loop
-- `toggle()`: flip dark ↔ light, returns the new name
+
+#### Initial theme
+
+```
+FUNCTION initial theme of a scope:
+    IF this is the app scope  → last_setup["theme"]
+    ELSE                      → last_setup["windows"][key]["theme"]
+                                OR last_setup["theme"] if the window has none
+    fall back to DARK if neither is a known theme name
+```
 
 ---
 
@@ -117,11 +147,29 @@ the contrast rule the owner set for every color in the app.
 
 | Function | Description |
 |----------|-------------|
-| `theme_manager()` | The process-wide `ThemeManager`, created on first use. |
-| `theme()` | The **active** `Palette`. Call at paint/restyle time, never at import. |
+| `app_theme()` | The app-wide `ThemeScope`, created on first use. |
+| `window_theme(key)` | The scope for one monitor window (`'cpu'` / `'memory'` / `'network'`), created on first use and kept for the app's lifetime. |
+| `set_theme_everywhere(name)` | Force one theme on the app scope, every live window scope, and the remembered choice of a window that is not open yet. |
 | `wheel_hue(slot, slots)` | Hue in degrees for one slot of the company wheel. |
 | `wheel_color(slot, slots, saturation, lightness)` | The `QColor` for one wheel slot. |
 | `shade_for_theme(color, palette)` | Re-shade an authored hue to the theme's readable lightness (hue and saturation preserved). |
+
+### The global flip
+
+```
+FUNCTION set_theme_everywhere(name):
+    app scope → set_theme(name)                # persists last_setup["theme"]
+    FOR EACH live window scope:
+        scope → set_theme(name)                # persists windows.<key>.theme
+    FOR EACH saved window entry with a different theme:
+        overwrite its theme with `name`        # a closed window must not
+    save                                       # resurrect its old choice
+```
+
+That last step is the non-obvious one: a monitor that has never been opened
+this session has no live scope, only a saved entry. Without rewriting it, a
+global flip to light would be silently undone the moment the user opened
+that window.
 
 ### The color wheel
 
@@ -152,16 +200,33 @@ surfaces and a deep tint on light ones, with no second table to maintain.
 
 ## Design Decisions
 
-**Why a live `theme()` call and not a module constant.** The old `Colors`
+**Why a live palette read and not a module constant.** The old `Colors`
 dataclass was read inside module-level f-strings (`CONTEXT_MENU_STYLE`) and
 even inside default arguments (`color: str = Colors.TEXT`). Both evaluate
 once, at import — a theme flip could never reach them. Every such site is now
-either a function or resolves its default at call time.
+either a function taking a `Palette` or resolves its default at call time.
+
+**Why scopes replaced a single global theme.** A global `theme()` lookup
+made per-window themes impossible to express: any widget could reach the one
+active palette, so flipping one window necessarily flipped the rest. The
+global accessor was therefore **removed outright** (root Rule #6 — no
+compatibility shim) rather than kept beside the scopes. That was deliberate:
+every one of the ~120 call sites had to be revisited and given the scope it
+belongs to, and a site that was missed fails loudly at import instead of
+silently painting the wrong window's theme.
+
+**Why the palette is passed down instead of looked up.** `IconButton`,
+`ColorScaleWidget`, `TotalRowDelegate` and the dialogs all take their scope
+(or a plain `Palette`) at construction. A widget cannot ask "what is the
+theme?" any more — only "what is MY window's theme?" — which is what makes a
+one-window flip provably contained.
 
 **Why the palette carries data tokens.** `COMPANY_TOP`, `COMPANY_UNKNOWN`,
 `HUE_*` and `VALUE_LIGHTNESS` are process-coloring inputs, not window chrome —
 but they must flip with the theme, so they live with the palette rather than
 in [Color Management](color_management.md).
 
-**Persistence.** The chosen theme is stored as `"theme"` in
-`last_setup.json`, so a restart comes back in the same mode.
+**Persistence.** Each scope owns one slot: the app-wide theme is `"theme"`,
+a window's is `windows.<key>.theme`. [Main Window](main_window.md)'s layout
+save **updates** its window entry rather than replacing it, so saving
+geometry can never wipe the theme the scope wrote there.
