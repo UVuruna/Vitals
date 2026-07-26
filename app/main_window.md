@@ -67,7 +67,7 @@ and window-layout persistence.
 A control column on the left, the data column on the right:
 
 ```
-[⏸/▶] [⚙]     CPU Monitor ................. 54.2% (3.38%)
+[⏸/▶] [⚙]     CPU ......................... 54.2% (3.38%)
 [ ~switch~ ]   Temperature     Power      Electric
                  58.9°C        38.4 W      18.5 A
 ```
@@ -79,7 +79,7 @@ two-row control block and the single title row centre against each other:
 
 ```
 [⏸/▶] [⚙]
-[ ~switch~ ]   CPU Monitor ................. 40.5% (2.53%)
+[ ~switch~ ]   CPU ......................... 40.5% (2.53%)
 ```
 
 The icon buttons replaced the old **menu bar**, which carried nothing but

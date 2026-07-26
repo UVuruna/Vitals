@@ -1346,7 +1346,7 @@ class CPUWindow(BaseMonitorWindow):
         return MonitorMode.CPU
 
     def _get_title(self) -> str:
-        return "CPU Monitor"
+        return "CPU"
 
     def _get_mode_cols(self) -> str:
         return "cpu"
@@ -1481,7 +1481,7 @@ class MemoryWindow(BaseMonitorWindow):
         return MonitorMode.MEMORY
 
     def _get_title(self) -> str:
-        return "Memory Monitor"
+        return "Memory"
 
     def _get_mode_cols(self) -> str:
         return "mem"
@@ -1646,7 +1646,7 @@ class NetworkWindow(BaseMonitorWindow):
         return MonitorMode.NETWORK
 
     def _get_title(self) -> str:
-        return "Network Monitor"
+        return "Network"
 
     def _get_mode_cols(self) -> str:
         return "net"

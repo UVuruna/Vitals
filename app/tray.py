@@ -24,9 +24,9 @@ class TrayController:
 
     # Menu label per window-manager mode key
     _TITLES = {
-        "cpu": "CPU Monitor",
-        "memory": "Memory Monitor",
-        "network": "Network Monitor",
+        "cpu": "CPU",
+        "memory": "Memory",
+        "network": "Network",
     }
 
     def __init__(self, icon, manager: WindowManager):

@@ -1248,7 +1248,7 @@ class CPUSettingsDialog(BaseSettingsDialog):
     def __init__(self, parent: Optional[QWidget] = None, settings: Optional[CPUSettings] = None):
         super().__init__(parent)
         self.settings = settings or CPUSettings()
-        self.setWindowTitle("CPU Monitor - Settings")
+        self.setWindowTitle("CPU - Settings")
         self.resize(400, 600)
 
         self._apply_theme()
@@ -1261,7 +1261,7 @@ class CPUSettingsDialog(BaseSettingsDialog):
         layout.setSpacing(16)
         layout.setContentsMargins(32, 24, 32, 24)
 
-        title = self._make_label("CPU Monitor Settings", 16, bold=True)
+        title = self._make_label("CPU Settings", 16, bold=True)
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         layout.addSpacing(12)
@@ -1341,7 +1341,7 @@ class MemorySettingsDialog(BaseSettingsDialog):
     def __init__(self, parent: Optional[QWidget] = None, settings: Optional[MemorySettings] = None):
         super().__init__(parent)
         self.settings = settings or MemorySettings()
-        self.setWindowTitle("Memory Monitor - Settings")
+        self.setWindowTitle("Memory - Settings")
         self.resize(400, 900)
 
         self._apply_theme()
@@ -1354,7 +1354,7 @@ class MemorySettingsDialog(BaseSettingsDialog):
         layout.setSpacing(16)
         layout.setContentsMargins(32, 24, 32, 24)
 
-        title = self._make_label("Memory Monitor Settings", 16, bold=True)
+        title = self._make_label("Memory Settings", 16, bold=True)
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         layout.addSpacing(12)
@@ -1477,7 +1477,7 @@ class NetworkSettingsDialog(BaseSettingsDialog):
     def __init__(self, parent: Optional[QWidget] = None, settings: Optional[NetworkSettings] = None):
         super().__init__(parent)
         self.settings = settings or NetworkSettings()
-        self.setWindowTitle("Network Monitor - Settings")
+        self.setWindowTitle("Network - Settings")
         self.resize(400, 700)
 
         self._apply_theme()
@@ -1490,7 +1490,7 @@ class NetworkSettingsDialog(BaseSettingsDialog):
         layout.setSpacing(16)
         layout.setContentsMargins(32, 24, 32, 24)
 
-        title = self._make_label("Network Monitor Settings", 16, bold=True)
+        title = self._make_label("Network Settings", 16, bold=True)
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         layout.addSpacing(12)

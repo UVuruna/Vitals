@@ -52,7 +52,7 @@ python main.py
 ### 🎛️ Window Header
 
 ```
-[⏸/▶] [⚙]     CPU Monitor ................. 54.2% (3.38%)
+[⏸/▶] [⚙]     CPU ......................... 54.2% (3.38%)
 [ ~switch~ ]   Temperature     Power      Electric
                  58.9°C        38.4 W      18.5 A
 ```
