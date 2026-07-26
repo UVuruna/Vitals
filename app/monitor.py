@@ -320,6 +320,7 @@ _hwinfo_reader: Optional[HWiNFOSharedMemory] = None
 
 from .styles import Defaults, MEMORY_UNITS, format_pct, format_speed, get_process_display_name
 from .color_management import ProcessColorManager
+from .network_monitor import CONSUMER_DIED, START_FAILED, TraceFailure
 
 
 # Indices into the aggregated per-process list [cpu_pct, threads, rss, vms, count, pid]
@@ -941,7 +942,9 @@ class NetworkMonitorData:
     cumulative_upload: int    # total bytes uploaded since start
     peak_display: str
     sort_mode: str            # "total", "download", or "upload"
-    error: str = ""           # Non-empty when the ETW tracer is unavailable
+    # Why capture is unavailable, or None while it is running. A structured
+    # TraceFailure, not a message: the window picks the remedy from its code.
+    error: Optional['TraceFailure'] = None
 
 
 class NetworkMonitor:
@@ -1146,7 +1149,7 @@ class SharedDataCollector(QThread):
         self._memory_monitor: Optional[ProcessMonitor] = None
         self._network_monitor: Optional[NetworkMonitor] = None
         self._network_tracer = None  # NetworkTracer (lazy import)
-        self._network_tracer_error: Optional[str] = None  # Why the tracer failed to start
+        self._network_tracer_error: Optional[TraceFailure] = None  # Why capture is unavailable
         self._running = False
         self._interval_ms = 1000
         self._cpu_refresh_ms = 1000
@@ -1262,8 +1265,16 @@ class SharedDataCollector(QThread):
                     self._network_tracer = tracer
                     self._network_tracer_error = None
                 else:
-                    self._network_tracer_error = tracer.error or "ETW trace failed to start"
-                    _net_log.info("configure_network: tracer.start() failed, error=%s", tracer.error)
+                    self._network_tracer_error = tracer.error or TraceFailure(
+                        START_FAILED,
+                        "The network trace could not be started.",
+                        "Press Retry.",
+                    )
+                    _net_log.info(
+                        "configure_network: tracer.start() failed, code=%s detail=%s",
+                        self._network_tracer_error.code,
+                        self._network_tracer_error.detail,
+                    )
 
     def _compute_interval(self) -> int:
         """Compute interval as min of all enabled modes. Must be called within mutex."""
@@ -1296,12 +1307,31 @@ class SharedDataCollector(QThread):
                 net_settings = self._network_settings.copy() if self._network_settings else None
                 interval = self._interval_ms
 
+            # A tracer whose consumer thread died AFTER start() reported
+            # success keeps returning empty snapshots, so every rate reads as a
+            # legitimate zero forever. Retire it here so the failure takes the
+            # same visible path as one that never started (root Rule #1).
+            if net_tracer is not None and net_tracer.is_dead():
+                failure = net_tracer.error or TraceFailure(
+                    CONSUMER_DIED,
+                    "Network capture stopped unexpectedly.",
+                    "Press Retry to start a new trace session.",
+                )
+                # stop() joins the consumer thread — never hold the collector
+                # mutex across it, or a configure_*() call would block for it.
+                net_tracer.stop()
+                with QMutexLocker(self._mutex):
+                    self._network_tracer = None
+                    self._network_tracer_error = failure
+                net_tracer = None
+                net_tracer_error = failure
+
             need_cpu = bool(cpu_enabled and cpu_monitor and cpu_settings)
             need_mem = bool(mem_enabled and mem_monitor and mem_settings)
             need_net = bool(net_enabled and net_monitor and net_tracer and net_settings)
 
-            # Network enabled but tracer failed to start: surface the error in
-            # the Network window instead of silently showing zeros forever
+            # Network enabled but no live tracer: surface the reason in the
+            # Network window instead of silently showing zeros forever
             if net_enabled and net_settings and net_tracer is None:
                 self.network_data_ready.emit(NetworkMonitorData(
                     processes=[], history=[], rolling_average=[],
@@ -1309,7 +1339,11 @@ class SharedDataCollector(QThread):
                     cumulative_download=0, cumulative_upload=0,
                     peak_display="--",
                     sort_mode=net_settings.get('sort_mode', 'total'),
-                    error=net_tracer_error or "ETW trace not running",
+                    error=net_tracer_error or TraceFailure(
+                        START_FAILED,
+                        "The network trace is not running.",
+                        "Press Retry.",
+                    ),
                 ))
 
             if need_cpu or need_mem or need_net:

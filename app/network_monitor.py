@@ -17,8 +17,35 @@ import struct
 import sys
 import threading
 from collections import defaultdict
+from dataclasses import dataclass
 
 from .persistence import get_data_dir
+
+
+# ---------------------------------------------------------------------------
+# Why the trace is not running — a structured reason, never a bare string
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class TraceFailure:
+    """Why per-process network capture is unavailable, in words a user can act on.
+
+    A bare message string forced the UI to either show developer text or
+    string-match on it. The `code` lets the window pick the right remedy
+    (relaunching elevated cannot fix "another instance", and retrying cannot
+    fix "needs admin"), while `reason` and `action` are the two lines it shows.
+    """
+
+    code: str      # one of the NEEDS_* / *_FAILED constants below
+    reason: str    # what went wrong, in plain language
+    action: str    # what the user can do about it
+    detail: str = ""   # raw API status, for the log — never the only record
+
+
+NEEDS_ADMIN = "NEEDS_ADMIN"
+OTHER_INSTANCE = "OTHER_INSTANCE"
+START_FAILED = "START_FAILED"
+CONSUMER_DIED = "CONSUMER_DIED"
 
 
 # File logger for ETW diagnostics. Opt-in via VITALS_DEBUG=1 because the log
@@ -27,7 +54,11 @@ from .persistence import get_data_dir
 def _setup_etw_logger():
     logger = logging.getLogger("etw_net")
     if os.environ.get("VITALS_DEBUG") != "1":
-        logger.addHandler(logging.NullHandler())
+        # Not the full DEBUG trace, but never silence either: a capture that
+        # refuses to start has to leave SOME record without the user first
+        # knowing an env var exists (root Rule #1).
+        logger.setLevel(logging.WARNING)
+        logger.addHandler(logging.StreamHandler(sys.stderr))
         return logger
     logger.setLevel(logging.DEBUG)
     log_dir = get_data_dir() / "logs"
@@ -310,7 +341,10 @@ class NetworkTracer:
         # stopped even when the consumer thread has already died.
         self._session_started = False
         self._lock = threading.Lock()
-        self._error: str | None = None
+        self._error: TraceFailure | None = None
+        # Set by stop() so a consumer thread that ends on request is never
+        # mistaken for one that died — liveness alone cannot tell them apart.
+        self._stopping = False
         # Guards the one-time _log.exception() call in _event_callback so a
         # parsing bug is discoverable without flooding the log on every event
         self._callback_error_reported = False
@@ -325,9 +359,22 @@ class NetworkTracer:
         self._props_buf: ctypes.Array | None = None
 
     @property
-    def error(self) -> str | None:
-        """Last error message, or None if running normally."""
+    def error(self) -> 'TraceFailure | None':
+        """Why capture is unavailable, or None if running normally."""
         return self._error
+
+    def is_dead(self) -> bool:
+        """True when the consumer thread ended on its own after a good start.
+
+        `start()` returns as soon as the consumer thread is spawned, so every
+        real failure inside it — OpenTraceW, ProcessTrace, or the session being
+        stopped from outside — happens AFTER success was reported. Without this
+        check the tracer then returns empty snapshots forever and the window
+        shows a plausible, permanent zero instead of a problem.
+
+        Judged by liveness AND intent: a clean stop() also ends the thread.
+        """
+        return self._session_started and not self._running and not self._stopping
 
     @staticmethod
     def _is_admin() -> bool:
@@ -344,22 +391,47 @@ class NetworkTracer:
             return True
 
         self._error = None
+        self._stopping = False
 
         is_admin = self._is_admin()
         _log.info("is_admin=%s", is_admin)
         if not is_admin:
-            self._error = "ETW kernel trace requires Administrator privileges"
-            _log.error(self._error)
+            # The admin check MUST stay first. The owner mutex lives in the
+            # Global\ namespace, so when an elevated Vitals already holds it a
+            # non-elevated CreateMutexW fails with ACCESS_DENIED rather than
+            # ALREADY_EXISTS — testing the mutex first would miss that case
+            # entirely. Both causes are named here because from down here they
+            # are genuinely indistinguishable.
+            self._error = TraceFailure(
+                NEEDS_ADMIN,
+                "Per-process network capture needs Administrator rights.",
+                "Restart Vitals as administrator. If another Vitals is already "
+                "running, exit it from its tray icon first — only one instance "
+                "can trace the network.",
+            )
+            _log.error("%s: %s", self._error.code, self._error.reason)
             return False
 
         # Acquire the single-owner mutex: if another live Vitals holds it,
         # fail visibly instead of stealing that instance's trace session
-        self._owner_mutex = _kernel32.CreateMutexW(None, False, self._OWNER_MUTEX_NAME)
-        if ctypes.get_last_error() == _ERROR_ALREADY_EXISTS:
-            self._release_owner_mutex()
-            self._error = "Another Vitals instance is already tracing the network"
-            _log.error(self._error)
+        handle = _kernel32.CreateMutexW(None, False, self._OWNER_MUTEX_NAME)
+        last_error = ctypes.get_last_error()
+        if not handle or last_error == _ERROR_ALREADY_EXISTS:
+            # A NULL handle is NOT ownership. Storing it regardless (as this
+            # did) made any non-183 failure look like a successful acquire,
+            # and the code then went on to stop the other instance's session.
+            if handle:
+                self._owner_mutex = handle
+                self._release_owner_mutex()
+            self._error = TraceFailure(
+                OTHER_INSTANCE,
+                "Another Vitals instance is already tracing the network.",
+                "Exit the other Vitals from its tray icon, then press Retry.",
+                f"CreateMutexW error {last_error}",
+            )
+            _log.error("%s: %s (%s)", self._error.code, self._error.reason, self._error.detail)
             return False
+        self._owner_mutex = handle
 
         # With the mutex held, any pre-existing session with our name can
         # only be a stale leftover from a crash — safe to stop
@@ -408,8 +480,14 @@ class NetworkTracer:
         )
         _log.info("StartTraceW returned 0x%08X, handle=%s", status, self._session_handle.value)
         if status != 0:
-            self._error = f"StartTraceW failed: 0x{status:08X}"
-            _log.error(self._error)
+            self._error = TraceFailure(
+                START_FAILED,
+                "Windows refused to start the network trace session.",
+                "Press Retry. If it keeps failing, a reboot clears a stuck "
+                "kernel trace session.",
+                f"StartTraceW 0x{status:08X}",
+            )
+            _log.error("%s: %s (%s)", self._error.code, self._error.reason, self._error.detail)
             self._release_owner_mutex()
             return False
         self._session_started = True
@@ -430,7 +508,11 @@ class NetworkTracer:
         Runs the session teardown even when the consumer thread already died
         (e.g. ProcessTrace failed) — the kernel session outlives the process
         and would otherwise keep tracing system-wide until reboot.
+
+        Idempotent, and safe to call from the collector thread as well as from
+        app shutdown: each handle is cleared before it is closed.
         """
+        self._stopping = True
         self._running = False
 
         # Stop the trace session — this also causes ProcessTrace() to return
@@ -448,10 +530,12 @@ class NetworkTracer:
             )
             self._session_started = False
 
-        # Close the consumer trace handle
-        if self._trace_handle.value != 0 and self._trace_handle.value != _INVALID_PROCESSTRACE_HANDLE:
-            _CloseTrace(self._trace_handle.value)
+        # Close the consumer trace handle (cleared first — a second stop()
+        # must not hand the same handle to CloseTrace twice)
+        handle = self._trace_handle.value
+        if handle not in (0, _INVALID_PROCESSTRACE_HANDLE):
             self._trace_handle = ctypes.c_uint64(0)
+            _CloseTrace(handle)
 
         if self._thread is not None:
             self._thread.join(timeout=5)
@@ -462,9 +546,10 @@ class NetworkTracer:
 
     def _release_owner_mutex(self):
         """Release the session-owner mutex so another instance may trace."""
-        if self._owner_mutex:
-            _kernel32.CloseHandle(self._owner_mutex)
+        handle = self._owner_mutex
+        if handle:
             self._owner_mutex = None
+            _kernel32.CloseHandle(handle)
 
     def snapshot_and_reset(self) -> dict[int, tuple[int, int]]:
         """Get accumulated bytes per PID since last snapshot and reset counters.
@@ -509,8 +594,8 @@ class NetworkTracer:
             self._trace_handle = ctypes.c_uint64(_OpenTraceW(ctypes.byref(logfile)))
             _log.info("OpenTraceW handle=%s (invalid=%s)", self._trace_handle.value, self._trace_handle.value == _INVALID_PROCESSTRACE_HANDLE)
             if self._trace_handle.value == _INVALID_PROCESSTRACE_HANDLE:
-                self._error = "OpenTraceW failed: invalid handle"
-                _log.error(self._error)
+                self._error = self._consumer_failure("OpenTraceW returned an invalid handle")
+                _log.error("%s: %s", CONSUMER_DIED, self._error.detail)
                 self._running = False
                 return
 
@@ -519,15 +604,30 @@ class NetworkTracer:
             status = _ProcessTrace(handle_arr, 1, None, None)
             _log.info("ProcessTrace returned 0x%08X", status)
             if status != 0:
-                self._error = f"ProcessTrace failed: 0x{status:08X}"
-                _log.error(self._error)
+                self._error = self._consumer_failure(f"ProcessTrace 0x{status:08X}")
+                _log.error("%s: %s", CONSUMER_DIED, self._error.detail)
+            elif not self._stopping:
+                # ProcessTrace returning cleanly while we still want to trace
+                # means the kernel session was stopped from outside us.
+                self._error = self._consumer_failure("the trace session was stopped externally")
+                _log.error("%s: %s", CONSUMER_DIED, self._error.detail)
 
         except Exception as e:
-            self._error = f"ETW consumer error: {e}"
+            self._error = self._consumer_failure(f"consumer thread crashed: {e}")
             _log.exception("ETW consumer exception")
         finally:
             self._running = False
             _log.info("_consume() ended")
+
+    @staticmethod
+    def _consumer_failure(detail: str) -> TraceFailure:
+        """Build the failure for a consumer thread that ended after a good start."""
+        return TraceFailure(
+            CONSUMER_DIED,
+            "Network capture stopped unexpectedly.",
+            "Press Retry to start a new trace session.",
+            detail,
+        )
 
     def _event_callback(self, event_ptr):
         """ETW event callback — called for each kernel network event.
