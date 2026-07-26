@@ -6,14 +6,15 @@ application — the config home for every tunable value that is NOT a color
 (root Rule #4).
 
 Colors live in theme.py: they must flip at runtime between the dark and
-light palettes, so they are read through `theme()` at restyle time rather
-than frozen into module constants here.
+light palettes — and each window may be on a different one — so a color is
+always passed in as a `Palette` at restyle time rather than frozen into a
+module constant here.
 """
 
 from dataclasses import dataclass
 from functools import lru_cache
 
-from .theme import theme
+from .theme import Palette
 
 
 @dataclass(frozen=True)
@@ -162,13 +163,13 @@ PROCESS_ALIASES = {
 }
 
 
-def context_menu_style() -> str:
-    """QSS for every popup menu (process actions, tray), in the ACTIVE theme.
+def context_menu_style(palette: Palette) -> str:
+    """QSS for one popup menu (process actions, tray), in the caller's theme.
 
-    A function, not a constant: a module-level f-string would freeze
-    whichever palette happened to be active at import time.
+    A function taking a palette, not a constant: a module-level f-string
+    would freeze one palette at import, and the caller's window may well be
+    on a different theme than the tray.
     """
-    palette = theme()
     return f"""
     QMenu {{
         background-color: {palette.CARD};

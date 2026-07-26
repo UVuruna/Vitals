@@ -21,16 +21,17 @@ from PySide6.QtWidgets import (
 
 from .process_actions import PRIORITY_CLASSES
 from .styles import Fonts
-from .theme import theme
+from .theme import Palette
 
 
 class _ProcessDialogBase(QDialog):
-    """Modal dialog with the active theme and a process name header.
+    """Modal dialog in the calling window's theme, with a process name header.
 
     These dialogs used to carry their OWN copy of the palette hexes — a
-    duplicate that could not follow a theme flip. They now read the shared
-    palette like every other widget (root Rules #4 and #5); being modal,
-    reading it once at construction is enough.
+    duplicate that could not follow a theme flip. They now take the palette
+    of the window that opened them (root Rules #4 and #5), which matters more
+    than ever since the three monitors can be on different themes. Being
+    modal, reading it once at construction is enough.
     """
 
     def __init__(
@@ -38,16 +39,18 @@ class _ProcessDialogBase(QDialog):
         parent,
         process_name: str,
         title: str,
+        palette: Palette,
         proc_color: Optional[QColor] = None,
     ):
         super().__init__(parent)
+        self._palette = palette
         self.setWindowTitle(title)
         self.setModal(True)
         self.setMinimumWidth(360)
         self._build_base(process_name, proc_color)
 
     def _build_base(self, process_name: str, proc_color: Optional[QColor]):
-        palette = theme()
+        palette = self._palette
         self.setStyleSheet(f"""
             QDialog {{
                 background-color: {palette.BACKGROUND};
@@ -124,14 +127,15 @@ class KillConfirmDialog(_ProcessDialogBase):
         parent,
         process_name: str,
         count: int,
+        palette: Palette,
         proc_color: Optional[QColor] = None,
     ):
-        super().__init__(parent, process_name, "Kill Process", proc_color)
+        super().__init__(parent, process_name, "Kill Process", palette, proc_color)
 
         count_str = f"{count} instance{'s' if count != 1 else ''}"
         msg = QLabel(f"Kill all {count_str} of this process?\nThis cannot be undone.")
         msg.setFont(QFont(Fonts.FAMILY, Fonts.SIZE_BODY))
-        msg.setStyleSheet(f"color: {theme().TEXT_MUTED}; background: transparent;")
+        msg.setStyleSheet(f"color: {palette.TEXT_MUTED}; background: transparent;")
         self._content.addWidget(msg)
 
         btn_row = QHBoxLayout()
@@ -142,7 +146,6 @@ class KillConfirmDialog(_ProcessDialogBase):
         btn_row.addWidget(cancel_btn)
 
         kill_btn = QPushButton("Kill")
-        palette = theme()
         kill_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {palette.ACCENT};
@@ -171,13 +174,14 @@ class PriorityDialog(_ProcessDialogBase):
         parent,
         process_name: str,
         current_priority: Optional[int],
+        palette: Palette,
         proc_color: Optional[QColor] = None,
     ):
-        super().__init__(parent, process_name, "Set Priority", proc_color)
+        super().__init__(parent, process_name, "Set Priority", palette, proc_color)
 
         desc = QLabel("Set priority for all instances:")
         desc.setFont(QFont(Fonts.FAMILY, Fonts.SIZE_SMALL))
-        desc.setStyleSheet(f"color: {theme().TEXT_MUTED}; background: transparent;")
+        desc.setStyleSheet(f"color: {palette.TEXT_MUTED}; background: transparent;")
         self._content.addWidget(desc)
 
         self._group = QButtonGroup(self)
@@ -197,7 +201,6 @@ class PriorityDialog(_ProcessDialogBase):
         btn_row.addWidget(cancel_btn)
 
         apply_btn = QPushButton("Apply")
-        palette = theme()
         apply_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {palette.CONFIRM};

@@ -23,7 +23,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QPushButton
 
 from .persistence import get_base_path
-from .theme import theme, theme_manager
+from .theme import ThemeScope
 
 # Glyph names (assets/icons/<name>.svg)
 PAUSE = "pause"
@@ -93,18 +93,22 @@ class IconButton(QPushButton):
     Used for the header's pause/play and settings controls — the two actions
     that replaced the old menu bar (owner 2026-07-24). The glyph name may be
     swapped at runtime (`set_glyph`) so one button can toggle pause/play.
+
+    The scope is passed in rather than looked up: the button belongs to one
+    window, and that window's theme is the only one it may follow.
     """
 
-    def __init__(self, name: str, tooltip: str, size: int = 18, parent=None):
+    def __init__(self, name: str, tooltip: str, scope: ThemeScope, size: int = 18, parent=None):
         super().__init__(parent)
         self._name = name
+        self._theme = scope
         self._glyph_size = size
         self.setToolTip(tooltip)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedSize(size + 10, size + 10)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.apply_theme()
-        theme_manager().changed.connect(self.apply_theme)
+        scope.changed.connect(self.apply_theme)
 
     def set_glyph(self, name: str) -> None:
         """Swap the displayed glyph (e.g. pause <-> play)."""
@@ -112,8 +116,8 @@ class IconButton(QPushButton):
         self.apply_theme()
 
     def apply_theme(self) -> None:
-        """Re-tint the glyph and restyle the hover surface for the active theme."""
-        palette = theme()
+        """Re-tint the glyph and restyle the hover surface for this scope's theme."""
+        palette = self._theme.palette
         self.setIcon(QIcon(glyph(self._name, self._glyph_size, palette.ICON)))
         self.setIconSize(
             glyph(self._name, self._glyph_size, palette.ICON).size()

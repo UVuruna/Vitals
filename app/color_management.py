@@ -17,10 +17,15 @@ Handles all data-driven color logic for Vitals:
 - Value-based usage coloring (per-monitor-mode thresholds: CPU, Memory and
   Network are independent).
 
-Both are theme-aware. The wheel's saturation/lightness and the value-color
-lightness come from the ACTIVE palette (theme.py), and every cached color is
-rebuilt when the theme flips — light mode gets darker tints for contrast on
-a pale surface, dark mode lighter ones.
+Both are theme-aware, and the CALLER says which theme: every color getter
+takes the `Palette` of the window asking. Windows carry independent themes
+(owner 2026-07-26), so one dark and one light table can be on screen at the
+same time — a single "active theme" cache would serve one of them wrong.
+
+Both themes are therefore shaded up front, once per threshold edit, instead
+of being invalidated on a flip: light mode gets darker tints for contrast on
+a pale surface, dark mode lighter ones, and the refresh hot path stays a
+plain dict lookup plus list walk either way.
 
 Config is read from config/config.json — edit that file to tune value color
 thresholds. The authored hexes are the hues only; each theme re-shades them
@@ -37,7 +42,7 @@ from PySide6.QtCore import QMutex, QMutexLocker
 from PySide6.QtGui import QColor
 
 from .persistence import get_base_path, load_last_setup, save_last_setup
-from .theme import shade_for_theme, theme, theme_manager, wheel_color
+from .theme import THEMES, Palette, shade_for_theme, wheel_color
 
 
 # ---------------------------------------------------------------------------
@@ -180,9 +185,13 @@ class ProcessColorManager:
     Ties are broken by company name so equal counts never flicker.
 
     Value-based coloring:
-      - get_value_color(pct, mode) maps 0-100% to a color using per-mode
-        thresholds, re-shaded for the active theme.
+      - get_value_color(pct, mode, palette) maps 0-100% to a color using
+        per-mode thresholds, re-shaded for the caller's theme.
       - Each mode maintains an independent threshold list.
+
+    The manager itself is theme-LESS: it holds both themes' colors and every
+    getter takes the palette to answer for. Ranks, counts and thresholds are
+    shared by all three windows; only the shade differs.
     """
 
     _instance: Optional['ProcessColorManager'] = None
@@ -217,11 +226,10 @@ class ProcessColorManager:
 
         # Value color ranges as AUTHORED (theme-neutral hues + thresholds)
         self._value_ranges: dict[str, list[tuple[float, QColor]]] = {}
-        # The same ranges re-shaded for the ACTIVE theme (what the UI reads)
-        self._themed_ranges: dict[str, list[tuple[float, QColor]]] = {}
+        # The same ranges re-shaded for EVERY theme: {theme name -> {mode -> ranges}}
+        self._themed_ranges: dict[str, dict[str, list[tuple[float, QColor]]]] = {}
 
         self._load_config()
-        theme_manager().changed.connect(self._on_theme_changed)
 
     # --- configuration ------------------------------------------------
 
@@ -271,7 +279,6 @@ class ProcessColorManager:
         # user's saved values for that theme. Shape checks are required —
         # pre-2.2 versions stored ONE flat {saturation, lightness} pair, which
         # is discarded rather than applied to both themes.
-        from .theme import THEMES
         saved_hue = setup_data.get("hue_params", {})
         for name, palette in THEMES.items():
             sat, light = palette.HUE_SATURATION, palette.HUE_LIGHTNESS
@@ -292,22 +299,21 @@ class ProcessColorManager:
         self._rebuild_themed_ranges()
 
     def _rebuild_themed_ranges(self):
-        """Re-shade every authored value range for the ACTIVE theme.
+        """Re-shade every authored value range for EVERY theme.
 
-        Called on load, on a threshold edit and on a theme flip — so
-        get_value_color() stays a plain list walk on the refresh hot path.
+        Called on load and on a threshold edit — never on a flip, because
+        both shades are always present. Two windows on different themes are
+        both served from this one cache, and get_value_color() stays a dict
+        lookup plus list walk on the refresh hot path.
         Must be called while holding self._mutex, or during single-threaded init.
         """
-        palette = theme()
         self._themed_ranges = {
-            mode: [(t, shade_for_theme(color, palette)) for t, color in ranges]
-            for mode, ranges in self._value_ranges.items()
+            name: {
+                mode: [(t, shade_for_theme(color, palette)) for t, color in ranges]
+                for mode, ranges in self._value_ranges.items()
+            }
+            for name, palette in THEMES.items()
         }
-
-    def _on_theme_changed(self):
-        """Rebuild every theme-derived color cache after a Day/Night flip."""
-        with QMutexLocker(self._mutex):
-            self._rebuild_themed_ranges()
 
     # --- company discovery --------------------------------------------
 
@@ -369,9 +375,8 @@ class ProcessColorManager:
 
     # --- company colors -----------------------------------------------
 
-    def _slot_color(self, company: Optional[str]) -> QColor:
+    def _slot_color(self, company: Optional[str], palette: Palette) -> QColor:
         """Return the wheel/contrast color for a company. Caller holds the mutex."""
-        palette = theme()
         rank = self._company_rank.get(company)
         if rank == 0:
             return QColor(palette.COMPANY_TOP)
@@ -381,11 +386,12 @@ class ProcessColorManager:
         sat, light = self._hue_params[palette.name]
         return wheel_color(slot, slots, sat, light)
 
-    def get_process_color(self, name: str) -> Optional[QColor]:
+    def get_process_color(self, name: str, palette: Palette) -> Optional[QColor]:
         """
-        Return the color for a process name text (main thread).
+        Return the color for a process name text, in the caller's theme
+        (main thread).
 
-        Returns None if the name has not been looked up yet, the theme's
+        Returns None if the name has not been looked up yet, the palette's
         COMPANY_UNKNOWN gray for processes with no company info, and the
         ranked contrast/wheel color otherwise.
         """
@@ -394,30 +400,33 @@ class ProcessColorManager:
                 return None
             company = self._company_cache[name]
             if not company:
-                return QColor(theme().COMPANY_UNKNOWN)
-            return self._slot_color(company)
+                return QColor(palette.COMPANY_UNKNOWN)
+            return self._slot_color(company, palette)
 
     def get_company_name(self, name: str) -> Optional[str]:
         """Return the resolved company name for a process display name, or None if unknown."""
         with QMutexLocker(self._mutex):
             return self._company_cache.get(name)
 
-    def get_hue_params(self) -> tuple[float, float]:
-        """Return the ACTIVE theme's (saturation, lightness) for wheel colors."""
+    def get_hue_params(self, palette: Palette) -> tuple[float, float]:
+        """Return one theme's (saturation, lightness) for wheel colors."""
         with QMutexLocker(self._mutex):
-            return self._hue_params[theme().name]
+            return self._hue_params[palette.name]
 
-    def update_hue_params(self, saturation: float, lightness: float):
-        """Update the ACTIVE theme's wheel saturation/lightness and persist it.
+    def update_hue_params(self, palette: Palette, saturation: float, lightness: float):
+        """Update ONE theme's wheel saturation/lightness and persist it.
 
         Each theme keeps its own pair — light mode needs darker, more
-        saturated tints than dark mode, so tuning one never disturbs the other.
+        saturated tints than dark mode, so tuning one never disturbs the
+        other. The palette says which one is being tuned: the legend dialog
+        edits the theme of the window it was opened from.
 
         Args:
+            palette:    the theme being tuned
             saturation: 0.0–1.0
             lightness:  0.0–1.0
         """
-        name = theme().name
+        name = palette.name
         with QMutexLocker(self._mutex):
             self._hue_params[name] = (saturation, lightness)
 
@@ -458,28 +467,30 @@ class ProcessColorManager:
         data["color_thresholds"][mode] = thresholds
         save_last_setup(data)
 
-    def get_value_ranges(self, mode: str) -> list[tuple[float, QColor]]:
+    def get_value_ranges(self, mode: str, palette: Palette) -> list[tuple[float, QColor]]:
         """Return theme-shaded value color ranges for UI display (ColorScaleWidget).
 
         Args:
-            mode: one of _MODE_KEYS
+            mode:    one of _MODE_KEYS
+            palette: the theme to shade for
         """
         with QMutexLocker(self._mutex):
-            return list(self._themed_ranges[mode])
+            return list(self._themed_ranges[palette.name][mode])
 
-    def get_value_color(self, pct: float, mode: str) -> QColor:
+    def get_value_color(self, pct: float, mode: str, palette: Palette) -> QColor:
         """
         Return a color for a usage percentage mapped to the configured thresholds.
 
         Args:
-            pct:  Usage as 0-100 (e.g. 20.0 for 20%)
-            mode: one of _MODE_KEYS
+            pct:     Usage as 0-100 (e.g. 20.0 for 20%)
+            mode:    one of _MODE_KEYS
+            palette: the theme to shade for
 
         Returns:
             The theme-shaded color for the zone `pct` falls into.
         """
         with QMutexLocker(self._mutex):
-            ranges = self._themed_ranges[mode]
+            ranges = self._themed_ranges[palette.name][mode]
 
         for max_pct_val, color in ranges:
             if pct <= max_pct_val:
@@ -488,13 +499,17 @@ class ProcessColorManager:
 
     # --- legend -------------------------------------------------------
 
-    def get_legend(self) -> list[tuple[str, QColor, int]]:
+    def get_legend(self, palette: Palette) -> list[tuple[str, QColor, int]]:
         """Return (label, color, count) sorted by count descending.
 
         The order IS the color ranking: the first entry carries the plain
         contrast color, the rest walk the blue->red wheel. Singleton
         companies are grouped into "Other" (the last, red slot) and
         processes with no company info appear last as "Unknown" (gray).
+
+        Args:
+            palette: the theme to shade for — the legend must match the
+                     window whose settings dialog opened it.
         """
         with QMutexLocker(self._mutex):
             result = []
@@ -504,19 +519,19 @@ class ProcessColorManager:
                 self._company_counts.items(), key=lambda x: (-x[1], x[0])
             ):
                 if count > 1:
-                    result.append((company, self._slot_color(company), count))
+                    result.append((company, self._slot_color(company, palette), count))
                 else:
                     singleton_count += 1
 
             if singleton_count > 0:
-                result.append(("Other", self._slot_color(None), singleton_count))
+                result.append(("Other", self._slot_color(None, palette), singleton_count))
 
             no_company_count = sum(
                 1 for c in self._company_cache.values() if c is None
             )
             if no_company_count > 0:
                 result.append(
-                    ("Unknown", QColor(theme().COMPANY_UNKNOWN), no_company_count)
+                    ("Unknown", QColor(palette.COMPANY_UNKNOWN), no_company_count)
                 )
 
             return result
