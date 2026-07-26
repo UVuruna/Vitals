@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from .settings_dialog import InitialSettingsDialog
 from .styles import context_menu_style
-from .theme import theme_manager
+from .theme import app_theme
 from .window_manager import MODES, WindowManager
 
 
@@ -36,7 +36,7 @@ class TrayController:
 
         self._menu = QMenu()
         self._apply_theme()
-        theme_manager().changed.connect(self._apply_theme)
+        app_theme().changed.connect(self._apply_theme)
 
         # One entry per mode, whether or not its window exists yet — checking
         # an unopened monitor creates it on the spot.
@@ -64,15 +64,20 @@ class TrayController:
         self._tray.show()
 
     def _apply_theme(self):
-        """Restyle the tray menu for the active theme (the tray outlives a flip)."""
-        self._menu.setStyleSheet(context_menu_style())
+        """Restyle the tray menu for the APP theme (the tray outlives a flip).
+
+        The tray belongs to no monitor window, so it follows the app-wide
+        scope — the one the setup screen's global switch moves.
+        """
+        self._menu.setStyleSheet(context_menu_style(app_theme().palette))
 
     def _show_settings(self):
         """Open the shared setup screen — all three monitors in one place.
 
         The same dialog the app starts with, so there is one place that owns
-        rows, refresh rate, retention, units and fonts for every window. On
-        accept the window manager pushes the values into each monitor and
+        rows, refresh rate, retention, units and fonts for every window — and
+        the GLOBAL Day/Night switch, which pushes one theme into all three.
+        On accept the window manager pushes the values into each monitor and
         opens or hides windows to match the mode toggles.
         """
         dialog = InitialSettingsDialog(first_run=False)

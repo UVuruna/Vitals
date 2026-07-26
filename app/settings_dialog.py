@@ -26,8 +26,9 @@ from PySide6.QtWidgets import (
 
 from .persistence import get_base_path, load_last_setup, save_last_setup
 from .styles import Defaults, FontScale, MEMORY_UNITS, NETWORK_UNITS
-from .theme import theme, theme_manager
+from .theme import Palette, ThemeScope, app_theme
 from .theme_switch import DayNightSwitch
+from .transition import flip_app_theme
 from .color_management import ProcessColorManager
 
 
@@ -167,9 +168,12 @@ def _format_bytes_in_unit(total_bytes: int, unit: str) -> str:
     return f"{round(value):,} {unit}"
 
 
-def _spinbox_style() -> str:
-    """QSS for a numeric input, in the ACTIVE theme."""
-    palette = theme()
+# The style builders below all take the palette to render in: a dialog is
+# themed by the window that opened it, and two open dialogs can be on
+# different themes, so nothing here may look up a theme of its own.
+
+def _spinbox_style(palette: Palette) -> str:
+    """QSS for a numeric input."""
     return f"""
     QSpinBox {{
         background-color: {palette.HEADER}; color: {palette.TEXT};
@@ -181,7 +185,11 @@ def _spinbox_style() -> str:
 
 
 def _make_spinbox(default: int = 1) -> QSpinBox:
-    """Create a styled numeric input (1–100) for row count settings."""
+    """Create an unstyled numeric input (1–100) for row count settings.
+
+    The caller registers it with `_themed_sheet`, which is what paints it —
+    styling it here too would just be a duplicate that a flip overwrites.
+    """
     sb = QSpinBox()
     sb.setRange(1, 100)
     sb.setValue(max(1, min(100, default)))
@@ -189,13 +197,11 @@ def _make_spinbox(default: int = 1) -> QSpinBox:
     sb.setFixedHeight(32)
     sb.setFixedWidth(70)
     sb.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    sb.setStyleSheet(_spinbox_style())
     return sb
 
 
-def _slider_style() -> str:
-    """QSS for a settings slider, in the ACTIVE theme."""
-    palette = theme()
+def _slider_style(palette: Palette) -> str:
+    """QSS for a settings slider."""
     return f"""
     QSlider::groove:horizontal {{ height: 6px; background: {palette.HEADER}; border-radius: 3px; }}
     QSlider::handle:horizontal {{ background: {palette.ACCENT}; width: 16px; margin: -5px 0; border-radius: 8px; }}
@@ -203,9 +209,8 @@ def _slider_style() -> str:
 """
 
 
-def _combo_style() -> str:
-    """QSS for a dropdown, in the ACTIVE theme."""
-    palette = theme()
+def _combo_style(palette: Palette) -> str:
+    """QSS for a dropdown."""
     return f"""
     QComboBox {{
         background-color: {palette.HEADER}; color: {palette.TEXT};
@@ -224,9 +229,8 @@ def _combo_style() -> str:
 """
 
 
-def _start_button_style() -> str:
-    """QSS for the setup screen's primary action button, in the ACTIVE theme."""
-    palette = theme()
+def _start_button_style(palette: Palette) -> str:
+    """QSS for the setup screen's primary action button."""
     return f"""
     QPushButton {{
         background-color: {palette.ACCENT}; color: #ffffff;
@@ -239,9 +243,8 @@ def _start_button_style() -> str:
 """
 
 
-def _mode_button_style(active: bool) -> str:
-    """QSS for a selectable mode/toggle button, in the ACTIVE theme."""
-    palette = theme()
+def _mode_button_style(palette: Palette, active: bool) -> str:
+    """QSS for a selectable mode/toggle button."""
     if active:
         return f"""
         QPushButton {{
@@ -256,6 +259,17 @@ def _mode_button_style(active: bool) -> str:
         border: none; border-radius: 6px;
     }}
     QPushButton:hover {{ background-color: {palette.BORDER}; }}
+"""
+
+
+def _apply_button_style(palette: Palette) -> str:
+    """QSS for a per-mode dialog's Apply button (one builder for all three)."""
+    return f"""
+    QPushButton {{
+        background-color: {palette.ACCENT}; color: #ffffff;
+        border: none; border-radius: 8px;
+    }}
+    QPushButton:hover {{ background-color: {palette.ACCENT_HOVER}; }}
 """
 
 
@@ -281,10 +295,12 @@ class ColorScaleWidget(QWidget):
         self,
         colors: list,       # 5 QColors for the 5 zones
         thresholds: list,   # 4 int values in ascending order [t1, t2, t3, t4]
+        scope: ThemeScope,  # the theme its handle outline and labels follow
         parent: Optional[QWidget] = None,
         scale_max: int = 100,
     ):
         super().__init__(parent)
+        self._theme = scope
         self._colors = list(colors)
         self._thresholds = list(thresholds)
         self._scale_max = scale_max
@@ -315,6 +331,7 @@ class ColorScaleWidget(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        palette = self._theme.palette
 
         bar_x1 = self._bar_x1()
         bar_y = float(self._BAR_Y)
@@ -335,7 +352,7 @@ class ColorScaleWidget(QWidget):
             r = float(self._HANDLE_R)
             zone_color = self._colors[i].lighter(150)
             painter.setBrush(QBrush(zone_color))
-            painter.setPen(QPen(QColor(theme().TEXT), 1.0))
+            painter.setPen(QPen(QColor(palette.TEXT), 1.0))
             painter.drawConvexPolygon([
                 QPointF(x,     cy - r),
                 QPointF(x + r, cy),
@@ -344,7 +361,7 @@ class ColorScaleWidget(QWidget):
             ])
 
         # Percentage labels below handles
-        painter.setPen(QColor(theme().TEXT_MUTED))
+        painter.setPen(QColor(palette.TEXT_MUTED))
         painter.setFont(QFont("Segoe UI", 9))
         fm = painter.fontMetrics()
         for t in self._thresholds:
@@ -401,10 +418,16 @@ class ColorScaleWidget(QWidget):
 # ---------------------------------------------------------------------------
 
 class CompanyLegendDialog(QDialog):
-    """Shows all detected companies and their assigned colors."""
+    """Shows all detected companies and their assigned colors.
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    Opened from a per-mode settings dialog, so it renders in the theme of the
+    window that owns it — and the Saturation/Lightness sliders tune THAT
+    theme's wheel params, leaving the other theme's untouched.
+    """
+
+    def __init__(self, scope: ThemeScope, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        self._theme = scope
         self.setWindowTitle("Company Color Legend")
         self.resize(340, 440)
 
@@ -412,11 +435,12 @@ class CompanyLegendDialog(QDialog):
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
 
+        colors = scope.palette
         palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(theme().BACKGROUND))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(theme().TEXT))
-        palette.setColor(QPalette.ColorRole.Base, QColor(theme().CARD))
-        palette.setColor(QPalette.ColorRole.Text, QColor(theme().TEXT))
+        palette.setColor(QPalette.ColorRole.Window, QColor(colors.BACKGROUND))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(colors.TEXT))
+        palette.setColor(QPalette.ColorRole.Base, QColor(colors.CARD))
+        palette.setColor(QPalette.ColorRole.Text, QColor(colors.TEXT))
         self.setPalette(palette)
         self.setAutoFillBackground(True)
 
@@ -430,13 +454,14 @@ class CompanyLegendDialog(QDialog):
         self._refresh_timer.start()
 
     def _setup_ui(self):
+        palette = self._theme.palette
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(12)
 
         title = QLabel("Company Color Legend")
         title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {theme().TEXT}; background: transparent;")
+        title.setStyleSheet(f"color: {palette.TEXT}; background: transparent;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
@@ -444,36 +469,36 @@ class CompanyLegendDialog(QDialog):
         self._scroll.setWidgetResizable(True)
         self._scroll.setStyleSheet(f"""
             QScrollArea {{ border: none; background: transparent; }}
-            QScrollBar:vertical {{ background: {theme().CARD}; width: 8px; border-radius: 4px; }}
-            QScrollBar::handle:vertical {{ background: {theme().BORDER}; border-radius: 4px; }}
+            QScrollBar:vertical {{ background: {palette.CARD}; width: 8px; border-radius: 4px; }}
+            QScrollBar::handle:vertical {{ background: {palette.BORDER}; border-radius: 4px; }}
         """)
         self._rebuild_legend_content()
         layout.addWidget(self._scroll)
 
         # The list is ranked by process count, and so is the color scale:
         # the top entry is plain contrast, the rest walk blue -> red.
-        top_word = "Black" if not theme_manager().is_dark() else "White"
+        top_word = "White" if self._theme.is_dark() else "Black"
         note = QLabel(
             f"{top_word} = most processes  ·  blue → red by count  ·  Gray = no company info"
         )
         note.setFont(QFont("Segoe UI", 8))
-        note.setStyleSheet(f"color: {theme().TEXT_DISABLED}; background: transparent;")
+        note.setStyleSheet(f"color: {palette.TEXT_DISABLED}; background: transparent;")
         note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         note.setWordWrap(True)
         layout.addWidget(note)
 
         # Hue color sliders
-        sat_init, light_init = ProcessColorManager().get_hue_params()
+        sat_init, light_init = ProcessColorManager().get_hue_params(palette)
 
         slider_style = f"""
             QSlider::groove:horizontal {{
-                height: 4px; background: {theme().HEADER}; border-radius: 2px;
+                height: 4px; background: {palette.HEADER}; border-radius: 2px;
             }}
             QSlider::handle:horizontal {{
                 width: 14px; height: 14px; margin: -5px 0;
-                background: {theme().ACCENT}; border-radius: 7px;
+                background: {palette.ACCENT}; border-radius: 7px;
             }}
-            QSlider::sub-page:horizontal {{ background: {theme().ACCENT}; border-radius: 2px; }}
+            QSlider::sub-page:horizontal {{ background: {palette.ACCENT}; border-radius: 2px; }}
         """
 
         for label_text, attr_slider, attr_val, init_val in [
@@ -488,7 +513,7 @@ class CompanyLegendDialog(QDialog):
 
             lbl = QLabel(label_text)
             lbl.setFont(QFont("Segoe UI", 9))
-            lbl.setStyleSheet(f"color: {theme().TEXT_MUTED}; background: transparent;")
+            lbl.setStyleSheet(f"color: {palette.TEXT_MUTED}; background: transparent;")
             lbl.setFixedWidth(70)
             row.addWidget(lbl)
 
@@ -501,7 +526,7 @@ class CompanyLegendDialog(QDialog):
 
             val_lbl = QLabel(f"{int(init_val * 100)}%")
             val_lbl.setFont(QFont("Segoe UI", 9))
-            val_lbl.setStyleSheet(f"color: {theme().TEXT_MUTED}; background: transparent;")
+            val_lbl.setStyleSheet(f"color: {palette.TEXT_MUTED}; background: transparent;")
             val_lbl.setFixedWidth(34)
             val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             row.addWidget(val_lbl)
@@ -515,15 +540,16 @@ class CompanyLegendDialog(QDialog):
         close_btn.setFixedHeight(36)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {theme().HEADER}; color: {theme().TEXT}; border: none; border-radius: 6px; }}
-            QPushButton:hover {{ background-color: {theme().BORDER}; }}
+            QPushButton {{ background-color: {palette.HEADER}; color: {palette.TEXT}; border: none; border-radius: 6px; }}
+            QPushButton:hover {{ background-color: {palette.BORDER}; }}
         """)
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
 
     def _rebuild_legend_content(self):
+        palette = self._theme.palette
         color_mgr = ProcessColorManager()
-        legend = color_mgr.get_legend()
+        legend = color_mgr.get_legend(palette)
         content = QWidget()
         content.setStyleSheet("background: transparent;")
         content_layout = QVBoxLayout(content)
@@ -533,16 +559,16 @@ class CompanyLegendDialog(QDialog):
         if not legend:
             empty = QLabel("No companies detected yet.\nStart monitoring to populate.")
             empty.setFont(QFont("Segoe UI", 10))
-            empty.setStyleSheet(f"color: {theme().TEXT_DIM}; background: transparent;")
+            empty.setStyleSheet(f"color: {palette.TEXT_DIM}; background: transparent;")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             content_layout.addWidget(empty)
         else:
             toggle_style = f"""
                 QPushButton {{
-                    background: transparent; color: {theme().TEXT_DIM};
+                    background: transparent; color: {palette.TEXT_DIM};
                     border: none; padding: 0;
                 }}
-                QPushButton:hover {{ color: {theme().TEXT}; }}
+                QPushButton:hover {{ color: {palette.TEXT}; }}
             """
             for company, color, proc_count in legend:
                 is_expanded = company in self._expanded
@@ -562,12 +588,12 @@ class CompanyLegendDialog(QDialog):
 
                 name_lbl = QLabel(company)
                 name_lbl.setFont(QFont("Segoe UI", 10))
-                name_lbl.setStyleSheet(f"color: {theme().TEXT}; background: transparent;")
+                name_lbl.setStyleSheet(f"color: {palette.TEXT}; background: transparent;")
                 row.addWidget(name_lbl, 1)
 
                 count_lbl = QLabel(str(proc_count))
                 count_lbl.setFont(QFont("Segoe UI", 10))
-                count_lbl.setStyleSheet(f"color: {theme().TEXT_FAINT}; background: transparent;")
+                count_lbl.setStyleSheet(f"color: {palette.TEXT_FAINT}; background: transparent;")
                 count_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 row.addWidget(count_lbl)
 
@@ -597,7 +623,7 @@ class CompanyLegendDialog(QDialog):
 
                         sub_lbl = QLabel(item_name)
                         sub_lbl.setFont(QFont("Segoe UI", 9))
-                        sub_lbl.setStyleSheet(f"color: {theme().TEXT_MUTED}; background: transparent;")
+                        sub_lbl.setStyleSheet(f"color: {palette.TEXT_MUTED}; background: transparent;")
                         sub_row.addWidget(sub_lbl, 1)
 
                         content_layout.addWidget(sub_w)
@@ -614,7 +640,7 @@ class CompanyLegendDialog(QDialog):
         self._rebuild_legend_content()
 
     def _refresh_legend(self):
-        legend = ProcessColorManager().get_legend()
+        legend = ProcessColorManager().get_legend(self._theme.palette)
         current_key = [(c, n) for c, _, n in legend]
         cached_key = [(c, n) for c, _, n in self._legend_data] if self._legend_data else []
         if current_key != cached_key:
@@ -625,77 +651,8 @@ class CompanyLegendDialog(QDialog):
         light = self._light_slider.value() / 100.0
         self._sat_val.setText(f"{self._sat_slider.value()}%")
         self._light_val.setText(f"{self._light_slider.value()}%")
-        ProcessColorManager().update_hue_params(sat, light)
+        ProcessColorManager().update_hue_params(self._theme.palette, sat, light)
         self._rebuild_legend_content()
-
-
-# ---------------------------------------------------------------------------
-# Helper: build color settings section into any layout
-# ---------------------------------------------------------------------------
-
-def _make_legend_btn() -> QPushButton:
-    """Create a styled Company Legend button (shared by CPU and Memory dialogs)."""
-    btn = QPushButton("Company Legend")
-    btn.setFont(QFont("Segoe UI", 10))
-    btn.setFixedHeight(28)
-    btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    btn.setStyleSheet(f"""
-        QPushButton {{
-            background-color: {theme().CARD}; color: {theme().TEXT_DIM};
-            border: 1px solid {theme().HEADER}; border-radius: 4px; padding: 0 12px;
-        }}
-        QPushButton:hover {{ background-color: {theme().HEADER}; color: {theme().TEXT}; }}
-    """)
-    return btn
-
-
-def _build_color_section(
-    layout: QVBoxLayout,
-    make_label,
-    show_legend: bool = True,
-    mode: str = "cpu",
-    title: str = "Color Settings",
-    max_info: str = "",
-    scale_max: int = 100,
-) -> 'ColorScaleWidget':
-    """
-    Add Color Settings label, ColorScaleWidget, and optionally Legend button to layout.
-    Returns the ColorScaleWidget so the caller can read thresholds on accept.
-
-    Args:
-        show_legend: If True, adds a Company Legend button below the scale.
-        mode:        "cpu", "memory", or "memory_total".
-        max_info:    If non-empty, shown right-aligned on the title row as "100% = <max_info>".
-    """
-    if max_info:
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-        title_row.addWidget(make_label(title, 12, bold=True))
-        title_row.addStretch()
-        title_row.addWidget(make_label(f"100% = {max_info}", 9, color="TEXT_FAINT"))
-        layout.addLayout(title_row)
-    else:
-        layout.addWidget(make_label(title, 12, bold=True))
-
-    color_mgr = ProcessColorManager()
-    value_ranges = color_mgr.get_value_ranges(mode)
-    colors = [color for _, color in value_ranges]
-    thresholds = [int(t) for t, _ in value_ranges[:-1]]  # first 4; last is always 100
-
-    scale_widget = ColorScaleWidget(colors, thresholds, scale_max=scale_max)
-    layout.addWidget(scale_widget)
-
-    if show_legend:
-        legend_row = QHBoxLayout()
-        legend_row.addStretch()
-        legend_btn = _make_legend_btn()
-        scale_widget._legend_btn = legend_btn  # type: ignore[attr-defined]
-        legend_row.addWidget(legend_btn)
-        layout.addLayout(legend_row)
-    else:
-        scale_widget._legend_btn = None  # type: ignore[attr-defined]
-
-    return scale_widget
 
 
 # ---------------------------------------------------------------------------
@@ -710,13 +667,22 @@ class BaseSettingsDialog(QDialog):
     Provides theme + window icon setup, label/combo factories, and builders
     for the settings rows duplicated across all four dialogs.
 
+    Every dialog is bound to ONE `ThemeScope` at construction: a per-mode
+    dialog to the window that opened it, the setup screen to the app-wide
+    scope. That is what lets the CPU settings dialog be dark while the
+    Memory one is light.
+
     Every widget these factories create registers a **restyler** — a closure
-    that rebuilds its stylesheet from the active palette. `_apply_theme()`
+    that rebuilds its stylesheet from `self._theme.palette`. `_apply_theme()`
     runs them all, so a dialog can follow a live theme flip instead of being
     frozen at the palette that was active when it was built. The per-mode
     dialogs are modal and never see a flip; the setup screen carries its own
     Day/Night switch and does.
     """
+
+    def __init__(self, scope: ThemeScope, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._theme = scope
 
     def _restylers_list(self) -> list:
         """The registered restyle closures, created on first use."""
@@ -730,11 +696,13 @@ class BaseSettingsDialog(QDialog):
         restyle()
 
     def _themed_sheet(self, widget, builder) -> None:
-        """Apply `builder()` as `widget`'s stylesheet now and on every flip."""
-        self._register_restyle(lambda: widget.setStyleSheet(builder()))
+        """Apply `builder(palette)` as `widget`'s stylesheet now and on every flip."""
+        self._register_restyle(
+            lambda: widget.setStyleSheet(builder(self._theme.palette))
+        )
 
     def _apply_theme(self) -> None:
-        """Load the window icon and apply the ACTIVE theme.
+        """Load the window icon and apply THIS dialog's theme.
 
         Re-runs every registered restyler, so this is both the initial styling
         pass and the theme-flip handler.
@@ -743,14 +711,15 @@ class BaseSettingsDialog(QDialog):
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
 
+        colors = self._theme.palette
         palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(theme().BACKGROUND))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(theme().TEXT))
-        palette.setColor(QPalette.ColorRole.Base, QColor(theme().CARD))
-        palette.setColor(QPalette.ColorRole.Text, QColor(theme().TEXT))
-        palette.setColor(QPalette.ColorRole.Button, QColor(theme().HEADER))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor(theme().TEXT))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(theme().ACCENT))
+        palette.setColor(QPalette.ColorRole.Window, QColor(colors.BACKGROUND))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(colors.TEXT))
+        palette.setColor(QPalette.ColorRole.Base, QColor(colors.CARD))
+        palette.setColor(QPalette.ColorRole.Text, QColor(colors.TEXT))
+        palette.setColor(QPalette.ColorRole.Button, QColor(colors.HEADER))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(colors.TEXT))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(colors.ACCENT))
         self.setPalette(palette)
         self.setAutoFillBackground(True)
 
@@ -772,9 +741,77 @@ class BaseSettingsDialog(QDialog):
         token = color or "TEXT"
         self._themed_sheet(
             label,
-            lambda: f"color: {getattr(theme(), token)}; background: transparent;",
+            lambda palette: f"color: {getattr(palette, token)}; background: transparent;",
         )
         return label
+
+    def _make_legend_btn(self) -> QPushButton:
+        """Create a themed Company Legend button (shared by all three dialogs)."""
+        btn = QPushButton("Company Legend")
+        btn.setFont(QFont("Segoe UI", 10))
+        btn.setFixedHeight(28)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._themed_sheet(btn, lambda palette: f"""
+            QPushButton {{
+                background-color: {palette.CARD}; color: {palette.TEXT_DIM};
+                border: 1px solid {palette.HEADER}; border-radius: 4px; padding: 0 12px;
+            }}
+            QPushButton:hover {{ background-color: {palette.HEADER}; color: {palette.TEXT}; }}
+        """)
+        return btn
+
+    def _build_color_section(
+        self,
+        layout: QVBoxLayout,
+        show_legend: bool = True,
+        mode: str = "cpu",
+        title: str = "Color Settings",
+        max_info: str = "",
+        scale_max: int = 100,
+    ) -> 'ColorScaleWidget':
+        """
+        Add Color Settings label, ColorScaleWidget, and optionally Legend button to layout.
+        Returns the ColorScaleWidget so the caller can read thresholds on accept.
+
+        Args:
+            show_legend: If True, adds a Company Legend button below the scale.
+            mode:        one of the ProcessColorManager mode keys.
+            max_info:    If non-empty, shown right-aligned on the title row as "100% = <max_info>".
+        """
+        if max_info:
+            title_row = QHBoxLayout()
+            title_row.setContentsMargins(0, 0, 0, 0)
+            title_row.addWidget(self._make_label(title, 12, bold=True))
+            title_row.addStretch()
+            title_row.addWidget(self._make_label(f"100% = {max_info}", 9, color="TEXT_FAINT"))
+            layout.addLayout(title_row)
+        else:
+            layout.addWidget(self._make_label(title, 12, bold=True))
+
+        value_ranges = ProcessColorManager().get_value_ranges(mode, self._theme.palette)
+        colors = [color for _, color in value_ranges]
+        thresholds = [int(t) for t, _ in value_ranges[:-1]]  # first 4; last is always 100
+
+        scale_widget = ColorScaleWidget(
+            colors, thresholds, self._theme, scale_max=scale_max
+        )
+        layout.addWidget(scale_widget)
+
+        if show_legend:
+            legend_row = QHBoxLayout()
+            legend_row.addStretch()
+            legend_btn = self._make_legend_btn()
+            scale_widget._legend_btn = legend_btn  # type: ignore[attr-defined]
+            legend_row.addWidget(legend_btn)
+            layout.addLayout(legend_row)
+        else:
+            scale_widget._legend_btn = None  # type: ignore[attr-defined]
+
+        return scale_widget
+
+    def _show_legend(self):
+        """Open the company legend in this dialog's theme."""
+        CompanyLegendDialog(self._theme, self).exec()
 
     def _make_combo(self, items: list, default: str) -> QComboBox:
         combo = QComboBox()
@@ -980,10 +1017,15 @@ class InitialSettingsDialog(BaseSettingsDialog):
     Unlike the per-mode dialogs this one carries a Day/Night switch, so it
     restyles live: it is the screen the user meets before any window exists,
     and the theme has to be changeable there.
+
+    Its switch is the GLOBAL one (owner 2026-07-26). A monitor window's
+    header switch flips that window alone; this one flips the app scope and
+    forces the same theme on all three monitors — that is the whole reason
+    the setup screen still owns a switch now that each window has its own.
     """
 
     def __init__(self, parent: Optional[QWidget] = None, first_run: bool = True):
-        super().__init__(parent)
+        super().__init__(app_theme(), parent)
         self.setWindowTitle("Vitals - Setup")
         self.resize(480, 600)
         self._first_run = first_run
@@ -991,7 +1033,7 @@ class InitialSettingsDialog(BaseSettingsDialog):
         self._apply_theme()
 
         self._setup_ui()
-        theme_manager().changed.connect(self._apply_theme)
+        self._theme.changed.connect(self._apply_theme)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -1006,7 +1048,10 @@ class InitialSettingsDialog(BaseSettingsDialog):
         title = self._make_label("Vitals", 20, bold=True)
         title_row.addWidget(title)
         title_row.addStretch()
-        self.theme_switch = DayNightSwitch()
+        self.theme_switch = DayNightSwitch(self._theme, flip_app_theme)
+        self.theme_switch.setToolTip(
+            "Switch every monitor window between dark and light theme"
+        )
         title_row.addWidget(self.theme_switch, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(title_row)
 
@@ -1143,8 +1188,9 @@ class InitialSettingsDialog(BaseSettingsDialog):
         self._apply_last_setup(load_last_setup())
 
     def _update_mode_buttons(self):
+        palette = self._theme.palette
         for btn in (self.cpu_btn, self.mem_btn, self.net_btn):
-            btn.setStyleSheet(_mode_button_style(btn.isChecked()))
+            btn.setStyleSheet(_mode_button_style(palette, btn.isChecked()))
         self._net_settings_container.setVisible(self.net_btn.isChecked())
         self.start_btn.setEnabled(
             self.cpu_btn.isChecked() or self.mem_btn.isChecked() or self.net_btn.isChecked()
@@ -1154,7 +1200,9 @@ class InitialSettingsDialog(BaseSettingsDialog):
         """Refresh startup toggle button style to match its checked state."""
         checked = self.startup_toggle.isChecked()
         self.startup_toggle.setText("ON" if checked else "OFF")
-        self.startup_toggle.setStyleSheet(_mode_button_style(checked))
+        self.startup_toggle.setStyleSheet(
+            _mode_button_style(self._theme.palette, checked)
+        )
 
     def _on_start(self):
         if not self.cpu_btn.isChecked() and not self.mem_btn.isChecked() and not self.net_btn.isChecked():
@@ -1245,8 +1293,13 @@ class MemorySettings:
 class CPUSettingsDialog(BaseSettingsDialog):
     """Settings dialog for CPU window (no mode selection, no memory unit)."""
 
-    def __init__(self, parent: Optional[QWidget] = None, settings: Optional[CPUSettings] = None):
-        super().__init__(parent)
+    def __init__(
+        self,
+        scope: ThemeScope,
+        parent: Optional[QWidget] = None,
+        settings: Optional[CPUSettings] = None,
+    ):
+        super().__init__(scope, parent)
         self.settings = settings or CPUSettings()
         self.setWindowTitle("CPU - Settings")
         self.resize(400, 600)
@@ -1279,14 +1332,14 @@ class CPUSettingsDialog(BaseSettingsDialog):
         cc_layout.setSpacing(4)
 
         cpu_threads = psutil.cpu_count()
-        self._color_scale = _build_color_section(
-            cc_layout, self._make_label, mode="cpu",
+        self._color_scale = self._build_color_section(
+            cc_layout, mode="cpu",
             max_info=f"{cpu_threads * 100}%",
             show_legend=False,
             scale_max=50,
         )
-        self._color_scale_all = _build_color_section(
-            cc_layout, self._make_label, mode="cpu_all",
+        self._color_scale_all = self._build_color_section(
+            cc_layout, mode="cpu_all",
             title="All Usage Color Settings",
             max_info=f"{cpu_threads * 100}%",
         )
@@ -1299,15 +1352,9 @@ class CPUSettingsDialog(BaseSettingsDialog):
         self.apply_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         self.apply_btn.setFixedHeight(44)
         self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.apply_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {theme().ACCENT}; color: white; border: none; border-radius: 8px; }}
-            QPushButton:hover {{ background-color: {theme().ACCENT_HOVER}; }}
-        """)
+        self._themed_sheet(self.apply_btn, _apply_button_style)
         self.apply_btn.clicked.connect(self.accept)
         layout.addWidget(self.apply_btn)
-
-    def _show_legend(self):
-        CompanyLegendDialog(self).exec()
 
     def accept(self):
         ProcessColorManager().update_value_thresholds(self._color_scale.thresholds, "cpu")
@@ -1338,8 +1385,13 @@ class CPUSettingsDialog(BaseSettingsDialog):
 class MemorySettingsDialog(BaseSettingsDialog):
     """Settings dialog for Memory window (no mode selection, has memory unit)."""
 
-    def __init__(self, parent: Optional[QWidget] = None, settings: Optional[MemorySettings] = None):
-        super().__init__(parent)
+    def __init__(
+        self,
+        scope: ThemeScope,
+        parent: Optional[QWidget] = None,
+        settings: Optional[MemorySettings] = None,
+    ):
+        super().__init__(scope, parent)
         self.settings = settings or MemorySettings()
         self.setWindowTitle("Memory - Settings")
         self.resize(400, 900)
@@ -1384,28 +1436,28 @@ class MemorySettingsDialog(BaseSettingsDialog):
         from .monitor import get_commit_limit_bytes
         commit_limit_bytes = get_commit_limit_bytes()
 
-        self._color_scale_usage = _build_color_section(
-            cc_layout, self._make_label, mode="memory", show_legend=False,
+        self._color_scale_usage = self._build_color_section(
+            cc_layout, mode="memory", show_legend=False,
             title="Usage Color Settings", max_info=_format_bytes_in_unit(ram_bytes, unit),
             scale_max=50,
         )
-        self._color_scale_total = _build_color_section(
-            cc_layout, self._make_label, mode="memory_total", show_legend=False,
+        self._color_scale_total = self._build_color_section(
+            cc_layout, mode="memory_total", show_legend=False,
             title="Commit Color Settings", max_info=_format_bytes_in_unit(commit_limit_bytes, unit),
             scale_max=50,
         )
-        self._color_scale_all_usage = _build_color_section(
-            cc_layout, self._make_label, mode="memory_all", show_legend=False,
+        self._color_scale_all_usage = self._build_color_section(
+            cc_layout, mode="memory_all", show_legend=False,
             title="All Usage Color Settings", max_info=_format_bytes_in_unit(ram_bytes, unit),
         )
-        self._color_scale_all_total = _build_color_section(
-            cc_layout, self._make_label, mode="memory_all_total", show_legend=False,
+        self._color_scale_all_total = self._build_color_section(
+            cc_layout, mode="memory_all_total", show_legend=False,
             title="All Commit Color Settings", max_info=_format_bytes_in_unit(commit_limit_bytes, unit),
         )
 
         legend_row = QHBoxLayout()
         legend_row.addStretch()
-        legend_btn = _make_legend_btn()
+        legend_btn = self._make_legend_btn()
         legend_btn.clicked.connect(self._show_legend)
         legend_row.addWidget(legend_btn)
         cc_layout.addLayout(legend_row)
@@ -1417,15 +1469,9 @@ class MemorySettingsDialog(BaseSettingsDialog):
         self.apply_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         self.apply_btn.setFixedHeight(44)
         self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.apply_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {theme().ACCENT}; color: white; border: none; border-radius: 8px; }}
-            QPushButton:hover {{ background-color: {theme().ACCENT_HOVER}; }}
-        """)
+        self._themed_sheet(self.apply_btn, _apply_button_style)
         self.apply_btn.clicked.connect(self.accept)
         layout.addWidget(self.apply_btn)
-
-    def _show_legend(self):
-        CompanyLegendDialog(self).exec()
 
     def accept(self):
         ProcessColorManager().update_value_thresholds(self._color_scale_usage.thresholds, "memory")
@@ -1474,8 +1520,13 @@ class NetworkSettings:
 class NetworkSettingsDialog(BaseSettingsDialog):
     """Settings dialog for Network window."""
 
-    def __init__(self, parent: Optional[QWidget] = None, settings: Optional[NetworkSettings] = None):
-        super().__init__(parent)
+    def __init__(
+        self,
+        scope: ThemeScope,
+        parent: Optional[QWidget] = None,
+        settings: Optional[NetworkSettings] = None,
+    ):
+        super().__init__(scope, parent)
         self.settings = settings or NetworkSettings()
         self.setWindowTitle("Network - Settings")
         self.resize(400, 700)
@@ -1513,18 +1564,18 @@ class NetworkSettingsDialog(BaseSettingsDialog):
         cc_layout.setContentsMargins(0, 0, 0, 0)
         cc_layout.setSpacing(4)
 
-        self._color_scale_dl = _build_color_section(
-            cc_layout, self._make_label, mode="net_dl", show_legend=False,
+        self._color_scale_dl = self._build_color_section(
+            cc_layout, mode="net_dl", show_legend=False,
             title="Download Color Settings",
         )
-        self._color_scale_ul = _build_color_section(
-            cc_layout, self._make_label, mode="net_ul", show_legend=False,
+        self._color_scale_ul = self._build_color_section(
+            cc_layout, mode="net_ul", show_legend=False,
             title="Upload Color Settings",
         )
 
         legend_row = QHBoxLayout()
         legend_row.addStretch()
-        legend_btn = _make_legend_btn()
+        legend_btn = self._make_legend_btn()
         legend_btn.clicked.connect(self._show_legend)
         legend_row.addWidget(legend_btn)
         cc_layout.addLayout(legend_row)
@@ -1536,15 +1587,9 @@ class NetworkSettingsDialog(BaseSettingsDialog):
         self.apply_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         self.apply_btn.setFixedHeight(44)
         self.apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.apply_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {theme().ACCENT}; color: white; border: none; border-radius: 8px; }}
-            QPushButton:hover {{ background-color: {theme().ACCENT_HOVER}; }}
-        """)
+        self._themed_sheet(self.apply_btn, _apply_button_style)
         self.apply_btn.clicked.connect(self.accept)
         layout.addWidget(self.apply_btn)
-
-    def _show_legend(self):
-        CompanyLegendDialog(self).exec()
 
     def accept(self):
         ProcessColorManager().update_value_thresholds(self._color_scale_dl.thresholds, "net_dl")
