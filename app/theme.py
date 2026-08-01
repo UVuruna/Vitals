@@ -35,6 +35,8 @@ from PySide6.QtGui import QColor
 from .persistence import load_last_setup, save_last_setup
 
 
+# ══════════════════════════════ PALETTE SHAPE ══════════════════════════════
+
 @dataclass(frozen=True)
 class Palette:
     """One complete theme palette.
@@ -88,6 +90,8 @@ class Palette:
     # --- Value (usage %) colors: target lightness for the authored hues ---
     VALUE_LIGHTNESS: float
 
+
+# ═════════════════════════════ THE TWO PALETTES ═════════════════════════════
 
 # The dark palette is the app's original look — navy-tinted surfaces with a
 # crimson accent, kept verbatim so an existing user sees no change until the
@@ -155,9 +159,7 @@ THEMES: dict[str, Palette] = {DARK.name: DARK, LIGHT.name: LIGHT}
 DEFAULT_THEME = DARK.name
 
 
-# ---------------------------------------------------------------------------
-# Color-wheel geometry — the company hue ramp
-# ---------------------------------------------------------------------------
+# ═══════════════ COLOR-WHEEL GEOMETRY — the company hue ramp ═══════════════
 
 # The wheel runs BLUE -> RED, counter-clockwise on the HSL circle (owner
 # 2026-07-24): the first colored slot is blue and each further slot steps
@@ -196,9 +198,7 @@ def shade_for_theme(color: QColor, palette: Palette) -> QColor:
     return QColor.fromHslF(max(0.0, h), s, palette.VALUE_LIGHTNESS, a)
 
 
-# ---------------------------------------------------------------------------
-# ThemeScope — one independently themed surface
-# ---------------------------------------------------------------------------
+# ═════════════ THEME SCOPES — one independently themed surface ═════════════
 
 class ThemeScope(QObject):
     """The active palette for one surface, plus a flip notification.
