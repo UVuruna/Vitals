@@ -14,8 +14,12 @@ module constant here.
 from dataclasses import dataclass
 from functools import lru_cache
 
+from PySide6.QtGui import QFont
+
 from .theme import Palette
 
+
+# ═══════════════════════════ DIMENSIONS & GEOMETRY ═══════════════════════════
 
 @dataclass(frozen=True)
 class Dimensions:
@@ -73,6 +77,8 @@ class Switch:
     SUN_CELL_SCALE = 1.7   # sun art cell = knob diameter * this (rays reach out)
 
 
+# ═══════════════════════════════════ FONTS ═══════════════════════════════════
+
 @dataclass(frozen=True)
 class Fonts:
     """Font configurations."""
@@ -113,7 +119,19 @@ class FontScale:
         return round(28 * base / 11)
 
 
-# Default configuration values
+def scaled_font(base: int, offset: int, bold: bool = False) -> QFont:
+    """Build a proportionally scaled font from a base size and a FontScale offset.
+
+    The one place that turns (base size, offset) into a QFont — the window
+    chrome, the table factory and the status banner all scale from the same
+    rule, so a font-size change moves every one of them together.
+    """
+    weight = QFont.Weight.Bold if bold else QFont.Weight.Normal
+    return QFont(Fonts.FAMILY, FontScale.size(base, offset), weight)
+
+
+# ══════════════════════════════ DEFAULT VALUES ══════════════════════════════
+
 class Defaults:
     """Default settings values."""
 
@@ -146,6 +164,8 @@ class Defaults:
     ROLLING_BUCKET_SECONDS = 60
 
 
+# ═════════════════════════ UNIT TABLES & NAME ALIASES ═════════════════════════
+
 # Memory unit conversions
 MEMORY_UNITS = {
     "KB": 1024,
@@ -173,6 +193,8 @@ PROCESS_ALIASES = {
     "Spotify": "Spotify",
 }
 
+
+# ═══════════════════════════════ QSS BUILDERS ═══════════════════════════════
 
 def context_menu_style(palette: Palette) -> str:
     """QSS for one popup menu (process actions, tray), in the caller's theme.
@@ -205,6 +227,8 @@ def context_menu_style(palette: Palette) -> str:
     }}
 """
 
+
+# ════════════════════════════════ FORMATTERS ════════════════════════════════
 
 def format_speed(bytes_per_sec: float, unit: str = "MB/s") -> str:
     """Format a bytes/sec value in the user's selected network unit.

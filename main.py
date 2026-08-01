@@ -11,9 +11,9 @@ import sys
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from app.monitor import SharedDataCollector
+from app.collect.collector import SharedDataCollector
+from app.dialogs.setup_dialog import InitialSettingsDialog
 from app.persistence import get_base_path
-from app.settings_dialog import InitialSettingsDialog
 from app.tray import TrayController
 from app.window_manager import WindowManager
 

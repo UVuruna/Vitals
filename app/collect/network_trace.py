@@ -19,7 +19,7 @@ import threading
 from collections import defaultdict
 from dataclasses import dataclass
 
-from .persistence import get_data_dir
+from ..persistence import get_data_dir
 
 
 # ---------------------------------------------------------------------------

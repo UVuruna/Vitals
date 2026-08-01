@@ -13,7 +13,7 @@ owner 2026-07-24).
 
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from .settings_dialog import InitialSettingsDialog
+from .dialogs.setup_dialog import InitialSettingsDialog
 from .styles import context_menu_style
 from .theme import app_theme
 from .window_manager import MODES, WindowManager

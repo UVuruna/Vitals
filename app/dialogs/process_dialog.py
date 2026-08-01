@@ -19,9 +19,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from .process_actions import PRIORITY_CLASSES
-from .styles import Fonts
-from .theme import Palette
+from ..process_actions import PRIORITY_CLASSES
+from ..styles import Fonts
+from ..theme import Palette
 
 
 class _ProcessDialogBase(QDialog):

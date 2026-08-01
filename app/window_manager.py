@@ -17,14 +17,15 @@ keeps running so peaks and history stay continuous.
 
 from typing import Optional
 
-from .main_window import (
-    BaseMonitorWindow, CPUWindow, MemoryWindow, NetworkWindow,
-    place_on_screen, target_screen,
-)
-from .monitor import SharedDataCollector
+from .collect.collector import SharedDataCollector
 from .persistence import load_last_setup, save_last_setup
-from .settings_dialog import InitialSettings
+from .settings import InitialSettings
 from .styles import Dimensions
+from .windows.base_window import BaseMonitorWindow
+from .windows.cpu_window import CPUWindow
+from .windows.memory_window import MemoryWindow
+from .windows.network_window import NetworkWindow
+from .windows.placement import place_on_screen, target_screen
 
 # Display order, and the InitialSettings flag that enables each mode
 MODES: tuple[tuple[str, str], ...] = (
