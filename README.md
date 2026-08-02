@@ -232,37 +232,55 @@ sequenceDiagram
 
 ## 📁 Project Structure
 
-See the [App Module](app/__index.md) documentation for the full component
-breakdown, data flow, and links to every class/function reference below it.
-
 ```
-📁 PMUsage/
+📁 Vitals/
   🐍 main.py                ← Entry point
   📝 README.md              ← This file
   📝 CLAUDE.md              ← AI assistant guidance
+  📝 OPEN-QUESTIONS.md      ← Decisions awaiting the owner
+  📁 __about/               ← Docs for the root-level script
+  📁 __flow/                ← Its startup diagram
   📁 app/
-    📝 __index.md           ← App module overview
-    🐍 main_window.py       ← BaseMonitorWindow, CPUWindow, MemoryWindow, NetworkWindow
-    🐍 settings_dialog.py   ← InitialSettingsDialog, CPUSettingsDialog, MemorySettingsDialog, NetworkSettingsDialog
-    🐍 monitor.py           ← SharedDataCollector, ProcessMonitor, NetworkMonitor, RollingWindow
-    🐍 network_monitor.py   ← NetworkTracer (ETW kernel trace for per-process network bytes)
-    🐍 color_management.py  ← ProcessColorManager (company hues + value color zones)
+    📁 collect/             ← Data acquisition: Windows queries, per-mode stats, collector thread
+    📁 dialogs/             ← Setup screen, per-monitor settings dialogs, process dialogs
+    📁 windows/             ← The three gadget windows and everything they are built from
+    🐍 theme.py             ← Dark/Light palettes + per-window ThemeScope (the COLOR config home)
+    🐍 styles.py            ← Dimensions, fonts, defaults, formatters (non-color config home)
+    🐍 settings.py          ← The four settings dataclasses and their persistence
+    🐍 color_management.py  ← Ranked company colors + value color zones
     🐍 persistence.py       ← last_setup.json load/save (atomic, corruption-safe)
-    🐍 styles.py            ← UI constants (dark palette, fonts, dimensions)
-    🐍 tray.py              ← System tray icon (single app identity, gadget mode)
+    🐍 icons.py             ← SVG rendering + per-theme tinting
+    🐍 theme_switch.py      ← DayNightSwitch (the sun/moon pill)
+    🐍 transition.py        ← Snapshot-cover fade that hides a theme flip
     🐍 process_actions.py   ← Kill / set priority / open file location
-    🐍 process_dialog.py    ← Kill-confirm and priority-selection dialogs
+    🐍 startup.py           ← Start-with-Windows registration
+    🐍 tray.py              ← System tray icon (single app identity, gadget mode)
+    🐍 window_manager.py    ← Owns the three monitor windows
   📁 config/
-    📄 config.json           ← Value color thresholds (editable)
-    📄 last_setup.json       ← Last-used settings (auto-generated)
+    ⚙️ config.json          ← Value color thresholds (editable)
+    ⚙️ last_setup.json      ← Last-used settings (auto-generated)
   📁 assets/
     🖼️ icon.ico             ← Application icon
     🖼️ icon.svg             ← SVG source
-  📁 setup/
-    🐍 build.py             ← Build orchestrator (PyInstaller + NSIS)
-    🐍 create_cert.py       ← Self-signed certificate generator
-    📄 installer.nsi         ← NSIS installer script
+  📁 setup/                 ← Build pipeline (PyInstaller + NSIS + signing)
+  📁 tests/                 ← The four enforcement guards
 ```
+
+### 📚 Documentation Map
+
+Every `.md` file in the project is reachable from here.
+
+| Entry point | What it covers |
+|-------------|----------------|
+| [App (folder)](app/___app.md) | The whole application: shared services, data flow, and the three subpackages |
+| [Collect (subfolder)](app/collect/___collect.md) | Windows queries, HWiNFO, the ETW trace, per-mode statistics, the collector thread |
+| [Dialogs (subfolder)](app/dialogs/___dialogs.md) | The setup screen, the three per-monitor dialogs, the process dialogs |
+| [Windows (subfolder)](app/windows/___windows.md) | The gadget windows, placement, tables, status banner, process menu |
+| [Entry Point](__about/main.md) | What `main.py` wires together at startup |
+| [Setup (folder)](setup/___setup.md) | The 7-step build pipeline and its fail-closed verify gate |
+| [Tests (folder)](tests/___tests.md) | The four guard tests and the hooks that run them |
+| [Vitals CLAUDE.md](CLAUDE.md) | Project facts and the deltas that tighten the monorepo rules |
+| [Open Questions](OPEN-QUESTIONS.md) | Judgments made autonomously, and code observations awaiting a decision |
 
 ---
 

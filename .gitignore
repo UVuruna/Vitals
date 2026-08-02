@@ -20,7 +20,11 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
-.claude/
+
+# Claude Code: the enforcement hooks MUST survive a clone, so settings.json is
+# tracked. Everything else under .claude/ (local overrides, session state) is not.
+.claude/*
+!.claude/settings.json
 
 # Virtual environment
 venv/

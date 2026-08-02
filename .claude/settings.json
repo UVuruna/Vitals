@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "NotebookEdit"
+    ],
+    "additionalDirectories": [
+      "u:\\Coding\\UVuruna (git)\\Applications\\Robin\\Vili\\Aviator\\domain",
+      "u:\\Coding\\UVuruna (git)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python tests/run_guards.py --fast",
+            "statusMessage": "Guards (structure + config)"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python tests/run_guards.py",
+            "statusMessage": "Guards (all four)"
+          }
+        ]
+      }
+    ]
+  }
+}
